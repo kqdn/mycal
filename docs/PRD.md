@@ -78,7 +78,7 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 | --- | --- | --- |
 | CS 70 lecture | One fixed block each week | Pinned, never moves |
 | Gym, 1h | One flexible block | Solver places it |
-| Write code, 4h | Two 2h blocks on different days | Split across the week (max chunk size) |
+| Write code, 4h | Two 2h blocks, usually on different days | Split across the week (max chunk size); spreading is a soft penalty, not a rule |
 | Email advisor | Zero, for now | Sits in the task list until scheduled |
 
 **On-miss policies**
@@ -141,6 +141,7 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 - No two blocks overlap, and nothing overlaps a pinned event
 - All blocks of a task finish before its deadline
 - Dependencies: a subtask starts after the ones it depends on end
+- One block per day: if an item has one_block_per_day set, no two of its blocks fall on the same local day. Off by default; without it, only the soft spread-out penalty applies, so a deadline-tight item can still double up on one day
 
 **Soft constraints** (weighted penalties)
 
@@ -174,11 +175,11 @@ Four core entities (Item, Block, WorkFrame, Constraint), plus Series for recurre
 
 | Entity | Fields | Notes |
 | --- | --- | --- |
-| Item | id, title, flex_preset, preset_params (JSON), windows[] ({start, end}), checkable, estimate_min, deadline, parent_id, depends_on[], max_chunk_min, on_miss (reschedule / catch_up / skip / ask), catch_up_of, series_id, occurrence_date | windows[] is generated from the preset; the solver reads only windows. Subtasks are items with a parent_id. catch_up_of is the id of the missed Block. series_id and occurrence_date (local date) are set only on occurrences of a Series, and no two items share the same pair |
+| Item | id, title, flex_preset, preset_params (JSON), windows[] ({start, end}), checkable, estimate_min, deadline, parent_id, depends_on[], max_chunk_min, one_block_per_day (bool, default false), on_miss (reschedule / catch_up / skip / ask), catch_up_of, series_id, occurrence_date | windows[] is generated from the preset; the solver reads only windows. Subtasks are items with a parent_id. catch_up_of is the id of the missed Block. series_id and occurrence_date (local date) are set only on occurrences of a Series, and no two items share the same pair |
 | Block | id, item_id, start, end, locked, status (planned / done / partial / missed / unanswered), completed_at, actual_min | Many blocks per item; locked = placed by hand, solver must keep it |
 | WorkFrame | id, name, weekdays[], start_time, end_time, timezone | Default source of windows for flexible presets. start_time and end_time are local times in timezone (an IANA name); end before start means the frame crosses midnight, and weekdays[] names the day it starts |
 | Constraint | id, kind, params (JSON), weight, hard (bool) | New rule types need no schema change |
-| Series (after Milestone 1) | id, title, rule, timezone, start_date, end_date, skipped_dates[], template (flex_preset, preset_params, estimate_min, deadline_time, checkable, on_miss, max_chunk_min) | A repeat rule plus an item template; each occurrence is a normal Item. See Recurrence |
+| Series (after Milestone 1) | id, title, rule, timezone, start_date, end_date, skipped_dates[], template (flex_preset, preset_params, estimate_min, deadline_time, checkable, on_miss, max_chunk_min, one_block_per_day) | A repeat rule plus an item template; each occurrence is a normal Item. See Recurrence |
 
 **Rules**
 
@@ -199,7 +200,7 @@ Designed now, built after Milestone 1. A Series is a repeat rule plus an item te
 | timezone | IANA name; occurrence dates and template times of day are local to it |
 | start_date, end_date | First and last local date the series can occur on (end_date optional) |
 | skipped_dates[] | Local dates that never get an occurrence |
-| Template: flex_preset, preset_params, estimate_min, deadline_time, checkable, on_miss, max_chunk_min | Copied onto each occurrence. preset_params holds times of day only, never fixed dates; deadline_time is a local time of day on the occurrence date |
+| Template: flex_preset, preset_params, estimate_min, deadline_time, checkable, on_miss, max_chunk_min, one_block_per_day | Copied onto each occurrence. preset_params holds times of day only, never fixed dates; deadline_time is a local time of day on the occurrence date |
 
 **Occurrences**
 
@@ -214,7 +215,7 @@ Designed now, built after Milestone 1. A Series is a repeat rule plus an item te
 | Pattern | How it is modeled | Example |
 | --- | --- | --- |
 | Fixed weekly event | Weekly rule, Exact time preset | CS 70 lecture, Tue and Thu 11am |
-| N times a week | One weekly occurrence with estimate = N sessions and max_chunk_min = one session, its blocks on different days | Gym 3x a week: estimate 3h, max chunk 1h |
+| N times a week | One weekly occurrence with estimate = N sessions and max_chunk_min = one session, and one_block_per_day set so sessions land on different days | Gym 3x a week: estimate 3h, max chunk 1h, one block per day |
 
 **Links to other features**
 
@@ -269,6 +270,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | "Blocks on different days" is a per-item flag, one_block_per_day, off by default and copied from a series template (gym sets it, homework does not). When on, it is a hard constraint; otherwise only the soft spread-out penalty applies. An always-on rule would make a problem set due tomorrow with 4h left infeasible |
 | Nov 14, 2026 | Recurrence design (build after Milestone 1): a Series entity with a repeat rule and an item template; occurrences are normal Items with series_id and occurrence_date, created idempotently for the planned week before preset compilation. Template values copy once; series edits affect future occurrences only; skips go in skipped_dates. "N times a week" is one weekly occurrence split into sessions. Rules stay a subset of iCalendar RRULE. Replaces the open question on recurring items |
 | Nov 14, 2026 | Presets compile to windows for a planning horizon using my home timezone; params per preset are in the Preset params table. Exact windows are never cut short. Recurring items are deferred (see Open questions) |
 | Nov 14, 2026 | A WorkFrame's weekdays name the day it starts, so a Fri 9pm to 1am frame belongs to Friday. Local times convert to UTC separately for each date, so frames keep their local hours across DST |
