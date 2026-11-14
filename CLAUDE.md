@@ -28,7 +28,8 @@ Run from `solver/`. Keep this section up to date when commands are added or chan
 - Install dependencies (also downloads Python 3.12 if needed): `uv sync`
 - Run tests: `uv run pytest`
 - Add a dependency (after I approve): `uv add <package>`; dev-only: `uv add --dev <package>`
-- Demo schedule: add the command here once it exists
+- Demo schedule (sample week): `uv run mycal-demo examples/week.toml`
+- Demo schedule (my real week, gitignored): `uv run mycal-demo weeks/<week-start>.toml`
 
 ## Rules that must not break
 
@@ -58,5 +59,5 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 - Stage with `git add -A` so changes outside the current folder aren't missed.
 - I'm on Windows. When I need to run something myself, give PowerShell commands.
 - Commit only when I ask. Never push, force-push or rewrite git history without asking.
-- Keep my email out of project files (pyproject.toml, package.json and the like). My name is fine.
+- The repo will be public. Keep my email out of project files (pyproject.toml, package.json and the like); my name is fine. Keep my real schedule out too: real week files go in `solver/weeks/` (gitignored), and examples and tests use made-up data.
 - `docs/PRD.md` is the source of truth. If the code and the PRD disagree, or the PRD contradicts itself, ask me instead of guessing. Its decision log is newest first and wins over older sections.

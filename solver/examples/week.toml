@@ -1,0 +1,101 @@
+# A made-up sample week for the demo: uv run mycal-demo examples/week.toml
+# Put real weeks in solver/weeks/ (gitignored), not here.
+#
+# Local dates, times and datetimes are in `timezone`. Weekdays: 0 = Monday.
+# Presets: exact, day, day_range, days, before_deadline, custom.
+
+timezone = "America/Los_Angeles"
+week_start = 2026-11-16  # a Monday
+slot_min = 15
+
+[[work_frames]]
+name = "Weekdays"
+weekdays = [0, 1, 2, 3, 4]
+start_time = 09:00:00
+end_time = 18:00:00
+
+[[work_frames]]
+name = "Weekend"
+weekdays = [5, 6]
+start_time = 10:00:00
+end_time = 16:00:00
+
+# Fixed events (no estimate: each fills its window exactly)
+
+[[items]]
+title = "Algorithms lecture (Tue)"
+preset = "exact"
+start = 2026-11-17T11:00:00
+end = 2026-11-17T12:30:00
+checkable = true
+on_miss = "catch_up"
+
+[[items]]
+title = "Algorithms lecture (Thu)"
+preset = "exact"
+start = 2026-11-19T11:00:00
+end = 2026-11-19T12:30:00
+checkable = true
+on_miss = "catch_up"
+
+# Flexible work
+
+[[items]]
+title = "Gym"
+preset = "days"
+weekdays = [0, 2, 4]
+estimate_min = 180
+max_chunk_min = 60
+one_block_per_day = true
+
+[[items]]
+title = "Chemistry lab"
+preset = "day"
+day = 2026-11-18
+estimate_min = 120
+
+[[items]]
+title = "Call home"
+preset = "day_range"
+day = 2026-11-19
+start_time = 17:00:00
+end_time = 21:00:00
+estimate_min = 30
+
+[[items]]
+title = "Problem set 9"
+preset = "before_deadline"
+deadline = 2026-11-20T17:00:00
+estimate_min = 240
+max_chunk_min = 120
+
+# A project with steps that depend on each other
+
+[[items]]
+title = "Project 3: design"
+preset = "before_deadline"
+deadline = 2026-11-22T16:00:00
+estimate_min = 120
+
+[[items]]
+title = "Project 3: implement"
+preset = "before_deadline"
+deadline = 2026-11-22T16:00:00
+estimate_min = 300
+max_chunk_min = 120
+depends_on = ["Project 3: design"]
+
+[[items]]
+title = "Project 3: write-up"
+preset = "before_deadline"
+deadline = 2026-11-22T16:00:00
+estimate_min = 60
+depends_on = ["Project 3: implement"]
+
+# Not scheduled yet: no windows, so it stays in the task list
+
+[[items]]
+title = "Email advisor"
+preset = "custom"
+windows = []
+estimate_min = 15

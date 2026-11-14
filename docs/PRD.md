@@ -281,6 +281,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Milestone 1 demo reads a TOML week file (local times in its timezone, dependencies by title) and prints the schedule by day. Only a made-up example week is committed; real weeks stay in a gitignored folder because the repo will be public |
 | Nov 14, 2026 | First solver is hand-written backtracking behind solve(); CP-SAT comes later behind the same interface. Chunks split evenly by slots, an item with no estimate fills its single window, and the home timezone is a required solver setting. See Solver input rules |
 | Nov 14, 2026 | "Blocks on different days" is a per-item flag, one_block_per_day, off by default and copied from a series template (gym sets it, homework does not). When on, it is a hard constraint; otherwise only the soft spread-out penalty applies. An always-on rule would make a problem set due tomorrow with 4h left infeasible |
 | Nov 14, 2026 | Recurrence design (build after Milestone 1): a Series entity with a repeat rule and an item template; occurrences are normal Items with series_id and occurrence_date, created idempotently for the planned week before preset compilation. Template values copy once; series edits affect future occurrences only; skips go in skipped_dates. "N times a week" is one weekly occurrence split into sessions. Rules stay a subset of iCalendar RRULE. Replaces the open question on recurring items |
