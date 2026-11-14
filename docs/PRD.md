@@ -119,6 +119,7 @@ The MVP is "plan my week and show my progress"; the smarter re-planning comes ri
 | On-miss policies | v2 | Reschedule, catch-up, skip, ask; covers falling behind and missed lectures |
 | Free-move push | v2 | Drop an item on a flexible one; it shifts to the nearest gap in its frame |
 | Re-optimize button | v2 | Full re-solve, with a penalty for moving things |
+| Hard daily limits | v2 | A Constraint kind, e.g. "at most 3h on weekends"; one load limit per day in the solver |
 | Feasibility warning | v2 | "You need 6h but only have 4h before Friday" |
 | Streaks / days at 100% | v2 |  |
 | Google Calendar sync | v2 | Read first, two-way later |
@@ -294,16 +295,15 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 **Open questions**
 
-- [ ] Among tied arrangements, which tie-breakers matter most after stability: earlier in the day, work spread out, or something else?
 - [ ] Name for the app
-- [ ] Balance only limits the fullest day; should a second term even out the other days too?
-- [ ] Days with no work frame are left out of balance; should they count, using their windows' length as capacity?
-- [ ] Hard daily limits ("at most 3h on weekends") as a Constraint kind
+- [ ] Balance only limits the fullest day; should a second term even out the other days too? Revisit if real weeks look uneven
 
 **Decision log** (newest first)
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Days with no work frame stay out of balance. Only explicitly placed items can land there, since flexible windows come from work frames, so the effect is small |
+| Nov 14, 2026 | Tie-breakers after stability are settled by the CP-SAT score order: spread an item across days, then a light fullest day, then earlier in the day. Revisit when time preferences are added. Hard daily limits move from open questions to Features (v2) |
 | Nov 14, 2026 | The demo week file supports [[series]] tables, written as an RRULE string plus template fields, expanded for the week before compiling. RRULE instead of separate fields avoids a clash with the "any of these days" weekdays param and reuses the import parser |
 | Nov 14, 2026 | Recurrence built: Rule (daily or weekly, interval, weekdays), ItemTemplate and Series, with expansion into occurrence Items outside the solver. Custom is not allowed in a series template (fixed dates). RRULE COUNT is accepted and converted to end_date. "N times a week" series anchor on Monday |
 | Nov 14, 2026 | Balance compares how full each day is relative to its work frames, not raw hours, so a shorter weekend frame gets proportionally less work. Days with no work frame are left out for now; evening out the other days and hard daily limits are open questions |
