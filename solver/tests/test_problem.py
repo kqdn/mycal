@@ -2,11 +2,12 @@
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, SolverSettings, Window
-from mycal.problem import build_problem, slot_start, split_slots
+from mycal.problem import Target, build_problem, slot_start, split_slots
 
 LA = "America/Los_Angeles"
 SETTINGS = SolverSettings(timezone=LA)
@@ -96,3 +97,41 @@ def test_daily_limit_defaults_to_every_day() -> None:
 def test_bad_daily_limit_rejected(params: dict[str, Any], hard: bool) -> None:
     with pytest.raises(ValueError, match="daily_limit"):
         build_problem([], [], [Constraint(kind="daily_limit", params=params, hard=hard)], SETTINGS)
+
+
+def time_preference(**params: Any) -> Constraint:
+    return Constraint(kind="time_preference", params={"windows": [DAY], **params})
+
+
+def test_time_preference_weight_is_scaled_to_an_integer() -> None:
+    pref = time_preference(mode="avoid")
+    pref.weight = 1.5
+    [parsed] = build_problem([], [], [pref], SETTINGS).preferences
+    assert (parsed.avoid, parsed.weight, parsed.target) == (True, 150, Target())
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        Constraint(kind="time_preference", params={"windows": [DAY]}, hard=True),
+        Constraint(kind="time_preference", params={"weekdays": [0], "start_time": "x", "end_time": "y"}),
+        time_preference(mode="sometimes"),
+        time_preference(item_ids=[uuid4()]),  # no such item
+        time_preference(days=[0]),
+        Constraint(kind="time_preference", params={"windows": [DAY]}, weight=-1),
+    ],
+)
+def test_bad_time_preference_rejected(constraint: Constraint) -> None:
+    with pytest.raises(ValueError, match="time_preference"):
+        build_problem([], [], [constraint], SETTINGS)
+
+
+def test_target_matches_items_and_series_occurrences() -> None:
+    plain = task(60)
+    series_id = uuid4()
+    occurrence = Item("Gym", FlexPreset.CUSTOM, series_id=series_id, occurrence_date=MON_9AM.date())
+    assert Target().matches(plain)
+    assert Target(item_ids=frozenset({plain.id})).matches(plain)
+    assert not Target(item_ids=frozenset({plain.id})).matches(occurrence)
+    assert Target(series_ids=frozenset({series_id})).matches(occurrence)
+    assert not Target(series_ids=frozenset({series_id})).matches(plain)

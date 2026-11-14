@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from mycal.model import Constraint, FlexPreset, Item, ItemTemplate, OnMiss, Series, Window, WorkFrame
-from mycal.presets import compile_windows
+from mycal.presets import compile_constraint, compile_windows
 from mycal.recurrence import expand_series, series_rule_from_rrule
 from mycal.settings import SolverSettings
 from mycal.solve import SolveResult, solve
@@ -94,17 +94,30 @@ def parse_week(data: dict[str, Any]) -> Week:
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Series {raw.get('title')!r}: {error}") from error
 
-    constraints = [
-        Constraint(
-            kind=raw["kind"],
-            params={key: value for key, value in raw.items() if key not in ("kind", "hard", "weight")},
-            weight=raw.get("weight", 1.0),
-            hard=raw.get("hard", False),
-        )
-        for raw in data.get("constraints", [])
-    ]
+    series_ids = {s.title: s.id for s in series}
+    constraints = []
+    for raw in data.get("constraints", []):
+        try:
+            constraints.append(_parse_constraint(raw, ids, series_ids))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"Constraint {raw.get('kind')!r}: {error}") from error
 
     return Week(settings, data["week_start"], frames, items, series, constraints)
+
+
+def _parse_constraint(raw: dict[str, Any], ids: dict[str, UUID], series_ids: dict[str, UUID]) -> Constraint:
+    """A [[constraints]] table. `items` lists item or series titles; other keys are params."""
+    params = {key: value for key, value in raw.items() if key not in ("kind", "hard", "weight", "items")}
+    titles = raw.get("items", [])
+    if unknown := [t for t in titles if t not in ids and t not in series_ids]:
+        raise ValueError(f"items names unknown items or series {unknown}")
+    if item_ids := [ids[t] for t in titles if t in ids]:
+        params["item_ids"] = item_ids
+    if matched_series := [series_ids[t] for t in titles if t in series_ids]:
+        params["series_ids"] = matched_series
+    return Constraint(
+        kind=raw["kind"], params=params, weight=raw.get("weight", 1.0), hard=raw.get("hard", False)
+    )
 
 
 def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
@@ -190,7 +203,8 @@ def plan_week(week: Week) -> tuple[list[Item], SolveResult]:
         replace(item, windows=compile_windows(item, week.work_frames, timezone, start, end))
         for item in week.items + occurrences
     ]
-    return items, solve(items, [], week.work_frames, week.constraints, week.settings)
+    constraints = [compile_constraint(c, timezone, start, end) for c in week.constraints]
+    return items, solve(items, [], week.work_frames, constraints, week.settings)
 
 
 def format_schedule(items: list[Item], result: SolveResult, timezone: str) -> str:

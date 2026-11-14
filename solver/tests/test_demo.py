@@ -133,6 +133,33 @@ def test_constraints_are_read_and_applied() -> None:
     assert not result.feasible  # the 60-minute Monday gym session no longer fits
 
 
+PREFER = """
+[[constraints]]
+kind = "time_preference"
+items = ["Gym", "Seminar"]
+mode = "avoid"
+weekdays = [0]
+start_time = 09:00:00
+end_time = 09:30:00
+weight = 2
+"""
+
+
+def test_constraint_items_become_item_and_series_ids() -> None:
+    week = week_from(TINY + SERIES + PREFER)
+    [pref] = week.constraints
+    assert pref.params["item_ids"] == [week.items[1].id]
+    assert pref.params["series_ids"] == [week.series[0].id]
+    assert pref.weight == 2
+    _, result = plan_week(week)  # local times compile to windows before solving
+    assert result.feasible
+
+
+def test_constraint_with_unknown_item_rejected() -> None:
+    with pytest.raises(ValueError, match="Nope"):
+        week_from(TINY + PREFER.replace('"Seminar"', '"Nope"'))
+
+
 def test_infeasible_week_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     text = TINY.replace("estimate_min = 60", "estimate_min = 120")
     path = tmp_path / "week.toml"

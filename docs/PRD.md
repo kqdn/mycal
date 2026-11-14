@@ -120,6 +120,7 @@ The MVP is "plan my week and show my progress"; the smarter re-planning comes ri
 | Free-move push | v2 | Drop an item on a flexible one; it shifts to the nearest gap in its frame |
 | Re-optimize button | v2 | Full re-solve, with a penalty for moving things |
 | Hard daily limits | v2 | Built: the daily_limit Constraint kind, e.g. "at most 3h on weekends" (see Constraint kinds) |
+| Time preferences | v2 | Built: the soft time_preference Constraint kind, e.g. "gym in the afternoon", "no essays after 11pm" (see Constraint kinds) |
 | Feasibility warning | v2 | "You need 6h but only have 4h before Friday" |
 | Streaks / days at 100% | v2 |  |
 | Google Calendar sync | v2 | Read first, two-way later |
@@ -155,10 +156,11 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 
 1. Stability: number of blocks moved from their current start
 2. Spread: extra blocks of the same item on one local day
-3. Balance: the fullest local day, measured as scheduled minutes divided by that day's work-frame minutes, kept blocks included. A short weekend frame gets proportionally less work. Days with no work-frame time are left out
-4. Earlier in the frame: how far into its work-frame occurrence each block starts, counting the whole occurrence even when it began before the planning week. A block outside every frame counts from the start of its item window
+3. Preferences: weighted soft Constraints, summed (see Constraint kinds). Above balance because a rule I wrote down should beat the general wish for a light busiest day
+4. Balance: the fullest local day, measured as scheduled minutes divided by that day's work-frame minutes, kept blocks included. A short weekend frame gets proportionally less work. Days with no work-frame time are left out
+5. Earlier in the frame: how far into its work-frame occurrence each block starts, counting the whole occurrence even when it began before the planning week. A block outside every frame counts from the start of its item window
 
-Time preferences and buffers come later as Constraint kinds. The backtracking engine does not score; it returns the first valid arrangement.
+Buffers come later as Constraint kinds. The backtracking engine does not score; it returns the first valid arrangement.
 
 **Objective.** Minimize the weighted sum of soft penalties, subject to all hard constraints. No feasible solution means a deadline is at risk, which triggers the feasibility warning.
 
@@ -171,13 +173,16 @@ Time preferences and buffers come later as Constraint kinds. The backtracking en
 - Stability: chunk i reuses the id of the item's i-th current block and tries its old start first.
 - Window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
 - My home timezone is a required solver setting, used only to find a block's local day for one_block_per_day.
-- Soft constraints are not scored yet; a hard Constraint of a kind the solver does not support is an error rather than silently ignored.
+- Soft constraints only change the CP-SAT score, in the preferences tier. Their weight is scaled by 100 and rounded, since CP-SAT takes integer coefficients. A hard Constraint of a kind the solver does not support is an error rather than silently ignored.
 
 **Constraint kinds**
 
 | Kind | Params | Meaning |
 | --- | --- | --- |
+| time_preference (soft only) | windows[] (UTC), mode (prefer or avoid, default prefer), targets | Penalty: a block's minutes outside the windows (prefer) or inside them (avoid), times weight, so a block that half fits gets half the penalty. Authored as weekdays[] plus local start_time and end_time; these compile to windows for the horizon outside the solver, like presets. Days not listed count as outside |
 | daily_limit (hard only) | max_min, optional weekdays[] (default every day) | Scheduled minutes on each matching local day stay at or under max_min. Every block counts toward the day it starts on, fixed events included. If kept blocks alone are over, nothing more is placed that day rather than the week failing |
+
+Soft kinds target items with item_ids[] and series_ids[] (both empty means every item). A series id covers every occurrence, so a rule keeps working when next week's occurrence gets a new item id. An unknown item id is an error. In a week file, `items = [titles]` names items or series.
 
 Other hard kinds are rejected until supported; other soft kinds are ignored for now.
 
@@ -310,6 +315,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Time preferences built as the soft time_preference Constraint kind (prefer or avoid a local time range). Soft constraints get a new score tier between spread and balance, so a written preference beats a light busiest day. Local times compile to UTC windows outside the solver, and constraints target item or series ids so weekly occurrences stay covered |
 | Nov 14, 2026 | "Earlier in the day" becomes "earlier in the frame": offsets count from the start of the work-frame occurrence holding the block, not local midnight, so a 12pm to 2am frame prefers 12pm over 12am. Sunday's overnight frame keeps its real start, so Mon 12am is late, not early. Starts outside every frame fall back to the item window's start |
 | Nov 14, 2026 | Hard daily limits built as the daily_limit Constraint kind in both engines. Everything on the day counts, including fixed events; limits are by weekday only (a dates param can come later); soft limits are rejected for now. Kept blocks over a limit close that day instead of making the week infeasible |
 | Nov 14, 2026 | Days with no work frame stay out of balance. Only explicitly placed items can land there, since flexible windows come from work frames, so the effect is small |

@@ -28,6 +28,20 @@ hard = true
 max_min = 120
 weekdays = [5, 6]  # at most 2h on Saturday and Sunday
 
+# Soft rules change which arrangement wins, never whether one fits. `items`
+# names items or series by title (omit it to cover every item); `weight`
+# scales the penalty (default 1).
+#
+# time_preference: "prefer" penalizes each minute of a block outside the
+# range, "avoid" each minute inside it. Days not listed count as outside.
+[[constraints]]
+kind = "time_preference"
+items = ["Gym"]
+mode = "prefer"
+weekdays = [0, 1, 2, 3, 4]
+start_time = 16:00:00
+end_time = 18:00:00
+
 # Series repeat every week. `rrule` is an iCalendar RRULE (FREQ=DAILY or
 # WEEKLY, INTERVAL, BYDAY, UNTIL or COUNT). Template params hold times of day
 # only; each occurrence's date fills in the day. Optional: end_date,

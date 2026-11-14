@@ -18,9 +18,11 @@ than the most the tiers below it can ever add up to, so a higher priority
 always wins):
     1. stability: blocks moved away from their current start
     2. spread: extra blocks of the same item on one local day
-    3. balance: the fullest local day, as load / work-frame minutes, kept
+    3. preferences: weighted soft constraints (time_preference: a block's
+       slots on the wrong side of its preferred or avoided windows)
+    4. balance: the fullest local day, as load / work-frame minutes, kept
        blocks included (a day with no work frame is left out)
-    4. earlier in the frame: slots from the start of the work-frame
+    5. earlier in the frame: slots from the start of the work-frame
        occurrence (else the item window) holding each block's start
 """
 
@@ -39,6 +41,7 @@ from mycal.model import Block, Window
 from mycal.problem import (
     Chunk,
     Problem,
+    TimePreference,
     ceil_slot,
     covered_min,
     day_limit_min,
@@ -186,7 +189,7 @@ def _add_score(
     busy: list[Interval],
     local_day: Callable[[int], date],
 ) -> None:
-    """Add the four score terms and minimize them in priority order."""
+    """Add the five score terms and minimize them in priority order."""
     chunks = problem.chunks
     slot_min = problem.settings.slot_min
     zone = ZoneInfo(problem.settings.timezone)
@@ -218,7 +221,10 @@ def _add_score(
             model.add(extra >= sum(on_day) + existing - 1)
             extras.append(extra)
 
-    # 3. Balance: the fullest day, in thousandths of that day's work-frame minutes.
+    # 3. Preferences: weighted soft constraints.
+    preferences, max_preferences = _time_preference_penalties(model, problem, starts)
+
+    # 4. Balance: the fullest day, in thousandths of that day's work-frame minutes.
     #    "fullest >= load / capacity" is a division, but capacity is a constant per
     #    day, so it multiplies out to the linear "fullest * capacity >= 1000 * load".
     #    Days with no work-frame time have no capacity and are left out.
@@ -237,7 +243,7 @@ def _add_score(
         load = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
         model.add(fullest * capacity[day] >= 1000 * slot_min * (load + kept_load[day]))
 
-    # 4. Earlier in the frame: slots from the start of the work-frame occurrence
+    # 5. Earlier in the frame: slots from the start of the work-frame occurrence
     #    holding each start, so a 12pm to 2am frame prefers 12pm over 12am. The
     #    whole occurrence counts, even the part before the planning week, and a
     #    start outside every frame counts from the start of its item window.
@@ -265,14 +271,56 @@ def _add_score(
     # Tier weights: each exceeds the largest possible total of all tiers below it.
     w_offset = 1
     w_balance = w_offset * (max_offset_total + 1)
-    w_spread = w_balance * (max_fullest + 1)
+    w_preferences = w_balance * (max_fullest + 1)
+    w_spread = w_preferences * (max_preferences + 1)
     w_stability = w_spread * (len(chunks) + 1)
     model.minimize(
         w_stability * sum(moved)
         + w_spread * sum(extras)
+        + w_preferences * preferences
         + w_balance * fullest
         + w_offset * sum(offsets)
     )
+
+
+def _time_preference_penalties(
+    model: cp_model.CpModel, problem: Problem, starts: list[cp_model.IntVar]
+) -> tuple[cp_model.LinearExprT, int]:
+    """Sum of each chunk's preference penalty, and the most it can add up to.
+
+    A chunk's penalty depends only on its start, so like the offsets it is a
+    table of (start, penalty) pairs worked out ahead of time.
+    """
+    slot_min = problem.settings.slot_min
+    inside = [
+        {t for a, b in _spans(list(pref.windows), slot_min) for t in range(a, b)}
+        for pref in problem.preferences
+    ]
+    penalties: list[cp_model.IntVar] = []
+    bound = 0
+    for i, chunk in enumerate(problem.chunks):
+        item = problem.items[chunk.item_id]
+        mine = [(p, inside[k]) for k, p in enumerate(problem.preferences) if p.target.matches(item)]
+        if not mine:
+            continue
+        pairs = [(s, _preference_cost(s, chunk.size, mine)) for s in chunk.candidates]
+        top = max(cost for _, cost in pairs)
+        if top == 0:
+            continue
+        penalty = model.new_int_var(0, top, f"preference_{i}")
+        model.add_allowed_assignments([starts[i], penalty], pairs)
+        penalties.append(penalty)
+        bound += top
+    return sum(penalties), bound
+
+
+def _preference_cost(start: int, size: int, prefs: list[tuple[TimePreference, set[int]]]) -> int:
+    """Weighted slots of [start, start + size) on the wrong side of each preference."""
+    cost = 0
+    for pref, inside in prefs:
+        hits = sum(1 for t in range(start, start + size) if t in inside)
+        cost += pref.weight * (hits if pref.avoid else size - hits)
+    return cost
 
 
 def _spans(windows: list[Window], slot_min: int) -> list[Interval]:

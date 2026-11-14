@@ -1,4 +1,6 @@
-"""Compile an item's flexibility preset into UTC windows. Not part of the solver.
+"""Compile an item's flexibility preset, and local-time constraints, into UTC windows.
+
+Not part of the solver.
 
 Expected `preset_params` per preset (local dates and times are in the
 `timezone` passed to compile_windows):
@@ -19,7 +21,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from mycal.model import FlexPreset, Item, Window, WorkFrame
+from mycal.model import Constraint, FlexPreset, Item, Window, WorkFrame
 from mycal.windows import merge_windows, work_frame_windows
 
 
@@ -76,6 +78,27 @@ def compile_windows(
         raise ValueError(f"Unknown preset {preset!r}")
 
     return merge_windows(_clip(windows, horizon_start, horizon_end))
+
+
+def compile_constraint(
+    constraint: Constraint, timezone: str, horizon_start: datetime, horizon_end: datetime
+) -> Constraint:
+    """Return the constraint with its local times turned into UTC windows for the horizon.
+
+    A time_preference's weekdays (0 = Monday), start_time and end_time (local
+    times in `timezone`; end before start crosses midnight) become `windows`.
+    Other kinds, and preferences that already have windows, come back
+    unchanged. The constraint is not modified.
+    """
+    params = constraint.params
+    if constraint.kind != "time_preference" or "windows" in params:
+        return constraint
+    weekdays = _param(params, "weekdays", list)
+    frame = _range_frame(params, weekdays, timezone)
+    windows = _horizon_windows([frame], timezone, horizon_start, horizon_end)
+    compiled = {k: v for k, v in params.items() if k not in ("weekdays", "start_time", "end_time")}
+    compiled["windows"] = merge_windows(_clip(windows, horizon_start, horizon_end))
+    return replace(constraint, params=compiled)
 
 
 def _param(params: dict[str, Any], key: str, kind: type) -> Any:

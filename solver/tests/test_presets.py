@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from mycal import FlexPreset, Item, Window, WorkFrame, compile_windows
+from mycal import Constraint, FlexPreset, Item, Window, WorkFrame, compile_constraint, compile_windows
 
 LA = "America/Los_Angeles"
 MON, WED, FRI, SUN = 0, 2, 4, 6
@@ -126,3 +126,22 @@ def test_missing_param_rejected() -> None:
 def test_before_deadline_without_deadline_rejected() -> None:
     with pytest.raises(ValueError):
         compile_item(FlexPreset.BEFORE_DEADLINE, {})
+
+
+def test_time_preference_compiles_to_utc_windows() -> None:
+    params = {"weekdays": [MON, WED], "start_time": time(14), "end_time": time(16), "mode": "avoid"}
+    pref = Constraint(kind="time_preference", params=params)
+    compiled = compile_constraint(pref, LA, WEEK_START, WEEK_END)
+    assert compiled.params == {
+        "mode": "avoid",
+        "windows": [
+            Window(utc(2026, 11, 16, 22), utc(2026, 11, 17, 0)),
+            Window(utc(2026, 11, 18, 22), utc(2026, 11, 19, 0)),
+        ],
+    }
+    assert pref.params == params  # not modified
+
+
+def test_other_constraints_compile_unchanged() -> None:
+    limit = Constraint(kind="daily_limit", params={"max_min": 60}, hard=True)
+    assert compile_constraint(limit, LA, WEEK_START, WEEK_END) is limit

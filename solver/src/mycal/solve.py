@@ -49,7 +49,11 @@ def solve(
             never decide placement; CP-SAT uses them only to measure how full
             each day is.
         constraints: extra rules. Supported: hard "daily_limit" (params
-            max_min, optional weekdays). A soft daily_limit or any other hard
+            max_min, optional weekdays) and soft "time_preference" (params
+            windows in UTC, mode "prefer" or "avoid", optional item_ids and
+            series_ids; compile local times first with compile_constraint).
+            Soft kinds only change the CP-SAT score; backtracking ignores
+            them. A soft daily_limit, a hard time_preference or any other hard
             kind raises ValueError; other soft kinds are ignored for now.
         settings: slot size, home timezone and engine.
 

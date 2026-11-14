@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from mycal.model import Block, BlockStatus, Constraint, Item, WorkFrame
+from mycal.model import Block, BlockStatus, Constraint, Item, Window, WorkFrame
 from mycal.settings import SolverSettings
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -44,6 +44,36 @@ class DailyLimit:
     weekdays: tuple[int, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class Target:
+    """Which items a soft constraint applies to. Both sets empty means every item.
+
+    A series id matches all of that series' occurrences, so a rule keeps
+    applying when next week's occurrence gets a new item id.
+    """
+
+    item_ids: frozenset[UUID] = frozenset()
+    series_ids: frozenset[UUID] = frozenset()
+
+    def matches(self, item: Item) -> bool:
+        if not self.item_ids and not self.series_ids:
+            return True
+        return item.id in self.item_ids or item.series_id in self.series_ids
+
+
+@dataclass(frozen=True, slots=True)
+class TimePreference:
+    """Soft: matching blocks should sit inside `windows` (or outside them, if `avoid`).
+
+    The penalty is the number of a block's slots on the wrong side, times `weight`.
+    """
+
+    target: Target
+    avoid: bool
+    windows: tuple[Window, ...]
+    weight: int
+
+
 @dataclass(slots=True)
 class Problem:
     settings: SolverSettings
@@ -52,6 +82,7 @@ class Problem:
     chunks: list[Chunk]
     work_frames: list[WorkFrame] = field(default_factory=list)
     daily_limits: list[DailyLimit] = field(default_factory=list)
+    preferences: list[TimePreference] = field(default_factory=list)
 
 
 def day_limit_min(limits: list[DailyLimit], day: date) -> int | None:
@@ -109,10 +140,10 @@ def build_problem(
     capacity; placement still follows item windows alone.
 
     Raises ValueError for a constraint kind no engine supports yet (unknown
-    soft kinds are ignored), so a rule is never silently dropped, and for an
-    item with no estimate and more than one window.
+    soft kinds are ignored), so a rule is never silently dropped, for bad
+    constraint params, and for an item with no estimate and more than one window.
     """
-    daily_limits = _parse_constraints(constraints)
+    daily_limits, preferences = _parse_constraints(constraints, {item.id for item in items})
 
     kept = [b for b in blocks if is_kept(b)]
     replaced = sorted((b for b in blocks if not is_kept(b)), key=lambda b: b.start)
@@ -130,19 +161,62 @@ def build_problem(
         chunks,
         work_frames=list(work_frames),
         daily_limits=daily_limits,
+        preferences=preferences,
     )
 
 
-def _parse_constraints(constraints: list[Constraint]) -> list[DailyLimit]:
-    limits = []
+def _parse_constraints(
+    constraints: list[Constraint], item_ids: set[UUID]
+) -> tuple[list[DailyLimit], list[TimePreference]]:
+    limits, preferences = [], []
     for constraint in constraints:
         if constraint.kind == "daily_limit":
             if not constraint.hard:
                 raise ValueError("Soft daily_limit is not supported yet; set hard = true")
             limits.append(_parse_daily_limit(constraint.params))
+        elif constraint.kind == "time_preference":
+            preferences.append(_parse_time_preference(constraint, item_ids))
         elif constraint.hard:
             raise ValueError(f"Hard constraint kind {constraint.kind!r} is not supported yet")
-    return limits
+    return limits, preferences
+
+
+def _soft_basics(constraint: Constraint, allowed: set[str], item_ids: set[UUID]) -> tuple[Target, int]:
+    """Checks shared by soft kinds; returns the target and the weight in hundredths.
+
+    CP-SAT only takes integer coefficients, so weights are scaled by 100 and rounded.
+    """
+    kind, params = constraint.kind, constraint.params
+    if constraint.hard:
+        raise ValueError(f"Hard {kind} is not supported yet; leave hard = false")
+    if unknown := set(params) - allowed - {"item_ids", "series_ids"}:
+        raise ValueError(f"{kind} has unknown params {sorted(unknown)}")
+    targets = {key: params.get(key, []) for key in ("item_ids", "series_ids")}
+    for key, ids in targets.items():
+        if not isinstance(ids, list) or not all(isinstance(i, UUID) for i in ids):
+            raise ValueError(f"{kind} {key} must be a list of UUIDs, got {ids!r}")
+    if missing := set(targets["item_ids"]) - item_ids:
+        raise ValueError(f"{kind} names unknown item ids {sorted(map(str, missing))}")
+    weight = constraint.weight
+    if not isinstance(weight, int | float) or isinstance(weight, bool) or weight < 0:
+        raise ValueError(f"{kind} weight must be a non-negative number, got {weight!r}")
+    target = Target(frozenset(targets["item_ids"]), frozenset(targets["series_ids"]))
+    return target, round(weight * 100)
+
+
+def _parse_time_preference(constraint: Constraint, item_ids: set[UUID]) -> TimePreference:
+    """Params: windows (compiled UTC windows), mode ("prefer" or "avoid"), optional targets."""
+    params = constraint.params
+    if "windows" not in params and {"weekdays", "start_time", "end_time"} & set(params):
+        raise ValueError("time_preference has local times; turn them into windows with compile_constraint first")
+    target, weight = _soft_basics(constraint, {"windows", "mode"}, item_ids)
+    mode = params.get("mode", "prefer")
+    if mode not in ("prefer", "avoid"):
+        raise ValueError(f"time_preference mode must be 'prefer' or 'avoid', got {mode!r}")
+    windows = params.get("windows")
+    if not isinstance(windows, list) or not all(isinstance(w, Window) for w in windows):
+        raise ValueError(f"time_preference windows must be a list of Window, got {windows!r}")
+    return TimePreference(target, mode == "avoid", tuple(windows), weight)
 
 
 def _parse_daily_limit(params: dict[str, Any]) -> DailyLimit:
