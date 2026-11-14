@@ -166,3 +166,19 @@ def test_infeasible_week_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[s
     path.write_text(text, encoding="utf-8")
     assert main([str(path)]) == 1
     assert "No arrangement fits" in capsys.readouterr().out
+
+
+def test_time_preference_ranges_from_toml() -> None:
+    text = TINY + """
+[[constraints]]
+kind = "time_preference"
+items = ["Gym"]
+ranges = [
+  { weekdays = [0], start_time = 09:00:00, end_time = 09:30:00 },
+  { weekdays = [5, 6], start_time = 12:00:00, end_time = 14:00:00 },
+]
+"""
+    week = week_from(text)
+    assert len(week.constraints[0].params["ranges"]) == 2
+    _, result = plan_week(week)
+    assert result.feasible

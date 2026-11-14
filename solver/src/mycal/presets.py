@@ -24,6 +24,8 @@ from zoneinfo import ZoneInfo
 from mycal.model import Constraint, FlexPreset, Item, Window, WorkFrame
 from mycal.windows import merge_windows, work_frame_windows
 
+RANGE_KEYS = ("weekdays", "start_time", "end_time")
+
 
 def compile_windows(
     item: Item,
@@ -85,18 +87,27 @@ def compile_constraint(
 ) -> Constraint:
     """Return the constraint with its local times turned into UTC windows for the horizon.
 
-    A time_preference's weekdays (0 = Monday), start_time and end_time (local
-    times in `timezone`; end before start crosses midnight) become `windows`.
-    Other kinds, and preferences that already have windows, come back
-    unchanged. The constraint is not modified.
+    A time_preference's `ranges` each have weekdays (0 = Monday), start_time
+    and end_time (local times in `timezone`; end before start crosses
+    midnight). All ranges become one merged `windows` list, so a block only
+    has to fit any one of them. A single range may also be given as top-level
+    weekdays, start_time and end_time. Other kinds, and preferences that
+    already have windows, come back unchanged. The constraint is not modified.
     """
     params = constraint.params
     if constraint.kind != "time_preference" or "windows" in params:
         return constraint
-    weekdays = _param(params, "weekdays", list)
-    frame = _range_frame(params, weekdays, timezone)
-    windows = _horizon_windows([frame], timezone, horizon_start, horizon_end)
-    compiled = {k: v for k, v in params.items() if k not in ("weekdays", "start_time", "end_time")}
+    single = {k: params[k] for k in RANGE_KEYS if k in params}
+    if single and "ranges" in params:
+        raise ValueError("time_preference takes ranges or weekdays/start_time/end_time, not both")
+    ranges = _param(params, "ranges", list) if "ranges" in params else [single]
+    frames = []
+    for r in ranges:
+        if not isinstance(r, dict) or set(r) != set(RANGE_KEYS):
+            raise ValueError(f"time_preference range needs exactly {list(RANGE_KEYS)}, got {r!r}")
+        frames.append(_range_frame(r, _param(r, "weekdays", list), timezone))
+    windows = _horizon_windows(frames, timezone, horizon_start, horizon_end)
+    compiled = {k: v for k, v in params.items() if k not in RANGE_KEYS and k != "ranges"}
     compiled["windows"] = merge_windows(_clip(windows, horizon_start, horizon_end))
     return replace(constraint, params=compiled)
 

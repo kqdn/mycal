@@ -145,3 +145,31 @@ def test_time_preference_compiles_to_utc_windows() -> None:
 def test_other_constraints_compile_unchanged() -> None:
     limit = Constraint(kind="daily_limit", params={"max_min": 60}, hard=True)
     assert compile_constraint(limit, LA, WEEK_START, WEEK_END) is limit
+
+
+def test_time_preference_ranges_merge_into_one_window_list() -> None:
+    ranges = [
+        {"weekdays": [MON], "start_time": time(18), "end_time": time(19)},
+        {"weekdays": [MON], "start_time": time(21), "end_time": time(22)},
+        {"weekdays": [MON], "start_time": time(18, 30), "end_time": time(20)},  # overlaps the first
+    ]
+    pref = Constraint(kind="time_preference", params={"ranges": ranges})
+    assert compile_constraint(pref, LA, WEEK_START, WEEK_END).params == {
+        "windows": [
+            Window(utc(2026, 11, 17, 2), utc(2026, 11, 17, 4)),  # Mon 6pm to 8pm PST
+            Window(utc(2026, 11, 17, 5), utc(2026, 11, 17, 6)),  # Mon 9pm to 10pm PST
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"ranges": [{"weekdays": [MON], "start_time": time(9), "end_time": time(10)}], "weekdays": [MON]},
+        {"ranges": [{"weekdays": [MON], "start_time": time(9)}]},
+        {"ranges": [{"weekdays": [MON], "start_time": time(9), "end_time": time(10), "day": MON}]},
+    ],
+)
+def test_bad_time_preference_ranges_rejected(params: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="time_preference"):
+        compile_constraint(Constraint(kind="time_preference", params=params), LA, WEEK_START, WEEK_END)

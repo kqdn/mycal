@@ -33,14 +33,17 @@ weekdays = [5, 6]  # at most 2h on Saturday and Sunday
 # scales the penalty (default 1).
 #
 # time_preference: "prefer" penalizes each minute of a block outside the
-# range, "avoid" each minute inside it. Days not listed count as outside.
+# ranges, "avoid" each minute inside them. A block only has to fit one range.
+# Days no range lists count as outside. A single range can also be written
+# as top-level weekdays, start_time and end_time.
 [[constraints]]
 kind = "time_preference"
 items = ["Gym"]
 mode = "prefer"
-weekdays = [0, 1, 2, 3, 4]
-start_time = 16:00:00
-end_time = 18:00:00
+ranges = [
+  { weekdays = [0, 1, 2, 3, 4], start_time = 16:00:00, end_time = 18:00:00 },
+  { weekdays = [5, 6], start_time = 12:00:00, end_time = 14:00:00 },
+]
 
 # rest_between: sessions of the same item should have at least min_gap_days
 # free days between them. Done sessions count, so if one moves, the rest

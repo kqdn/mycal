@@ -225,7 +225,7 @@ def _soft_basics(constraint: Constraint, allowed: set[str], item_ids: set[UUID])
 def _parse_time_preference(constraint: Constraint, item_ids: set[UUID]) -> TimePreference:
     """Params: windows (compiled UTC windows), mode ("prefer" or "avoid"), optional targets."""
     params = constraint.params
-    if "windows" not in params and {"weekdays", "start_time", "end_time"} & set(params):
+    if "windows" not in params and {"ranges", "weekdays", "start_time", "end_time"} & set(params):
         raise ValueError("time_preference has local times; turn them into windows with compile_constraint first")
     target, weight = _soft_basics(constraint, {"windows", "mode"}, item_ids)
     mode = params.get("mode", "prefer")

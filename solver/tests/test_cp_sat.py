@@ -205,3 +205,14 @@ def test_rest_between_covers_series_occurrences() -> None:
     item = gym(range(16, 21), series_id=series_id, occurrence_date=date(2026, 11, 16))
     result = run([item], frames=[EVERY_DAY], constraints=[rest(series_ids=[series_id])])
     assert session_days(result, item) == [16, 18, 20]
+
+
+def test_a_block_in_any_preferred_range_has_no_penalty() -> None:
+    # Preferred 6-7pm or 9-10pm; 6pm is taken, so 9pm wins over the earlier 7pm.
+    gym_item = task("Gym", 60, [window(16, 17, 23)])
+    lecture = task("Lecture", None, [window(16, 18, 19)])
+    locked = Block(lecture.id, at(16, 18), at(16, 19), locked=True)
+    evenings = preference([window(16, 18, 19), window(16, 21, 22)], [gym_item])
+    result = run([gym_item, lecture], [locked], constraints=[evenings])
+    [block] = [b for b in result.blocks if b.item_id == gym_item.id]
+    assert (block.start, block.end) == (at(16, 21), at(16, 22))
