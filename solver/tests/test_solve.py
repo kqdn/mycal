@@ -5,6 +5,8 @@ positions are asserted only where a case has one valid answer.
 """
 
 import copy
+from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,6 +18,16 @@ from mycal.problem import covered_min, is_kept
 
 LA = "America/Los_Angeles"
 SETTINGS = SolverSettings(timezone=LA)
+ENGINES = ["backtracking", "cp_sat"]
+_engine = ENGINES[0]
+
+
+@pytest.fixture(autouse=True, params=ENGINES)
+def engine(request: pytest.FixtureRequest) -> Iterator[str]:
+    """Run every test in this file once per engine; run() picks it up."""
+    global _engine
+    _engine = request.param
+    yield request.param
 
 
 def at(day: int, hour: int, minute: int = 0) -> datetime:
@@ -35,6 +47,7 @@ def task(title: str, minutes: int | None, windows: list[Window], **fields: Any) 
 
 
 def run(items: list[Item], blocks: list[Block] = [], settings: SolverSettings = SETTINGS, **kw: Any) -> SolveResult:
+    settings = replace(settings, engine=_engine)
     result = solve(items, blocks, [], kw.get("constraints", []), settings)
     if result.feasible:
         assert_valid(result, items, blocks, settings)
@@ -193,7 +206,9 @@ def test_item_without_windows_is_skipped() -> None:
     assert run([task("Email advisor", 15, [])]) == SolveResult(feasible=True, blocks=[])
 
 
-def test_unmoved_block_keeps_its_spot_and_id() -> None:
+def test_unmoved_block_keeps_its_spot_and_id(engine: str) -> None:
+    if engine == "cp_sat":
+        pytest.skip("stability is part of the CP-SAT score, added in the next commit")
     item = task("Gym", 60, [window(16, 9, 12)])
     current = Block(item.id, at(16, 10), at(16, 11))
     [block] = run([item], [current]).blocks

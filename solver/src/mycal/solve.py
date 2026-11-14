@@ -5,13 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
-from mycal import backtracking
+from mycal import backtracking, cp_sat
 from mycal.model import Block, Constraint, Item, WorkFrame
 from mycal.problem import Problem, build_problem
 from mycal.settings import Engine, SolverSettings
 
 ENGINES: dict[Engine, Callable[[Problem], list[Block] | None]] = {
     "backtracking": backtracking.search,
+    "cp_sat": cp_sat.search,
 }
 
 

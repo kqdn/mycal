@@ -281,6 +281,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | CP-SAT engine added behind solve() alongside backtracking, sharing the same problem setup and tests. It runs with one worker and a fixed seed so the same week always gives the same schedule, stops at a time limit (default 10s), and raises an error if time runs out before any arrangement is found instead of reporting the week as infeasible |
 | Nov 14, 2026 | Milestone 1 demo reads a TOML week file (local times in its timezone, dependencies by title) and prints the schedule by day. Only a made-up example week is committed; real weeks stay in a gitignored folder because the repo will be public |
 | Nov 14, 2026 | First solver is hand-written backtracking behind solve(); CP-SAT comes later behind the same interface. Chunks split evenly by slots, an item with no estimate fills its single window, and the home timezone is a required solver setting. See Solver input rules |
 | Nov 14, 2026 | "Blocks on different days" is a per-item flag, one_block_per_day, off by default and copied from a series template (gym sets it, homework does not). When on, it is a hard constraint; otherwise only the soft spread-out penalty applies. An always-on rule would make a problem set due tomorrow with 4h left infeasible |
