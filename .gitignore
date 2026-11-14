@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node (web/ later)
+node_modules/
+dist/
+
+# Local data and secrets
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# Claude Code personal files (CLAUDE.md itself is committed)
+.claude/settings.local.json
+CLAUDE.local.md
+
+# OS and editors
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/

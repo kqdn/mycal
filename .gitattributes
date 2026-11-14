@@ -1,0 +1,7 @@
+# Store text files with LF line endings in the repo, whatever the OS.
+# Stops Windows CRLF line endings from showing up as whole-file diffs.
+* text=auto eol=lf
+
+# Windows scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
