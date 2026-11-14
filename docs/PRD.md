@@ -304,6 +304,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | The demo week file supports [[series]] tables, written as an RRULE string plus template fields, expanded for the week before compiling. RRULE instead of separate fields avoids a clash with the "any of these days" weekdays param and reuses the import parser |
 | Nov 14, 2026 | Recurrence built: Rule (daily or weekly, interval, weekdays), ItemTemplate and Series, with expansion into occurrence Items outside the solver. Custom is not allowed in a series template (fixed dates). RRULE COUNT is accepted and converted to end_date. "N times a week" series anchor on Monday |
 | Nov 14, 2026 | Balance compares how full each day is relative to its work frames, not raw hours, so a shorter weekend frame gets proportionally less work. Days with no work frame are left out for now; evening out the other days and hard daily limits are open questions |
 | Nov 14, 2026 | CP-SAT is the default engine and scores arrangements in strict priority order: stability, spreading an item's blocks across days, a light busiest day, then earlier in the day. Tier weights are computed from the size of the week instead of hand-tuned, so the order always holds |

@@ -1,5 +1,5 @@
 import tomllib
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -91,6 +91,37 @@ def test_duplicate_titles_rejected() -> None:
 def test_unknown_param_rejected() -> None:
     text = TINY + '\n[[items]]\ntitle = "Run"\npreset = "day"\nday = 2026-11-18\nweekday = 2\n'
     with pytest.raises(ValueError, match="weekday"):
+        week_from(text)
+
+
+SERIES = """
+[[series]]
+title = "Seminar"
+rrule = "FREQ=WEEKLY;BYDAY=WE"
+start_date = 2026-09-02
+preset = "exact"
+start_time = 14:00:00
+end_time = 15:00:00
+"""
+
+
+def test_series_occurrences_are_scheduled() -> None:
+    week = week_from(TINY + SERIES)
+    items, result = plan_week(week)
+    [seminar] = [i for i in items if i.title == "Seminar"]
+    assert (seminar.series_id, seminar.occurrence_date) == (week.series[0].id, date(2026, 11, 18))
+    assert "Wed Nov 18\n  14:00-15:00  Seminar" in format_schedule(items, result, week.settings.timezone)
+
+
+def test_series_skipped_date_is_not_scheduled() -> None:
+    week = week_from(TINY + SERIES + "skipped_dates = [2026-11-18]\n")
+    items, _ = plan_week(week)
+    assert all(i.title != "Seminar" for i in items)
+
+
+def test_series_end_given_twice_rejected() -> None:
+    text = TINY + SERIES.replace("BYDAY=WE", "BYDAY=WE;COUNT=5") + "end_date = 2026-12-31\n"
+    with pytest.raises(ValueError, match="Seminar"):
         week_from(text)
 
 

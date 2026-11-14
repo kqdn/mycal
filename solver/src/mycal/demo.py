@@ -9,21 +9,26 @@ from __future__ import annotations
 
 import sys
 import tomllib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from mycal.model import FlexPreset, Item, OnMiss, Window, WorkFrame
+from mycal.model import FlexPreset, Item, ItemTemplate, OnMiss, Series, Window, WorkFrame
 from mycal.presets import compile_windows
+from mycal.recurrence import expand_series, series_rule_from_rrule
 from mycal.settings import SolverSettings
 from mycal.solve import SolveResult, solve
 
 ITEM_FIELDS = {
     "title", "preset", "estimate_min", "max_chunk_min", "deadline", "checkable",
     "on_miss", "one_block_per_day", "depends_on",
+}
+SERIES_FIELDS = {
+    "title", "rrule", "start_date", "end_date", "skipped_dates", "preset", "estimate_min",
+    "deadline_time", "checkable", "on_miss", "max_chunk_min", "one_block_per_day",
 }
 PARAM_KEYS = {
     FlexPreset.EXACT: {"start", "end"},
@@ -41,6 +46,7 @@ class Week:
     start: date
     work_frames: list[WorkFrame]
     items: list[Item]
+    series: list[Series] = field(default_factory=list)
 
     def horizon(self) -> tuple[datetime, datetime]:
         """Monday 00:00 local to the next Monday 00:00 local, in UTC."""
@@ -80,7 +86,41 @@ def parse_week(data: dict[str, Any]) -> Week:
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Item {raw['title']!r}: {error}") from error
 
-    return Week(settings, data["week_start"], frames, items)
+    series = []
+    for raw in data.get("series", []):
+        try:
+            series.append(_parse_series(raw, timezone))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"Series {raw.get('title')!r}: {error}") from error
+
+    return Week(settings, data["week_start"], frames, items, series)
+
+
+def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
+    """A [[series]] table: an RRULE plus template fields; other keys are template params."""
+    start_date = raw["start_date"]
+    rule, rrule_end = series_rule_from_rrule(raw["rrule"], start_date)
+    if rrule_end is not None and "end_date" in raw:
+        raise ValueError("give the end in rrule (UNTIL or COUNT) or end_date, not both")
+    template = ItemTemplate(
+        flex_preset=FlexPreset(raw["preset"]),
+        preset_params={key: value for key, value in raw.items() if key not in SERIES_FIELDS},
+        estimate_min=raw.get("estimate_min"),
+        deadline_time=raw.get("deadline_time"),
+        checkable=raw.get("checkable", False),
+        on_miss=OnMiss(raw.get("on_miss", "reschedule")),
+        max_chunk_min=raw.get("max_chunk_min"),
+        one_block_per_day=raw.get("one_block_per_day", False),
+    )
+    return Series(
+        title=raw["title"],
+        rule=rule,
+        timezone=timezone,
+        start_date=start_date,
+        template=template,
+        end_date=raw.get("end_date", rrule_end),
+        skipped_dates=raw.get("skipped_dates", []),
+    )
 
 
 def _parse_item(raw: dict[str, Any], ids: dict[str, UUID], zone: ZoneInfo) -> Item:
@@ -128,12 +168,16 @@ def _to_utc(value: datetime, zone: ZoneInfo) -> datetime:
 
 
 def plan_week(week: Week) -> tuple[list[Item], SolveResult]:
-    """Compile every item's windows for the week, then solve."""
+    """Create this week's series occurrences, compile every item's windows, then solve."""
     start, end = week.horizon()
     timezone = week.settings.timezone
+    last_day = week.start + timedelta(days=6)
+    occurrences = [
+        item for s in week.series for item in expand_series(s, week.items, week.start, last_day)
+    ]
     items = [
         replace(item, windows=compile_windows(item, week.work_frames, timezone, start, end))
-        for item in week.items
+        for item in week.items + occurrences
     ]
     return items, solve(items, [], week.work_frames, [], week.settings)
 

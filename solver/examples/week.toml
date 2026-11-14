@@ -20,33 +20,43 @@ weekdays = [5, 6]
 start_time = 10:00:00
 end_time = 16:00:00
 
-# Fixed events (no estimate: each fills its window exactly)
+# Series repeat every week. `rrule` is an iCalendar RRULE (FREQ=DAILY or
+# WEEKLY, INTERVAL, BYDAY, UNTIL or COUNT). Template params hold times of day
+# only; each occurrence's date fills in the day. Optional: end_date,
+# skipped_dates.
 
-[[items]]
-title = "Algorithms lecture (Tue)"
+[[series]]
+title = "Algorithms lecture"
+rrule = "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261211"
+start_date = 2026-09-01
 preset = "exact"
-start = 2026-11-17T11:00:00
-end = 2026-11-17T12:30:00
+start_time = 11:00:00
+end_time = 12:30:00
 checkable = true
 on_miss = "catch_up"
 
-[[items]]
-title = "Algorithms lecture (Thu)"
-preset = "exact"
-start = 2026-11-19T11:00:00
-end = 2026-11-19T12:30:00
-checkable = true
-on_miss = "catch_up"
-
-# Flexible work
-
-[[items]]
+# "3 times a week": one occurrence per week, anchored on Monday, split into
+# three 1h sessions on different days.
+[[series]]
 title = "Gym"
+rrule = "FREQ=WEEKLY;BYDAY=MO"
+start_date = 2026-09-07
 preset = "days"
 weekdays = [0, 2, 4]
 estimate_min = 180
 max_chunk_min = 60
 one_block_per_day = true
+
+[[series]]
+title = "Weekly problem set"
+rrule = "FREQ=WEEKLY;BYDAY=FR"
+start_date = 2026-09-04
+preset = "before_deadline"
+deadline_time = 17:00:00
+estimate_min = 240
+max_chunk_min = 120
+
+# One-off items
 
 [[items]]
 title = "Chemistry lab"
@@ -61,13 +71,6 @@ day = 2026-11-19
 start_time = 17:00:00
 end_time = 21:00:00
 estimate_min = 30
-
-[[items]]
-title = "Problem set 9"
-preset = "before_deadline"
-deadline = 2026-11-20T17:00:00
-estimate_min = 240
-max_chunk_min = 120
 
 # A project with steps that depend on each other
 
