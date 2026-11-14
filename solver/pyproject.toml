@@ -1,0 +1,22 @@
+[project]
+name = "mycal"
+version = "0.1.0"
+description = "Data model and constraint solver for the mycal planner"
+readme = "README.md"
+authors = [
+    { name = "Kaden Kim" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ortools>=9.15.6755",
+    "tzdata>=2026.6",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

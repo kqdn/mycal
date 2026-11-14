@@ -24,8 +24,10 @@ Python dependencies are managed with uv. Ask me before adding any new dependency
 
 Run from `solver/`. Keep this section up to date when commands are added or change.
 
+- One-time setup (installs uv): `winget install --id=astral-sh.uv -e`
+- Install dependencies (also downloads Python 3.12 if needed): `uv sync`
 - Run tests: `uv run pytest`
-- Add a dependency (after I approve): `uv add <package>`
+- Add a dependency (after I approve): `uv add <package>`; dev-only: `uv add --dev <package>`
 - Demo schedule: add the command here once it exists
 
 ## Rules that must not break
@@ -35,7 +37,7 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 1. The solver is a pure function. It takes items, blocks, work frames and constraints and returns placements. No database, HTTP, file I/O or UI code inside it.
 2. Items and Blocks are separate. An Item is the what; a Block is one calendar slot for it, and an item has zero, one or many. There are no separate event and task types.
 3. Every entity has a UUID. Never use list positions as identity.
-4. All times are timezone-aware UTC. Convert to local time only for display.
+4. Exact moments in time (block start/end, windows, deadlines, completed_at) are timezone-aware UTC. Repeating times of day (WorkFrame start/end) are stored as local time plus an IANA timezone name and turned into UTC windows when presets are compiled.
 5. Slot size is one setting (default 15 minutes). Never hardcode 15.
 6. Flexibility presets compile to `windows[]`. The solver reads only windows, never the preset.
 7. Locked blocks (placed by hand) are treated as pinned by the solver.
