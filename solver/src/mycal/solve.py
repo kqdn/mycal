@@ -45,8 +45,9 @@ def solve(
             status other than planned) are kept and returned unchanged.
             Unlocked planned blocks are the current plan: they are replaced,
             and their ids and starts carry over where possible.
-        work_frames: repeating frames; already folded into windows, so the
-            current engine does not read them.
+        work_frames: repeating frames. Already folded into windows, so they
+            never decide placement; CP-SAT uses them only to measure how full
+            each day is.
         constraints: extra rules. Soft ones are ignored for now; a hard one
             raises ValueError until some engine supports its kind.
         settings: slot size, home timezone and engine.
@@ -63,7 +64,7 @@ def solve(
         `feasible=False` and no blocks when the hard constraints cannot all
         hold (a deadline is at risk).
     """
-    problem = build_problem(items, blocks, constraints, settings)
+    problem = build_problem(items, blocks, constraints, settings, work_frames)
     placed = ENGINES[settings.engine](problem)
     if placed is None:
         return SolveResult(feasible=False)

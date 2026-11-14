@@ -17,7 +17,8 @@ than the most the tiers below it can ever add up to, so a higher priority
 always wins):
     1. stability: blocks moved away from their current start
     2. spread: extra blocks of the same item on one local day
-    3. balance: minutes on the busiest local day, kept blocks included
+    3. balance: the fullest local day, as load / work-frame minutes, kept
+       blocks included (a day with no work frame is left out)
     4. earlier in the day: slots from local midnight to each block's start
 """
 
@@ -34,6 +35,7 @@ from ortools.sat.python import cp_model
 
 from mycal.model import Block
 from mycal.problem import Chunk, Problem, ceil_slot, covered_min, floor_slot, slot_start
+from mycal.windows import day_capacity_min
 
 Interval = tuple[int, int]
 
@@ -197,16 +199,24 @@ def _add_score(
             model.add(extra >= sum(on_day) + existing - 1)
             extras.append(extra)
 
-    # 3. Balance: the busiest day's load in slots.
+    # 3. Balance: the fullest day, in thousandths of that day's work-frame minutes.
+    #    "fullest >= load / capacity" is a division, but capacity is a constant per
+    #    day, so it multiplies out to the linear "fullest * capacity >= 1000 * load".
+    #    Days with no work-frame time have no capacity and are left out.
     days = {d for vars_ in day_vars for d in vars_}
     kept_load: dict[date, int] = defaultdict(int)
     for a, b in busy:
         kept_load[local_day(a)] += b - a
-    max_load = sum(c.size for c in chunks) + sum(kept_load.values())
-    busiest = model.new_int_var(0, max_load, "busiest_day")
+    capacity = {day: day_capacity_min(problem.work_frames, day, problem.settings.timezone) for day in days}
+    total_min = (sum(c.size for c in chunks) + sum(kept_load.values())) * slot_min
+    smallest = min((c for c in capacity.values() if c > 0), default=0)
+    max_fullest = 1000 * total_min // smallest + 1 if smallest else 0
+    fullest = model.new_int_var(0, max_fullest, "fullest_day")
     for day in days:
+        if capacity[day] == 0:
+            continue
         load = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
-        model.add(busiest >= load + kept_load[day])
+        model.add(fullest * capacity[day] >= 1000 * slot_min * (load + kept_load[day]))
 
     # 4. Earlier in the day: start minus the local midnight of the chunk's day.
     midnight = {
@@ -221,11 +231,11 @@ def _add_score(
     # Tier weights: each exceeds the largest possible total of all tiers below it.
     w_offset = 1
     w_balance = w_offset * (len(chunks) * slots_per_day + 1)
-    w_spread = w_balance * (max_load + 1)
+    w_spread = w_balance * (max_fullest + 1)
     w_stability = w_spread * (len(chunks) + 1)
     model.minimize(
         w_stability * sum(moved)
         + w_spread * sum(extras)
-        + w_balance * busiest
+        + w_balance * fullest
         + w_offset * sum(offsets)
     )

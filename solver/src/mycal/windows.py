@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from mycal.model import Window, WorkFrame
@@ -38,3 +38,32 @@ def work_frame_windows(frame: WorkFrame, start_date: date, end_date: date) -> li
         day += timedelta(days=1)
 
     return windows
+
+
+def merge_windows(windows: list[Window]) -> list[Window]:
+    """Sort windows and merge any that overlap or touch."""
+    merged: list[Window] = []
+    for w in sorted(windows, key=lambda w: w.start):
+        if merged and w.start <= merged[-1].end:
+            last = merged.pop()
+            w = Window(last.start, max(last.end, w.end))
+        merged.append(w)
+    return merged
+
+
+def day_capacity_min(frames: list[WorkFrame], day: date, timezone: str) -> int:
+    """Minutes of work-frame time inside one local day (midnight to midnight in `timezone`).
+
+    Overlapping frames count once, and the tail of an overnight frame from the
+    day before counts toward this day.
+    """
+    zone = ZoneInfo(timezone)
+    day_start = datetime.combine(day, time(), tzinfo=zone).astimezone(UTC)
+    day_end = datetime.combine(day + timedelta(days=1), time(), tzinfo=zone).astimezone(UTC)
+    inside = [
+        Window(max(w.start, day_start), min(w.end, day_end))
+        for frame in frames
+        for w in work_frame_windows(frame, day - timedelta(days=1), day)
+        if w.start < day_end and w.end > day_start
+    ]
+    return sum((w.end - w.start) // timedelta(minutes=1) for w in merge_windows(inside))

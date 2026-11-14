@@ -8,11 +8,11 @@ by the item's deadline.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from mycal.model import Block, BlockStatus, Constraint, Item
+from mycal.model import Block, BlockStatus, Constraint, Item, WorkFrame
 from mycal.settings import SolverSettings
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -35,6 +35,7 @@ class Problem:
     items: dict[UUID, Item]
     kept: list[Block]
     chunks: list[Chunk]
+    work_frames: list[WorkFrame] = field(default_factory=list)
 
 
 def floor_slot(moment: datetime, slot_min: int) -> int:
@@ -69,8 +70,12 @@ def build_problem(
     blocks: list[Block],
     constraints: list[Constraint],
     settings: SolverSettings,
+    work_frames: list[WorkFrame] = [],
 ) -> Problem:
     """Work out the kept blocks and the chunks still to place.
+
+    Work frames are passed through only so engines can measure each day's
+    capacity; placement still follows item windows alone.
 
     Raises ValueError for a hard constraint kind no engine supports yet, so a
     rule is never silently dropped, and for an item with no estimate and more
@@ -89,7 +94,7 @@ def build_problem(
         item_old = [b for b in replaced if b.item_id == item.id]
         chunks.extend(_item_chunks(item, item_kept, item_old, settings.slot_min))
 
-    return Problem(settings, {item.id: item for item in items}, kept, chunks)
+    return Problem(settings, {item.id: item for item in items}, kept, chunks, list(work_frames))
 
 
 def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int) -> list[Chunk]:

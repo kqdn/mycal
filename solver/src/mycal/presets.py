@@ -20,7 +20,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from mycal.model import FlexPreset, Item, Window, WorkFrame
-from mycal.windows import work_frame_windows
+from mycal.windows import merge_windows, work_frame_windows
 
 
 def compile_windows(
@@ -75,7 +75,7 @@ def compile_windows(
     else:
         raise ValueError(f"Unknown preset {preset!r}")
 
-    return _merge(_clip(windows, horizon_start, horizon_end))
+    return merge_windows(_clip(windows, horizon_start, horizon_end))
 
 
 def _param(params: dict[str, Any], key: str, kind: type) -> Any:
@@ -118,14 +118,3 @@ def _clip(windows: list[Window], start: datetime, end: datetime) -> list[Window]
         if lo < hi:
             clipped.append(Window(lo, hi))
     return clipped
-
-
-def _merge(windows: list[Window]) -> list[Window]:
-    """Sort windows and merge any that overlap or touch."""
-    merged: list[Window] = []
-    for w in sorted(windows, key=lambda w: w.start):
-        if merged and w.start <= merged[-1].end:
-            last = merged.pop()
-            w = Window(last.start, max(last.end, w.end))
-        merged.append(w)
-    return merged

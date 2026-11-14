@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from mycal import Window, WorkFrame, work_frame_windows
+from mycal.windows import day_capacity_min
 
 LA = "America/Los_Angeles"
 EVERY_DAY = list(range(7))
@@ -43,6 +44,18 @@ def test_overnight_frame_through_clock_change_is_one_hour_shorter() -> None:
     # 10pm PST to 4am PDT: the clock shows 6 hours, 5 actually pass.
     assert windows == [Window(utc(2027, 3, 14, 6), utc(2027, 3, 14, 11))]
     assert windows[0].end - windows[0].start == timedelta(hours=5)
+
+
+def test_day_capacity_counts_overlapping_frames_once() -> None:
+    morning = WorkFrame("Morning", EVERY_DAY, time(9), time(13), LA)
+    afternoon = WorkFrame("Afternoon", EVERY_DAY, time(12), time(18), LA)
+    assert day_capacity_min([morning, afternoon], date(2026, 11, 18), LA) == 9 * 60
+
+
+def test_day_capacity_includes_overnight_tail_from_the_day_before() -> None:
+    late = WorkFrame("Late nights", [FRIDAY], time(21), time(1), LA)
+    assert day_capacity_min([late], date(2026, 11, 20), LA) == 3 * 60  # Fri 9pm to midnight
+    assert day_capacity_min([late], date(2026, 11, 21), LA) == 60  # Sat midnight to 1am
 
 
 def test_reversed_date_range_rejected() -> None:
