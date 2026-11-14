@@ -4,7 +4,7 @@ from datetime import time, timedelta
 
 from test_solve import LA, assert_valid, at, task, window
 
-from mycal import Block, Item, SolveResult, SolverSettings, WorkFrame, solve
+from mycal import Block, Item, SolveResult, SolverSettings, Window, WorkFrame, solve
 
 CP_SAT = SolverSettings(timezone=LA, engine="cp_sat")
 MON, TUE, SAT = 0, 1, 5
@@ -32,8 +32,24 @@ def test_an_items_blocks_spread_across_days() -> None:
     assert spans(run([pset])) == [(at(16, 9), at(16, 10)), (at(17, 9), at(17, 10))]
 
 
-# In the balance tests, "earlier in the day" alone would pick Monday, so landing
-# on Tuesday shows balance at work.
+def test_overnight_frame_prefers_its_start_over_midnight() -> None:
+    # Mon 10pm to Tue 2am. Counting from local midnight would pick Tue 12am.
+    late = Window(at(16, 22), at(17, 2))
+    item = task("Read", 60, [late])
+    assert spans(run([item])) == [(at(16, 22), at(16, 23))]
+
+
+def test_frame_counts_from_its_real_start_before_the_window() -> None:
+    # Sun 8pm to Mon 2am frames, but the item may only start from Mon 12am, as
+    # when Sunday's frame runs into the planning week. Mon 12am is still late
+    # in that frame, so Mon 8pm wins.
+    nights = WorkFrame("Nights", [6, MON], time(20), time(2), LA)
+    item = task("Read", 60, [Window(at(16, 0), at(16, 2)), window(16, 20, 23)])
+    assert spans(run([item], frames=[nights])) == [(at(16, 20), at(16, 21))]
+
+
+# In the balance tests, Monday is at least as early in its window as Tuesday,
+# so landing on Tuesday shows balance at work.
 
 
 def test_fullest_day_is_kept_light() -> None:

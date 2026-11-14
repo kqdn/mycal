@@ -20,21 +20,22 @@ always wins):
     2. spread: extra blocks of the same item on one local day
     3. balance: the fullest local day, as load / work-frame minutes, kept
        blocks included (a day with no work frame is left out)
-    4. earlier in the day: slots from local midnight to each block's start
+    4. earlier in the frame: slots from the start of the work-frame
+       occurrence (else the item window) holding each block's start
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from datetime import UTC, date, datetime, time
+from datetime import date, timedelta
 from functools import cache
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
-from mycal.model import Block
+from mycal.model import Block, Window
 from mycal.problem import (
     Chunk,
     Problem,
@@ -45,7 +46,7 @@ from mycal.problem import (
     kept_minutes_by_day,
     slot_start,
 )
-from mycal.windows import day_capacity_min
+from mycal.windows import day_capacity_min, work_frame_windows
 
 Interval = tuple[int, int]
 
@@ -189,7 +190,6 @@ def _add_score(
     chunks = problem.chunks
     slot_min = problem.settings.slot_min
     zone = ZoneInfo(problem.settings.timezone)
-    slots_per_day = 24 * 60 // slot_min + 4  # +4 covers the 25-hour fall-back day
 
     # 1. Stability: a chunk is "moved" unless it starts where its old block did.
     moved = []
@@ -237,19 +237,34 @@ def _add_score(
         load = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
         model.add(fullest * capacity[day] >= 1000 * slot_min * (load + kept_load[day]))
 
-    # 4. Earlier in the day: start minus the local midnight of the chunk's day.
-    midnight = {
-        day: ceil_slot(datetime.combine(day, time(), tzinfo=zone).astimezone(UTC), slot_min)
-        for day in days
-    }
-    offsets = [
-        starts[i] - sum(midnight[day] * on_day for day, on_day in vars_.items())
-        for i, vars_ in enumerate(day_vars)
-    ]
+    # 4. Earlier in the frame: slots from the start of the work-frame occurrence
+    #    holding each start, so a 12pm to 2am frame prefers 12pm over 12am. The
+    #    whole occurrence counts, even the part before the planning week, and a
+    #    start outside every frame counts from the start of its item window.
+    #    The anchor changes from frame to frame, so "start minus anchor" is not
+    #    linear; a table constraint lists the allowed (start, offset) pairs.
+    all_starts = [s for c in chunks for s in c.candidates]
+    frames: list[Interval] = []
+    if all_starts:
+        first, last = local_day(min(all_starts)), local_day(max(all_starts))
+        frames = _spans(
+            [w for f in problem.work_frames for w in work_frame_windows(f, first - timedelta(days=1), last)],
+            slot_min,
+        )
+    offsets = []
+    max_offset_total = 0
+    for i, chunk in enumerate(chunks):
+        own = _spans(problem.items[chunk.item_id].windows, slot_min)
+        pairs = [(s, s - _anchor_of(s, frames, own)) for s in chunk.candidates]
+        max_offset = max(o for _, o in pairs)
+        max_offset_total += max_offset
+        offset = model.new_int_var(0, max_offset, f"offset_{i}")
+        model.add_allowed_assignments([starts[i], offset], pairs)
+        offsets.append(offset)
 
     # Tier weights: each exceeds the largest possible total of all tiers below it.
     w_offset = 1
-    w_balance = w_offset * (len(chunks) * slots_per_day + 1)
+    w_balance = w_offset * (max_offset_total + 1)
     w_spread = w_balance * (max_fullest + 1)
     w_stability = w_spread * (len(chunks) + 1)
     model.minimize(
@@ -258,3 +273,16 @@ def _add_score(
         + w_balance * fullest
         + w_offset * sum(offsets)
     )
+
+
+def _spans(windows: list[Window], slot_min: int) -> list[Interval]:
+    """Each window as (first start slot, end slot), sorted by start."""
+    return sorted((ceil_slot(w.start, slot_min), floor_slot(w.end, slot_min)) for w in windows)
+
+
+def _anchor_of(slot: int, frames: list[Interval], own: list[Interval]) -> int:
+    """First slot of the earliest frame occurrence holding `slot`, else of its item window."""
+    for a, b in frames + own:
+        if a <= slot < b:
+            return a
+    return slot

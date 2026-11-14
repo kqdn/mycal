@@ -156,7 +156,7 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 1. Stability: number of blocks moved from their current start
 2. Spread: extra blocks of the same item on one local day
 3. Balance: the fullest local day, measured as scheduled minutes divided by that day's work-frame minutes, kept blocks included. A short weekend frame gets proportionally less work. Days with no work-frame time are left out
-4. Earlier in the day: how far into its local day each block starts
+4. Earlier in the frame: how far into its work-frame occurrence each block starts, counting the whole occurrence even when it began before the planning week. A block outside every frame counts from the start of its item window
 
 Time preferences and buffers come later as Constraint kinds. The backtracking engine does not score; it returns the first valid arrangement.
 
@@ -310,6 +310,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | "Earlier in the day" becomes "earlier in the frame": offsets count from the start of the work-frame occurrence holding the block, not local midnight, so a 12pm to 2am frame prefers 12pm over 12am. Sunday's overnight frame keeps its real start, so Mon 12am is late, not early. Starts outside every frame fall back to the item window's start |
 | Nov 14, 2026 | Hard daily limits built as the daily_limit Constraint kind in both engines. Everything on the day counts, including fixed events; limits are by weekday only (a dates param can come later); soft limits are rejected for now. Kept blocks over a limit close that day instead of making the week infeasible |
 | Nov 14, 2026 | Days with no work frame stay out of balance. Only explicitly placed items can land there, since flexible windows come from work frames, so the effect is small |
 | Nov 14, 2026 | Tie-breakers after stability are settled by the CP-SAT score order: spread an item across days, then a light fullest day, then earlier in the day. Revisit when time preferences are added. Hard daily limits move from open questions to Features (v2) |
