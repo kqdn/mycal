@@ -10,13 +10,22 @@ Each chunk also gets one true/false variable per local day it could start on;
 exactly one is true, and when it is, the start must be one of that day's
 candidates. This is reification: a constraint that only holds when a boolean
 is true (OnlyEnforceIf). The day variables express one_block_per_day as "at
-most one per item per day".
+most one per item per day", and make the score below linear.
+
+Score, minimized, in strict priority order (each tier's weight is larger
+than the most the tiers below it can ever add up to, so a higher priority
+always wins):
+    1. stability: blocks moved away from their current start
+    2. spread: extra blocks of the same item on one local day
+    3. balance: minutes on the busiest local day, kept blocks included
+    4. earlier in the day: slots from local midnight to each block's start
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from collections.abc import Callable
+from datetime import UTC, date, datetime, time
 from functools import cache
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -119,6 +128,8 @@ def search(problem: Problem) -> list[Block] | None:
             for day in {d for i in mine for d in day_vars[i]}:
                 model.add_at_most_one(day_vars[i][day] for i in mine if day in day_vars[i])
 
+    _add_score(model, problem, starts, day_vars, chunks_of, busy, local_day)
+
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = settings.time_limit_s
     solver.parameters.num_workers = 1  # deterministic: same week, same schedule
@@ -142,3 +153,79 @@ def search(problem: Problem) -> list[Block] | None:
         )
         for i, chunk in enumerate(chunks)
     ]
+
+
+def _add_score(
+    model: cp_model.CpModel,
+    problem: Problem,
+    starts: list[cp_model.IntVar],
+    day_vars: list[dict[date, cp_model.IntVar]],
+    chunks_of: dict[UUID, list[int]],
+    busy: list[Interval],
+    local_day: Callable[[int], date],
+) -> None:
+    """Add the four score terms and minimize them in priority order."""
+    chunks = problem.chunks
+    slot_min = problem.settings.slot_min
+    zone = ZoneInfo(problem.settings.timezone)
+    slots_per_day = 24 * 60 // slot_min + 4  # +4 covers the 25-hour fall-back day
+
+    # 1. Stability: a chunk is "moved" unless it starts where its old block did.
+    moved = []
+    for i, chunk in enumerate(chunks):
+        if chunk.previous_start is None:
+            continue
+        model.add_hint(starts[i], chunk.previous_start)
+        is_moved = model.new_bool_var(f"moved_{i}")
+        model.add(starts[i] == chunk.previous_start).only_enforce_if(~is_moved)
+        moved.append(is_moved)
+
+    # 2. Spread: per item and day, blocks beyond the first (kept blocks count too).
+    kept_count: dict[tuple[UUID, date], int] = defaultdict(int)
+    for block in problem.kept:
+        kept_count[(block.item_id, block.start.astimezone(zone).date())] += 1
+    extras = []
+    for item_id, mine in chunks_of.items():
+        if problem.items[item_id].one_block_per_day:
+            continue  # already at most one per day
+        for day in {d for i in mine for d in day_vars[i]}:
+            on_day = [day_vars[i][day] for i in mine if day in day_vars[i]]
+            existing = kept_count[(item_id, day)]
+            if len(on_day) + existing < 2:
+                continue
+            extra = model.new_int_var(0, len(on_day), f"extra_{item_id}_{day}")
+            model.add(extra >= sum(on_day) + existing - 1)
+            extras.append(extra)
+
+    # 3. Balance: the busiest day's load in slots.
+    days = {d for vars_ in day_vars for d in vars_}
+    kept_load: dict[date, int] = defaultdict(int)
+    for a, b in busy:
+        kept_load[local_day(a)] += b - a
+    max_load = sum(c.size for c in chunks) + sum(kept_load.values())
+    busiest = model.new_int_var(0, max_load, "busiest_day")
+    for day in days:
+        load = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
+        model.add(busiest >= load + kept_load[day])
+
+    # 4. Earlier in the day: start minus the local midnight of the chunk's day.
+    midnight = {
+        day: ceil_slot(datetime.combine(day, time(), tzinfo=zone).astimezone(UTC), slot_min)
+        for day in days
+    }
+    offsets = [
+        starts[i] - sum(midnight[day] * on_day for day, on_day in vars_.items())
+        for i, vars_ in enumerate(day_vars)
+    ]
+
+    # Tier weights: each exceeds the largest possible total of all tiers below it.
+    w_offset = 1
+    w_balance = w_offset * (len(chunks) * slots_per_day + 1)
+    w_spread = w_balance * (max_load + 1)
+    w_stability = w_spread * (len(chunks) + 1)
+    model.minimize(
+        w_stability * sum(moved)
+        + w_spread * sum(extras)
+        + w_balance * busiest
+        + w_offset * sum(offsets)
+    )

@@ -150,6 +150,15 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 - Buffer between events; avoid long back-to-back runs
 - Spread a project's work out instead of cramming the last day
 
+**Implemented so far** (CP-SAT engine, strict priority order: each tier always beats everything below it)
+
+1. Stability: number of blocks moved from their current start
+2. Spread: extra blocks of the same item on one local day
+3. Balance: minutes on the busiest local day, locked and other kept blocks included
+4. Earlier in the day: how far into its local day each block starts
+
+Time preferences and buffers come later as Constraint kinds. The backtracking engine does not score; it returns the first valid arrangement.
+
 **Objective.** Minimize the weighted sum of soft penalties, subject to all hard constraints. No feasible solution means a deadline is at risk, which triggers the feasibility warning.
 
 **Solver input rules**
@@ -281,6 +290,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | CP-SAT is the default engine and scores arrangements in strict priority order: stability, spreading an item's blocks across days, a light busiest day, then earlier in the day. Tier weights are computed from the size of the week instead of hand-tuned, so the order always holds |
 | Nov 14, 2026 | CP-SAT engine added behind solve() alongside backtracking, sharing the same problem setup and tests. It runs with one worker and a fixed seed so the same week always gives the same schedule, stops at a time limit (default 10s), and raises an error if time runs out before any arrangement is found instead of reporting the week as infeasible |
 | Nov 14, 2026 | Milestone 1 demo reads a TOML week file (local times in its timezone, dependencies by title) and prints the schedule by day. Only a made-up example week is committed; real weeks stay in a gitignored folder because the repo will be public |
 | Nov 14, 2026 | First solver is hand-written backtracking behind solve(); CP-SAT comes later behind the same interface. Chunks split evenly by slots, an item with no estimate fills its single window, and the home timezone is a required solver setting. See Solver input rules |

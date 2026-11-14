@@ -22,7 +22,7 @@ class SolverSettings:
 
     timezone: str
     slot_min: int = 15
-    engine: Engine = "backtracking"
+    engine: Engine = "cp_sat"
     time_limit_s: float = 10.0
 
     def __post_init__(self) -> None:

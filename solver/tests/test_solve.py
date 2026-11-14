@@ -206,9 +206,7 @@ def test_item_without_windows_is_skipped() -> None:
     assert run([task("Email advisor", 15, [])]) == SolveResult(feasible=True, blocks=[])
 
 
-def test_unmoved_block_keeps_its_spot_and_id(engine: str) -> None:
-    if engine == "cp_sat":
-        pytest.skip("stability is part of the CP-SAT score, added in the next commit")
+def test_unmoved_block_keeps_its_spot_and_id() -> None:
     item = task("Gym", 60, [window(16, 9, 12)])
     current = Block(item.id, at(16, 10), at(16, 11))
     [block] = run([item], [current]).blocks
