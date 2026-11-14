@@ -11,6 +11,7 @@ from mycal.model import (
     WorkFrame,
 )
 from mycal.solve import SolveResult, SolverSettings, solve
+from mycal.windows import work_frame_windows
 
 __all__ = [
     "Block",
@@ -24,4 +25,5 @@ __all__ = [
     "Window",
     "WorkFrame",
     "solve",
+    "work_frame_windows",
 ]

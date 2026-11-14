@@ -165,7 +165,7 @@ Four core entities (Item, Block, WorkFrame, Constraint), all keyed by UUID, all 
 | --- | --- | --- |
 | Item | id, title, flex_preset, preset_params (JSON), windows[] ({start, end}), checkable, estimate_min, deadline, parent_id, depends_on[], max_chunk_min, on_miss (reschedule / catch_up / skip / ask), catch_up_of | windows[] is generated from the preset; the solver reads only windows. Subtasks are items with a parent_id. catch_up_of is the id of the missed Block |
 | Block | id, item_id, start, end, locked, status (planned / done / partial / missed / unanswered), completed_at, actual_min | Many blocks per item; locked = placed by hand, solver must keep it |
-| WorkFrame | id, name, weekdays[], start_time, end_time, timezone | Default source of windows for flexible presets. start_time and end_time are local times in timezone (an IANA name); end before start means the frame crosses midnight |
+| WorkFrame | id, name, weekdays[], start_time, end_time, timezone | Default source of windows for flexible presets. start_time and end_time are local times in timezone (an IANA name); end before start means the frame crosses midnight, and weekdays[] names the day it starts |
 | Constraint | id, kind, params (JSON), weight, hard (bool) | New rule types need no schema change |
 
 **Rules**
@@ -221,6 +221,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | A WorkFrame's weekdays name the day it starts, so a Fri 9pm to 1am frame belongs to Friday. Local times convert to UTC separately for each date, so frames keep their local hours across DST |
 | Nov 14, 2026 | This file becomes the source of truth instead of the claude.ai doc. WorkFrame times are local times plus an IANA timezone (UTC times of day drift across DST); a frame whose end is before its start crosses midnight. catch_up_of holds the missed Block's id |
 | Nov 13, 2026 | Arrangement preview compares against the current plan: a toggle on the same grid, From or To tags with a direction arrow (day shown only when it changes), a changes list, and one old spot shown at a time. Always-on dashed strips for old positions were dropped because they do not scale past a few moves |
 | Nov 13, 2026 | Prototype is a clickable canvas of five screens; earlier Week versions are kept (v1 to v4) so design choices stay traceable |
