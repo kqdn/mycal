@@ -1,10 +1,12 @@
 """CP-SAT score tests. Each case has one best answer, so exact positions are asserted."""
 
-from datetime import time, timedelta
+from datetime import date, time, timedelta
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from test_solve import LA, assert_valid, at, task, window
 
-from mycal import Block, Constraint, Item, SolveResult, SolverSettings, Window, WorkFrame, solve
+from mycal import Block, BlockStatus, Constraint, Item, SolveResult, SolverSettings, Window, WorkFrame, solve
 
 CP_SAT = SolverSettings(timezone=LA, engine="cp_sat")
 MON, TUE, SAT = 0, 1, 5
@@ -152,3 +154,54 @@ def test_heavier_preference_wins() -> None:
     afternoon = preference([window(16, 15, 16)], [read])
     afternoon.weight = 2
     assert spans(run([read], constraints=[morning, afternoon])) == [(at(16, 15), at(16, 16))]
+
+
+EVERY_DAY = WorkFrame("Every day", list(range(7)), time(9), time(17), LA)
+
+
+def rest(items: list[Item] = [], min_gap_days: int = 1, series_ids: list = []) -> Constraint:
+    params = {"min_gap_days": min_gap_days, "item_ids": [i.id for i in items], "series_ids": series_ids}
+    return Constraint(kind="rest_between", params=params)
+
+
+def gym(days: range, minutes: int = 180, **fields) -> Item:
+    return task("Gym", minutes, [window(d, 9, 17) for d in days], max_chunk_min=60, one_block_per_day=True, **fields)
+
+
+def session_days(result: SolveResult, item: Item) -> list[int]:
+    return sorted(b.start.astimezone(ZoneInfo(LA)).day for b in result.blocks if b.item_id == item.id)
+
+
+def test_sessions_leave_a_rest_day_between() -> None:
+    item = gym(range(16, 21))  # Mon to Fri: only Mon, Wed, Fri leaves rest days
+    result = run([item], frames=[EVERY_DAY], constraints=[rest([item])])
+    assert session_days(result, item) == [16, 18, 20]
+
+
+def test_longer_gap() -> None:
+    item = gym(range(16, 20), minutes=120)  # Mon to Thu, two free days wanted
+    result = run([item], frames=[EVERY_DAY], constraints=[rest([item], min_gap_days=2)])
+    assert session_days(result, item) == [16, 19]
+
+
+def test_done_session_counts_toward_the_gaps() -> None:
+    # Gym moved to Tuesday this week and is done; the other two space around it.
+    item = gym(range(16, 23))
+    done = Block(item.id, at(17, 9), at(17, 10), status=BlockStatus.DONE, actual_min=60)
+    result = run([item], [done], frames=[EVERY_DAY], constraints=[rest([item])])
+    days = session_days(result, item)
+    assert 17 in days and len(days) == 3
+    assert all(b - a >= 2 for a, b in zip(days, days[1:]))
+
+
+def test_back_to_back_is_allowed_when_nothing_else_fits() -> None:
+    item = gym(range(16, 18), minutes=120)  # only Mon and Tue
+    result = run([item], frames=[EVERY_DAY], constraints=[rest([item])])
+    assert session_days(result, item) == [16, 17]
+
+
+def test_rest_between_covers_series_occurrences() -> None:
+    series_id = uuid4()
+    item = gym(range(16, 21), series_id=series_id, occurrence_date=date(2026, 11, 16))
+    result = run([item], frames=[EVERY_DAY], constraints=[rest(series_ids=[series_id])])
+    assert session_days(result, item) == [16, 18, 20]

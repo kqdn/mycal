@@ -19,7 +19,8 @@ always wins):
     1. stability: blocks moved away from their current start
     2. spread: extra blocks of the same item on one local day
     3. preferences: weighted soft constraints (time_preference: a block's
-       slots on the wrong side of its preferred or avoided windows)
+       slots on the wrong side of its preferred or avoided windows;
+       rest_between: sessions too few days apart)
     4. balance: the fullest local day, as load / work-frame minutes, kept
        blocks included (a day with no work frame is left out)
     5. earlier in the frame: slots from the start of the work-frame
@@ -222,7 +223,9 @@ def _add_score(
             extras.append(extra)
 
     # 3. Preferences: weighted soft constraints.
-    preferences, max_preferences = _time_preference_penalties(model, problem, starts)
+    times, max_times = _time_preference_penalties(model, problem, starts)
+    rests, max_rests = _rest_penalties(model, problem, day_vars, chunks_of)
+    preferences, max_preferences = times + rests, max_times + max_rests
 
     # 4. Balance: the fullest day, in thousandths of that day's work-frame minutes.
     #    "fullest >= load / capacity" is a division, but capacity is a constant per
@@ -312,6 +315,57 @@ def _time_preference_penalties(
         penalties.append(penalty)
         bound += top
     return sum(penalties), bound
+
+
+def _rest_penalties(
+    model: cp_model.CpModel,
+    problem: Problem,
+    day_vars: list[dict[date, cp_model.IntVar]],
+    chunks_of: dict[UUID, list[int]],
+) -> tuple[cp_model.LinearExprT, int]:
+    """Weighted cost of session pairs that sit too few days apart.
+
+    One boolean per pair of sessions. For every pair of days that would be too
+    close, "chunk i on day d and chunk j on day e" implies the boolean, written
+    as the clause (not d) or (not e) or too_close. Minimizing keeps the boolean
+    false unless some close pair really happens. A kept session is a fixed day.
+    """
+    zone = ZoneInfo(problem.settings.timezone)
+    slot_min = problem.settings.slot_min
+    terms: list[cp_model.LinearExprT] = []
+    bound = 0
+    for r, rest in enumerate(problem.rests):
+        for item_id, mine in chunks_of.items():
+            if not rest.target.matches(problem.items[item_id]):
+                continue
+            kept = [
+                (b.start.astimezone(zone).date(), max(1, covered_min(b) // slot_min))
+                for b in problem.kept
+                if b.item_id == item_id and covered_min(b) > 0
+            ]
+            for a, i in enumerate(mine):
+                size_i = problem.chunks[i].size
+                others = [(day_vars[j], problem.chunks[j].size) for j in mine[a + 1 :]]
+                others += [({day: None}, size) for day, size in kept]
+                for days_j, size_j in others:
+                    close = [
+                        (d, e)
+                        for d in day_vars[i]
+                        for e in days_j
+                        if abs((d - e).days) <= rest.min_gap_days
+                    ]
+                    if not close:
+                        continue
+                    too_close = model.new_bool_var(f"rest_{r}_{i}_{len(terms)}")
+                    for d, e in close:
+                        literals = [~day_vars[i][d], too_close]
+                        if days_j[e] is not None:
+                            literals.append(~days_j[e])
+                        model.add_bool_or(literals)
+                    cost = rest.weight * min(size_i, size_j)
+                    terms.append(cost * too_close)
+                    bound += cost
+    return sum(terms), bound
 
 
 def _preference_cost(start: int, size: int, prefs: list[tuple[TimePreference, set[int]]]) -> int:

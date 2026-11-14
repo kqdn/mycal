@@ -74,6 +74,20 @@ class TimePreference:
     weight: int
 
 
+@dataclass(frozen=True, slots=True)
+class RestBetween:
+    """Soft: two sessions of a matching item should be more than `min_gap_days` local days apart.
+
+    Each pair that is too close costs the shorter session's length in slots,
+    times `weight`, so a missed rest day weighs about as much as one session at
+    a non-preferred time. Kept blocks that count as done work count as sessions.
+    """
+
+    target: Target
+    min_gap_days: int
+    weight: int
+
+
 @dataclass(slots=True)
 class Problem:
     settings: SolverSettings
@@ -83,6 +97,7 @@ class Problem:
     work_frames: list[WorkFrame] = field(default_factory=list)
     daily_limits: list[DailyLimit] = field(default_factory=list)
     preferences: list[TimePreference] = field(default_factory=list)
+    rests: list[RestBetween] = field(default_factory=list)
 
 
 def day_limit_min(limits: list[DailyLimit], day: date) -> int | None:
@@ -143,7 +158,7 @@ def build_problem(
     soft kinds are ignored), so a rule is never silently dropped, for bad
     constraint params, and for an item with no estimate and more than one window.
     """
-    daily_limits, preferences = _parse_constraints(constraints, {item.id for item in items})
+    daily_limits, preferences, rests = _parse_constraints(constraints, {item.id for item in items})
 
     kept = [b for b in blocks if is_kept(b)]
     replaced = sorted((b for b in blocks if not is_kept(b)), key=lambda b: b.start)
@@ -162,13 +177,14 @@ def build_problem(
         work_frames=list(work_frames),
         daily_limits=daily_limits,
         preferences=preferences,
+        rests=rests,
     )
 
 
 def _parse_constraints(
     constraints: list[Constraint], item_ids: set[UUID]
-) -> tuple[list[DailyLimit], list[TimePreference]]:
-    limits, preferences = [], []
+) -> tuple[list[DailyLimit], list[TimePreference], list[RestBetween]]:
+    limits, preferences, rests = [], [], []
     for constraint in constraints:
         if constraint.kind == "daily_limit":
             if not constraint.hard:
@@ -176,9 +192,11 @@ def _parse_constraints(
             limits.append(_parse_daily_limit(constraint.params))
         elif constraint.kind == "time_preference":
             preferences.append(_parse_time_preference(constraint, item_ids))
+        elif constraint.kind == "rest_between":
+            rests.append(_parse_rest_between(constraint, item_ids))
         elif constraint.hard:
             raise ValueError(f"Hard constraint kind {constraint.kind!r} is not supported yet")
-    return limits, preferences
+    return limits, preferences, rests
 
 
 def _soft_basics(constraint: Constraint, allowed: set[str], item_ids: set[UUID]) -> tuple[Target, int]:
@@ -217,6 +235,15 @@ def _parse_time_preference(constraint: Constraint, item_ids: set[UUID]) -> TimeP
     if not isinstance(windows, list) or not all(isinstance(w, Window) for w in windows):
         raise ValueError(f"time_preference windows must be a list of Window, got {windows!r}")
     return TimePreference(target, mode == "avoid", tuple(windows), weight)
+
+
+def _parse_rest_between(constraint: Constraint, item_ids: set[UUID]) -> RestBetween:
+    """Params: min_gap_days (free days wanted between sessions, default 1), optional targets."""
+    target, weight = _soft_basics(constraint, {"min_gap_days"}, item_ids)
+    gap = constraint.params.get("min_gap_days", 1)
+    if not isinstance(gap, int) or isinstance(gap, bool) or gap < 1:
+        raise ValueError(f"rest_between min_gap_days must be a positive integer, got {gap!r}")
+    return RestBetween(target, gap, weight)
 
 
 def _parse_daily_limit(params: dict[str, Any]) -> DailyLimit:

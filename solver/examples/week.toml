@@ -42,6 +42,14 @@ weekdays = [0, 1, 2, 3, 4]
 start_time = 16:00:00
 end_time = 18:00:00
 
+# rest_between: sessions of the same item should have at least min_gap_days
+# free days between them. Done sessions count, so if one moves, the rest
+# re-space around it.
+[[constraints]]
+kind = "rest_between"
+items = ["Gym"]
+min_gap_days = 1
+
 # Series repeat every week. `rrule` is an iCalendar RRULE (FREQ=DAILY or
 # WEEKLY, INTERVAL, BYDAY, UNTIL or COUNT). Template params hold times of day
 # only; each occurrence's date fills in the day. Optional: end_date,

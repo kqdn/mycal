@@ -135,3 +135,23 @@ def test_target_matches_items_and_series_occurrences() -> None:
     assert not Target(item_ids=frozenset({plain.id})).matches(occurrence)
     assert Target(series_ids=frozenset({series_id})).matches(occurrence)
     assert not Target(series_ids=frozenset({series_id})).matches(plain)
+
+
+def test_rest_between_defaults_to_one_free_day() -> None:
+    [parsed] = build_problem([], [], [Constraint(kind="rest_between")], SETTINGS).rests
+    assert (parsed.min_gap_days, parsed.weight) == (1, 100)
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        Constraint(kind="rest_between", hard=True),
+        Constraint(kind="rest_between", params={"min_gap_days": 0}),
+        Constraint(kind="rest_between", params={"min_gap_days": 1.5}),
+        Constraint(kind="rest_between", params={"gap": 1}),
+        Constraint(kind="rest_between", params={"series_ids": ["gym"]}),
+    ],
+)
+def test_bad_rest_between_rejected(constraint: Constraint) -> None:
+    with pytest.raises(ValueError, match="rest_between"):
+        build_problem([], [], [constraint], SETTINGS)

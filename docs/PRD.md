@@ -121,6 +121,7 @@ The MVP is "plan my week and show my progress"; the smarter re-planning comes ri
 | Re-optimize button | v2 | Full re-solve, with a penalty for moving things |
 | Hard daily limits | v2 | Built: the daily_limit Constraint kind, e.g. "at most 3h on weekends" (see Constraint kinds) |
 | Time preferences | v2 | Built: the soft time_preference Constraint kind, e.g. "gym in the afternoon", "no essays after 11pm" (see Constraint kinds) |
+| Rest days between sessions | v2 | Built: the soft rest_between Constraint kind, e.g. a free day between gym sessions, re-spacing around a session that moved (see Constraint kinds) |
 | Feasibility warning | v2 | "You need 6h but only have 4h before Friday" |
 | Streaks / days at 100% | v2 |  |
 | Google Calendar sync | v2 | Read first, two-way later |
@@ -180,6 +181,7 @@ Buffers come later as Constraint kinds. The backtracking engine does not score; 
 | Kind | Params | Meaning |
 | --- | --- | --- |
 | time_preference (soft only) | windows[] (UTC), mode (prefer or avoid, default prefer), targets | Penalty: a block's minutes outside the windows (prefer) or inside them (avoid), times weight, so a block that half fits gets half the penalty. Authored as weekdays[] plus local start_time and end_time; these compile to windows for the horizon outside the solver, like presets. Days not listed count as outside |
+| rest_between (soft only) | min_gap_days (default 1), targets | Two sessions of the same matching item should have at least min_gap_days free local days between them; the same day counts as too close. Each pair too close costs the shorter session's length times weight, so a missed rest day weighs about as much as one session at a non-preferred time. Kept blocks that count as done work (done, partial, locked) are sessions too, so the rest re-space around a session that moved |
 | daily_limit (hard only) | max_min, optional weekdays[] (default every day) | Scheduled minutes on each matching local day stay at or under max_min. Every block counts toward the day it starts on, fixed events included. If kept blocks alone are over, nothing more is placed that day rather than the week failing |
 
 Soft kinds target items with item_ids[] and series_ids[] (both empty means every item). A series id covers every occurrence, so a rule keeps working when next week's occurrence gets a new item id. An unknown item id is an error. In a week file, `items = [titles]` names items or series.
@@ -309,12 +311,14 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 **Open questions**
 
 - [ ] Name for the app
+- [ ] rest_between sees only this week's input, so last Sunday's session does not stop one on Monday. Pass recent done blocks from the previous week, or a rule of its own?
 - [ ] Balance only limits the fullest day; should a second term even out the other days too? Revisit if real weeks look uneven
 
 **Decision log** (newest first)
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Rest days built as the soft rest_between Constraint kind, in the preferences tier. Rest is counted per item (an "N times a week" series has one occurrence per week, so this covers gym), and done or locked sessions count so a moved session re-spaces the rest. Sessions from the previous week are not seen yet (see Open questions) |
 | Nov 14, 2026 | Time preferences built as the soft time_preference Constraint kind (prefer or avoid a local time range). Soft constraints get a new score tier between spread and balance, so a written preference beats a light busiest day. Local times compile to UTC windows outside the solver, and constraints target item or series ids so weekly occurrences stay covered |
 | Nov 14, 2026 | "Earlier in the day" becomes "earlier in the frame": offsets count from the start of the work-frame occurrence holding the block, not local midnight, so a 12pm to 2am frame prefers 12pm over 12am. Sunday's overnight frame keeps its real start, so Mon 12am is late, not early. Starts outside every frame fall back to the item window's start |
 | Nov 14, 2026 | Hard daily limits built as the daily_limit Constraint kind in both engines. Everything on the day counts, including fixed events; limits are by weekday only (a dates param can come later); soft limits are rejected for now. Kept blocks over a limit close that day instead of making the week infeasible |
