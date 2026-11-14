@@ -1,16 +1,17 @@
-"""Core entities from the PRD: Item, Block, WorkFrame and Constraint.
+"""Core entities from the PRD: Item, Block, WorkFrame, Constraint and Series.
 
 Exact moments in time are timezone-aware UTC datetimes. Repeating times of
-day (WorkFrame start/end) are local wall-clock times plus an IANA timezone
-name, because a fixed UTC time of day would drift by an hour across DST.
+day (WorkFrame start/end, series templates) are local wall-clock times plus an
+IANA timezone name, because a fixed UTC time of day would drift by an hour
+across DST.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -74,6 +75,8 @@ class Item:
     with a `parent_id`. `catch_up_of` is the id of the missed Block this item
     makes up for. `one_block_per_day` makes "no two blocks on the same local
     day" a hard constraint; when off, spreading out is only a soft penalty.
+    `series_id` and `occurrence_date` are set together, only on occurrences of
+    a Series.
     """
 
     title: str
@@ -89,10 +92,14 @@ class Item:
     one_block_per_day: bool = False
     on_miss: OnMiss = OnMiss.RESCHEDULE
     catch_up_of: UUID | None = None
+    series_id: UUID | None = None
+    occurrence_date: date | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
         _require_utc(self.deadline, "Item.deadline")
+        if (self.series_id is None) != (self.occurrence_date is None):
+            raise ValueError("Item.series_id and Item.occurrence_date must be set together")
 
 
 @dataclass(slots=True)
@@ -156,3 +163,98 @@ class Constraint:
     weight: float = 1.0
     hard: bool = False
     id: UUID = field(default_factory=uuid4)
+
+
+@dataclass(slots=True)
+class Rule:
+    """A repeat rule: a subset of iCalendar RRULE.
+
+    `freq` is "daily" or "weekly"; `interval` means every N days or weeks.
+    `weekdays` (0 = Monday) is required for weekly and must be empty for daily.
+    """
+
+    freq: Literal["daily", "weekly"]
+    interval: int = 1
+    weekdays: list[int] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.freq not in ("daily", "weekly"):
+            raise ValueError(f"Rule.freq must be 'daily' or 'weekly', got {self.freq!r}")
+        if self.interval < 1:
+            raise ValueError("Rule.interval must be at least 1")
+        if self.freq == "weekly" and not self.weekdays:
+            raise ValueError("A weekly rule needs weekdays")
+        if self.freq == "daily" and self.weekdays:
+            raise ValueError("A daily rule takes no weekdays")
+        if any(day not in range(7) for day in self.weekdays):
+            raise ValueError("Rule weekdays must be in 0..6")
+
+
+# Template params per preset. Templates hold times of day only, never dates:
+# the occurrence date fills in the day.
+TEMPLATE_PARAMS: dict[FlexPreset, tuple[set[str], set[str]]] = {
+    # preset: (required keys, optional keys)
+    FlexPreset.EXACT: ({"start_time", "end_time"}, set()),
+    FlexPreset.DAY: (set(), set()),
+    FlexPreset.DAY_RANGE: ({"start_time", "end_time"}, set()),
+    FlexPreset.DAYS: ({"weekdays"}, {"start_time", "end_time"}),
+    FlexPreset.BEFORE_DEADLINE: (set(), set()),
+}
+
+
+@dataclass(slots=True)
+class ItemTemplate:
+    """The item fields a Series copies onto each occurrence.
+
+    `deadline_time` is a local time of day on the occurrence date. Custom is
+    not allowed: its painted windows are fixed dates.
+    """
+
+    flex_preset: FlexPreset
+    preset_params: dict[str, Any] = field(default_factory=dict)
+    estimate_min: int | None = None
+    deadline_time: time | None = None
+    checkable: bool = False
+    on_miss: OnMiss = OnMiss.RESCHEDULE
+    max_chunk_min: int | None = None
+    one_block_per_day: bool = False
+
+    def __post_init__(self) -> None:
+        if self.flex_preset not in TEMPLATE_PARAMS:
+            raise ValueError(f"Preset {self.flex_preset.value!r} cannot be used in a series template")
+        required, optional = TEMPLATE_PARAMS[self.flex_preset]
+        keys = set(self.preset_params)
+        if missing := required - keys:
+            raise ValueError(f"Template is missing {sorted(missing)}")
+        if unknown := keys - required - optional:
+            raise ValueError(f"Template has unknown keys {sorted(unknown)}")
+        if any(isinstance(value, date) for value in self.preset_params.values()):
+            raise ValueError("Templates hold times of day only, not dates")
+        if self.flex_preset is FlexPreset.BEFORE_DEADLINE and self.deadline_time is None:
+            raise ValueError("A before_deadline template needs deadline_time")
+
+
+@dataclass(slots=True)
+class Series:
+    """A repeat rule plus an item template. Each occurrence becomes a normal Item.
+
+    Dates are local to `timezone`. `end_date` is optional and inclusive.
+    `skipped_dates` never get an occurrence.
+    """
+
+    title: str
+    rule: Rule
+    timezone: str
+    start_date: date
+    template: ItemTemplate
+    end_date: date | None = None
+    skipped_dates: list[date] = field(default_factory=list)
+    id: UUID = field(default_factory=uuid4)
+
+    def __post_init__(self) -> None:
+        if self.end_date is not None and self.end_date < self.start_date:
+            raise ValueError("Series.end_date must not be before start_date")
+        try:
+            ZoneInfo(self.timezone)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError(f"Unknown timezone {self.timezone!r}") from error

@@ -209,14 +209,14 @@ Four core entities (Item, Block, WorkFrame, Constraint), plus Series for recurre
 
 ## Recurrence
 
-Designed now, built after Milestone 1. A Series is a repeat rule plus an item template; each occurrence becomes a normal Item, so the solver does not change.
+Built after Milestone 1 (model and expansion in the solver package; the solver itself does not change). A Series is a repeat rule plus an item template; each occurrence becomes a normal Item.
 
 **Series fields**
 
 | Field | Meaning |
 | --- | --- |
 | id, title | As on Item |
-| rule | Daily, or weekly on chosen weekdays, every N days or weeks |
+| rule | freq (daily or weekly), interval (every N days or weeks), weekdays[] (weekly only). Weekly intervals count Monday-starting weeks from start_date |
 | timezone | IANA name; occurrence dates and template times of day are local to it |
 | start_date, end_date | First and last local date the series can occur on (end_date optional) |
 | skipped_dates[] | Local dates that never get an occurrence |
@@ -230,18 +230,29 @@ Designed now, built after Milestone 1. A Series is a repeat rule plus an item te
 - An existing occurrence is edited directly. That is how a one-off moved meeting is handled.
 - Skipping an occurrence adds its date to skipped_dates, so it is not created again.
 
+**Template params per preset** (times of day only; the occurrence date fills in the day)
+
+| Preset | Template params | Occurrence gets |
+| --- | --- | --- |
+| Exact time | start_time, end_time | start and end on the occurrence date, in UTC (end before start crosses midnight) |
+| Any time on a day | none | day = occurrence date |
+| Time range on a day | start_time, end_time | the same, plus day = occurrence date |
+| Any of these days | weekdays[], optional start_time and end_time | unchanged |
+| Any time before a deadline | none; deadline_time required | deadline = occurrence date at deadline_time |
+| Custom | not allowed | Painted windows are fixed dates; a weekday-pattern version can come later if needed |
+
 **Patterns**
 
 | Pattern | How it is modeled | Example |
 | --- | --- | --- |
 | Fixed weekly event | Weekly rule, Exact time preset | CS 70 lecture, Tue and Thu 11am |
-| N times a week | One weekly occurrence with estimate = N sessions and max_chunk_min = one session, and one_block_per_day set so sessions land on different days | Gym 3x a week: estimate 3h, max chunk 1h, one block per day |
+| N times a week | One weekly occurrence (weekly rule on Monday) with an "any of these days" preset, estimate = N sessions, max_chunk_min = one session, and one_block_per_day set so sessions land on different days | Gym 3x a week: estimate 3h, max chunk 1h, one block per day |
 
 **Links to other features**
 
 - Catch-up items take their deadline from the series' next occurrence (for example, before the next lecture).
 - Estimate learning can average actual time per series.
-- The rule format stays a subset of iCalendar RRULE (FREQ=DAILY or WEEKLY, INTERVAL, BYDAY, UNTIL), so a Google Calendar import maps across.
+- The rule format stays a subset of iCalendar RRULE (FREQ=DAILY or WEEKLY, INTERVAL, BYDAY, UNTIL, COUNT, WKST=MO), so a Google Calendar import maps across. COUNT converts to end_date on import; this is exact because iCalendar counts occurrences before removing excluded dates, just as a fixed end_date does. Weekly without BYDAY uses the start date's weekday. Anything else (monthly, BYMONTHDAY, BYDAY=1MO and the like) is rejected.
 
 ## Architecture and foundational decisions
 
@@ -293,6 +304,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Recurrence built: Rule (daily or weekly, interval, weekdays), ItemTemplate and Series, with expansion into occurrence Items outside the solver. Custom is not allowed in a series template (fixed dates). RRULE COUNT is accepted and converted to end_date. "N times a week" series anchor on Monday |
 | Nov 14, 2026 | Balance compares how full each day is relative to its work frames, not raw hours, so a shorter weekend frame gets proportionally less work. Days with no work frame are left out for now; evening out the other days and hard daily limits are open questions |
 | Nov 14, 2026 | CP-SAT is the default engine and scores arrangements in strict priority order: stability, spreading an item's blocks across days, a light busiest day, then earlier in the day. Tier weights are computed from the size of the week instead of hand-tuned, so the order always holds |
 | Nov 14, 2026 | CP-SAT engine added behind solve() alongside backtracking, sharing the same problem setup and tests. It runs with one worker and a fixed seed so the same week always gives the same schedule, stops at a time limit (default 10s), and raises an error if time runs out before any arrangement is found instead of reporting the week as infeasible |
