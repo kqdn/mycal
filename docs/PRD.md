@@ -20,7 +20,7 @@ The first version plans one person's schedule well; everything else waits.
 
 - Auto-place flexible tasks into open time, respecting windows, deadlines and order
 - Make completion satisfying: progress bars, finished items stay visible, streaks
-- Re-plan automatically when something slips, with an early warning if a deadline is at risk
+- Re-plan on demand (one button) when something slips, with an early warning if a deadline is at risk
 - Be able to add more time to events/tasks (+15 to start or end of task which will then move adjacent events if possible)
 - Be a project I use every day and can explain in an interview
 

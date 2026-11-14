@@ -51,9 +51,12 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 
 ## How to work with me
 
-- I'm a CS student with a background in Java and C++. Explain non-obvious choices in a sentence or two, especially how something is modeled in CP-SAT.
+- I'm a CS student with a background in Java, C++ and Python. Explain non-obvious choices in a sentence or two, especially how something is modeled in CP-SAT.
 - For anything bigger than a small fix, show a short plan first and wait for my OK.
+- When we make a decision, record it in the same commit as the code. A rule every session must follow goes in CLAUDE.md. Anything about how the app works goes in docs/PRD.md, plus a row at the top of its decision log.
 - Keep changes small: one logical change per commit, with a short imperative commit message.
+- Stage with `git add -A` so changes outside the current folder aren't missed.
 - I'm on Windows. When I need to run something myself, give PowerShell commands.
 - Commit only when I ask. Never push, force-push or rewrite git history without asking.
-- If the code and `docs/PRD.md` disagree, or the PRD contradicts itself, ask me instead of guessing. The decision log at the bottom of the PRD is newest first and wins over older sections.
+- Keep my email out of project files (pyproject.toml, package.json and the like). My name is fine.
+- `docs/PRD.md` is the source of truth. If the code and the PRD disagree, or the PRD contradicts itself, ask me instead of guessing. Its decision log is newest first and wins over older sections.
