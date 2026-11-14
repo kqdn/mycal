@@ -170,20 +170,57 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 
 ## Data model
 
-Four core entities (Item, Block, WorkFrame, Constraint), all keyed by UUID, all times stored in UTC and converted only for display.
+Four core entities (Item, Block, WorkFrame, Constraint), plus Series for recurrence after Milestone 1, all keyed by UUID, all times stored in UTC and converted only for display.
 
 | Entity | Fields | Notes |
 | --- | --- | --- |
-| Item | id, title, flex_preset, preset_params (JSON), windows[] ({start, end}), checkable, estimate_min, deadline, parent_id, depends_on[], max_chunk_min, on_miss (reschedule / catch_up / skip / ask), catch_up_of | windows[] is generated from the preset; the solver reads only windows. Subtasks are items with a parent_id. catch_up_of is the id of the missed Block |
+| Item | id, title, flex_preset, preset_params (JSON), windows[] ({start, end}), checkable, estimate_min, deadline, parent_id, depends_on[], max_chunk_min, on_miss (reschedule / catch_up / skip / ask), catch_up_of, series_id, occurrence_date | windows[] is generated from the preset; the solver reads only windows. Subtasks are items with a parent_id. catch_up_of is the id of the missed Block. series_id and occurrence_date (local date) are set only on occurrences of a Series, and no two items share the same pair |
 | Block | id, item_id, start, end, locked, status (planned / done / partial / missed / unanswered), completed_at, actual_min | Many blocks per item; locked = placed by hand, solver must keep it |
 | WorkFrame | id, name, weekdays[], start_time, end_time, timezone | Default source of windows for flexible presets. start_time and end_time are local times in timezone (an IANA name); end before start means the frame crosses midnight, and weekdays[] names the day it starts |
 | Constraint | id, kind, params (JSON), weight, hard (bool) | New rule types need no schema change |
+| Series (after Milestone 1) | id, title, rule, timezone, start_date, end_date, skipped_dates[], template (flex_preset, preset_params, estimate_min, deadline_time, checkable, on_miss, max_chunk_min) | A repeat rule plus an item template; each occurrence is a normal Item. See Recurrence |
 
 **Rules**
 
 - Never use array indexes as identity; sync, undo and stability all depend on stable ids
 - Slot size (default 15 min) is one setting, not hardcoded
 - Store actual completion times from day one; estimate learning needs that history
+
+## Recurrence
+
+Designed now, built after Milestone 1. A Series is a repeat rule plus an item template; each occurrence becomes a normal Item, so the solver does not change.
+
+**Series fields**
+
+| Field | Meaning |
+| --- | --- |
+| id, title | As on Item |
+| rule | Daily, or weekly on chosen weekdays, every N days or weeks |
+| timezone | IANA name; occurrence dates and template times of day are local to it |
+| start_date, end_date | First and last local date the series can occur on (end_date optional) |
+| skipped_dates[] | Local dates that never get an occurrence |
+| Template: flex_preset, preset_params, estimate_min, deadline_time, checkable, on_miss, max_chunk_min | Copied onto each occurrence. preset_params holds times of day only, never fixed dates; deadline_time is a local time of day on the occurrence date |
+
+**Occurrences**
+
+- Each occurrence is an Item with series_id and occurrence_date. No two items share the same (series_id, occurrence_date) pair.
+- Occurrences are created only for the week being planned, before preset compilation. Creating them is idempotent: running it twice creates nothing new.
+- Template values are copied once, when an occurrence is created. Editing a series changes future occurrences only.
+- An existing occurrence is edited directly. That is how a one-off moved meeting is handled.
+- Skipping an occurrence adds its date to skipped_dates, so it is not created again.
+
+**Patterns**
+
+| Pattern | How it is modeled | Example |
+| --- | --- | --- |
+| Fixed weekly event | Weekly rule, Exact time preset | CS 70 lecture, Tue and Thu 11am |
+| N times a week | One weekly occurrence with estimate = N sessions and max_chunk_min = one session, its blocks on different days | Gym 3x a week: estimate 3h, max chunk 1h |
+
+**Links to other features**
+
+- Catch-up items take their deadline from the series' next occurrence (for example, before the next lecture).
+- Estimate learning can average actual time per series.
+- The rule format stays a subset of iCalendar RRULE (FREQ=DAILY or WEEKLY, INTERVAL, BYDAY, UNTIL), so a Google Calendar import maps across.
 
 ## Architecture and foundational decisions
 
@@ -227,12 +264,12 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 - [ ] Among tied arrangements, which tie-breakers matter most after stability: earlier in the day, work spread out, or something else?
 - [ ] Name for the app
-- [ ] Recurring items (weekly lectures, gym): how to model "repeat every week" in the data model. For Milestone 1, presets compile only for one horizon and are recompiled each week. Needed before daily use.
 
 **Decision log** (newest first)
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Recurrence design (build after Milestone 1): a Series entity with a repeat rule and an item template; occurrences are normal Items with series_id and occurrence_date, created idempotently for the planned week before preset compilation. Template values copy once; series edits affect future occurrences only; skips go in skipped_dates. "N times a week" is one weekly occurrence split into sessions. Rules stay a subset of iCalendar RRULE. Replaces the open question on recurring items |
 | Nov 14, 2026 | Presets compile to windows for a planning horizon using my home timezone; params per preset are in the Preset params table. Exact windows are never cut short. Recurring items are deferred (see Open questions) |
 | Nov 14, 2026 | A WorkFrame's weekdays name the day it starts, so a Fri 9pm to 1am frame belongs to Friday. Local times convert to UTC separately for each date, so frames keep their local hours across DST |
 | Nov 14, 2026 | This file becomes the source of truth instead of the claude.ai doc. WorkFrame times are local times plus an IANA timezone (UTC times of day drift across DST); a frame whose end is before its start crosses midnight. catch_up_of holds the missed Block's id |
