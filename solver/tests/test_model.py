@@ -15,6 +15,10 @@ def test_entities_get_unique_uuids() -> None:
     assert a.id != b.id
 
 
+def test_one_block_per_day_is_off_by_default() -> None:
+    assert Item(title="Problem set", flex_preset=FlexPreset.BEFORE_DEADLINE).one_block_per_day is False
+
+
 def test_naive_datetime_rejected() -> None:
     with pytest.raises(ValueError):
         Window(start=datetime(2026, 11, 16, 9), end=datetime(2026, 11, 16, 10))

@@ -72,7 +72,8 @@ class Item:
     The solver reads only `windows`; `flex_preset` and `preset_params` exist so
     the UI can show and edit the preset that produced them. Subtasks are items
     with a `parent_id`. `catch_up_of` is the id of the missed Block this item
-    makes up for.
+    makes up for. `one_block_per_day` makes "no two blocks on the same local
+    day" a hard constraint; when off, spreading out is only a soft penalty.
     """
 
     title: str
@@ -85,6 +86,7 @@ class Item:
     parent_id: UUID | None = None
     depends_on: list[UUID] = field(default_factory=list)
     max_chunk_min: int | None = None
+    one_block_per_day: bool = False
     on_miss: OnMiss = OnMiss.RESCHEDULE
     catch_up_of: UUID | None = None
     id: UUID = field(default_factory=uuid4)
