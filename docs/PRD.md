@@ -152,6 +152,17 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 
 **Objective.** Minimize the weighted sum of soft penalties, subject to all hard constraints. No feasible solution means a deadline is at risk, which triggers the feasibility warning.
 
+**Solver input rules**
+
+- Kept blocks: locked blocks and completion history (any status other than planned) are returned unchanged and nothing may overlap them. Unlocked planned blocks are the current plan and get re-placed.
+- Remaining work: estimate minus time already covered (done and partial blocks count actual_min, or their length if missing; locked planned blocks count their length).
+- Chunks: remaining work, rounded up to whole slots, is split into the fewest near-equal blocks no longer than max_chunk_min (5h with a 2h max is 105 + 105 + 90 min).
+- An item with no estimate gets one block filling its single window exactly (how Exact items are placed); no estimate with several windows is an error. An item with no windows is skipped and stays in the task list.
+- Stability: chunk i reuses the id of the item's i-th current block and tries its old start first.
+- Window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
+- My home timezone is a required solver setting, used only to find a block's local day for one_block_per_day.
+- Soft constraints are not scored yet; a hard Constraint of a kind the solver does not support is an error rather than silently ignored.
+
 **Two modes.** Local push (instant, predictable, for drag and drop) and full re-solve (better overall layout, on demand or after falling behind). I may first write a simple backtracking search by hand to learn the problem, then switch to CP-SAT.
 
 **Many arrangements can tie for best.** The solver should not just return one answer. It returns a handful of good options that differ in a meaningful way, and I step through them.
@@ -270,6 +281,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | First solver is hand-written backtracking behind solve(); CP-SAT comes later behind the same interface. Chunks split evenly by slots, an item with no estimate fills its single window, and the home timezone is a required solver setting. See Solver input rules |
 | Nov 14, 2026 | "Blocks on different days" is a per-item flag, one_block_per_day, off by default and copied from a series template (gym sets it, homework does not). When on, it is a hard constraint; otherwise only the soft spread-out penalty applies. An always-on rule would make a problem set due tomorrow with 4h left infeasible |
 | Nov 14, 2026 | Recurrence design (build after Milestone 1): a Series entity with a repeat rule and an item template; occurrences are normal Items with series_id and occurrence_date, created idempotently for the planned week before preset compilation. Template values copy once; series edits affect future occurrences only; skips go in skipped_dates. "N times a week" is one weekly occurrence split into sessions. Rules stay a subset of iCalendar RRULE. Replaces the open question on recurring items |
 | Nov 14, 2026 | Presets compile to windows for a planning horizon using my home timezone; params per preset are in the Preset params table. Exact windows are never cut short. Recurring items are deferred (see Open questions) |

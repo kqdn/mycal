@@ -11,7 +11,8 @@ from mycal.model import (
     WorkFrame,
 )
 from mycal.presets import compile_windows
-from mycal.solve import SolveResult, SolverSettings, solve
+from mycal.settings import SolverSettings
+from mycal.solve import SolveResult, solve
 from mycal.windows import work_frame_windows
 
 __all__ = [

@@ -3,7 +3,7 @@ from uuid import UUID
 
 import pytest
 
-from mycal import Block, Constraint, FlexPreset, Item, Window, WorkFrame, solve
+from mycal import Block, FlexPreset, Item, Window, WorkFrame
 
 MON_9AM = datetime(2026, 11, 16, 17, 0, tzinfo=UTC)
 
@@ -65,7 +65,3 @@ def test_work_frame_rejects_zero_length() -> None:
     with pytest.raises(ValueError):
         WorkFrame("Empty", [0], time(9), time(9), "America/Los_Angeles")
 
-
-def test_solve_is_not_implemented_yet() -> None:
-    with pytest.raises(NotImplementedError):
-        solve(items=[], blocks=[], work_frames=[], constraints=[Constraint(kind="buffer")])
