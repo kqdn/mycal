@@ -119,7 +119,7 @@ The MVP is "plan my week and show my progress"; the smarter re-planning comes ri
 | On-miss policies | v2 | Reschedule, catch-up, skip, ask; covers falling behind and missed lectures |
 | Free-move push | v2 | Drop an item on a flexible one; it shifts to the nearest gap in its frame |
 | Re-optimize button | v2 | Full re-solve, with a penalty for moving things |
-| Hard daily limits | v2 | A Constraint kind, e.g. "at most 3h on weekends"; one load limit per day in the solver |
+| Hard daily limits | v2 | Built: the daily_limit Constraint kind, e.g. "at most 3h on weekends" (see Constraint kinds) |
 | Feasibility warning | v2 | "You need 6h but only have 4h before Friday" |
 | Streaks / days at 100% | v2 |  |
 | Google Calendar sync | v2 | Read first, two-way later |
@@ -172,6 +172,14 @@ Time preferences and buffers come later as Constraint kinds. The backtracking en
 - Window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
 - My home timezone is a required solver setting, used only to find a block's local day for one_block_per_day.
 - Soft constraints are not scored yet; a hard Constraint of a kind the solver does not support is an error rather than silently ignored.
+
+**Constraint kinds**
+
+| Kind | Params | Meaning |
+| --- | --- | --- |
+| daily_limit (hard only) | max_min, optional weekdays[] (default every day) | Scheduled minutes on each matching local day stay at or under max_min. Every block counts toward the day it starts on, fixed events included. If kept blocks alone are over, nothing more is placed that day rather than the week failing |
+
+Other hard kinds are rejected until supported; other soft kinds are ignored for now.
 
 **Two modes.** Local push (instant, predictable, for drag and drop) and full re-solve (better overall layout, on demand or after falling behind). I may first write a simple backtracking search by hand to learn the problem, then switch to CP-SAT.
 
@@ -302,6 +310,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Hard daily limits built as the daily_limit Constraint kind in both engines. Everything on the day counts, including fixed events; limits are by weekday only (a dates param can come later); soft limits are rejected for now. Kept blocks over a limit close that day instead of making the week infeasible |
 | Nov 14, 2026 | Days with no work frame stay out of balance. Only explicitly placed items can land there, since flexible windows come from work frames, so the effect is small |
 | Nov 14, 2026 | Tie-breakers after stability are settled by the CP-SAT score order: spread an item across days, then a light fullest day, then earlier in the day. Revisit when time preferences are added. Hard daily limits move from open questions to Features (v2) |
 | Nov 14, 2026 | The demo week file supports [[series]] tables, written as an RRULE string plus template fields, expanded for the week before compiling. RRULE instead of separate fields avoids a clash with the "any of these days" weekdays param and reuses the import parser |

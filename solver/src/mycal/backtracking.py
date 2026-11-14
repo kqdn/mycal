@@ -17,7 +17,16 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from mycal.model import Block
-from mycal.problem import Chunk, Problem, ceil_slot, covered_min, floor_slot, slot_start
+from mycal.problem import (
+    Chunk,
+    Problem,
+    ceil_slot,
+    covered_min,
+    day_limit_min,
+    floor_slot,
+    kept_minutes_by_day,
+    slot_start,
+)
 
 Interval = tuple[int, int]
 
@@ -48,6 +57,7 @@ def search(problem: Problem) -> list[Block] | None:
         for dep in item.depends_on:
             dependents[dep].append(item.id)
 
+    kept_min = kept_minutes_by_day(problem.kept, problem.settings.timezone)
     placed: dict[int, int] = {}  # chunk index -> start slot
 
     def intervals_of(item_id: UUID) -> list[Interval]:
@@ -88,6 +98,14 @@ def search(problem: Problem) -> list[Block] | None:
             for j, s in placed.items():
                 if chunks[j].item_id == chunk.item_id and local_day(s) == day:
                     return False
+
+        # Daily limits: everything on this local day, including this block.
+        day = local_day(start)
+        limit = day_limit_min(problem.daily_limits, day)
+        if limit is not None:
+            placed_slots = sum(chunks[j].size for j, s in placed.items() if local_day(s) == day)
+            if kept_min[day] + (placed_slots + chunk.size) * slot_min > limit:
+                return False
 
         return True
 

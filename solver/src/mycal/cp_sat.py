@@ -10,7 +10,8 @@ Each chunk also gets one true/false variable per local day it could start on;
 exactly one is true, and when it is, the start must be one of that day's
 candidates. This is reification: a constraint that only holds when a boolean
 is true (OnlyEnforceIf). The day variables express one_block_per_day as "at
-most one per item per day", and make the score below linear.
+most one per item per day" and daily limits as "minutes on this day at most
+the limit", and make the score below linear.
 
 Score, minimized, in strict priority order (each tier's weight is larger
 than the most the tiers below it can ever add up to, so a higher priority
@@ -34,7 +35,16 @@ from zoneinfo import ZoneInfo
 from ortools.sat.python import cp_model
 
 from mycal.model import Block
-from mycal.problem import Chunk, Problem, ceil_slot, covered_min, floor_slot, slot_start
+from mycal.problem import (
+    Chunk,
+    Problem,
+    ceil_slot,
+    covered_min,
+    day_limit_min,
+    floor_slot,
+    kept_minutes_by_day,
+    slot_start,
+)
 from mycal.windows import day_capacity_min
 
 Interval = tuple[int, int]
@@ -129,6 +139,15 @@ def search(problem: Problem) -> list[Block] | None:
         if item.one_block_per_day:
             for day in {d for i in mine for d in day_vars[i]}:
                 model.add_at_most_one(day_vars[i][day] for i in mine if day in day_vars[i])
+
+    # Daily limits: placed minutes on a day fit in what kept blocks leave free.
+    # If kept blocks alone are over, nothing more goes there (not infeasible).
+    kept_min = kept_minutes_by_day(problem.kept, settings.timezone)
+    for day in {d for vars_ in day_vars for d in vars_}:
+        limit = day_limit_min(problem.daily_limits, day)
+        if limit is not None:
+            placed = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
+            model.add(slot_min * placed <= max(0, limit - kept_min[day]))
 
     _add_score(model, problem, starts, day_vars, chunks_of, busy, local_day)
 

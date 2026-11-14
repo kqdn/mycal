@@ -220,6 +220,55 @@ def test_soft_constraints_are_ignored_and_hard_ones_rejected() -> None:
         run([item], constraints=[Constraint(kind="buffer", hard=True)])
 
 
+MON = 0
+SAT = 5
+
+
+def daily_limit(max_min: int, weekdays: list[int] | None = None) -> Constraint:
+    params: dict[str, Any] = {"max_min": max_min}
+    if weekdays is not None:
+        params["weekdays"] = weekdays
+    return Constraint(kind="daily_limit", params=params, hard=True)
+
+
+def minutes_on(result: SolveResult, day: int) -> int:
+    start, end = at(day, 0), at(day + 1, 0)
+    return sum((b.end - b.start) // timedelta(minutes=1) for b in result.blocks if start <= b.start < end)
+
+
+def test_daily_limit_pushes_work_to_another_day() -> None:
+    pset = task("Problem set", 120, [window(16, 9, 12), window(17, 9, 12)], max_chunk_min=60)
+    result = run([pset], constraints=[daily_limit(60, [MON])])
+    assert (minutes_on(result, 16), minutes_on(result, 17)) == (60, 60)
+
+
+def test_daily_limit_counts_kept_blocks() -> None:
+    lecture = task("Lecture", 120, [window(16, 9, 11)])
+    locked = Block(lecture.id, at(16, 9), at(16, 11), locked=True)
+    read = task("Read", 60, [window(16, 13, 15), window(17, 13, 15)])
+    result = run([lecture, read], [locked], constraints=[daily_limit(120)])
+    assert (minutes_on(result, 16), minutes_on(result, 17)) == (120, 60)
+
+
+def test_kept_blocks_over_the_limit_only_close_that_day() -> None:
+    lecture = task("Lecture", 180, [window(16, 9, 12)])
+    locked = Block(lecture.id, at(16, 9), at(16, 12), locked=True)
+    read = task("Read", 60, [window(16, 13, 15), window(17, 13, 15)])
+    result = run([lecture, read], [locked], constraints=[daily_limit(120)])
+    assert result.feasible
+    assert minutes_on(result, 17) == 60
+
+
+def test_daily_limit_only_applies_on_its_weekdays() -> None:
+    pset = task("Problem set", 120, [window(16, 9, 12)], max_chunk_min=60)
+    assert run([pset], constraints=[daily_limit(60, [SAT])]).feasible
+
+
+def test_daily_limit_too_tight_is_infeasible() -> None:
+    essay = task("Essay", 120, [window(16, 9, 12)])
+    assert not run([essay], constraints=[daily_limit(60)]).feasible
+
+
 def test_inputs_are_not_mutated() -> None:
     item = task("Gym", 120, [window(16, 9, 12)], max_chunk_min=60)
     blocks = [Block(item.id, at(16, 9), at(16, 10)), Block(item.id, at(15, 9), at(15, 10), status=BlockStatus.MISSED)]

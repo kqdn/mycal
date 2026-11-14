@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from mycal.model import FlexPreset, Item, ItemTemplate, OnMiss, Series, Window, WorkFrame
+from mycal.model import Constraint, FlexPreset, Item, ItemTemplate, OnMiss, Series, Window, WorkFrame
 from mycal.presets import compile_windows
 from mycal.recurrence import expand_series, series_rule_from_rrule
 from mycal.settings import SolverSettings
@@ -47,6 +47,7 @@ class Week:
     work_frames: list[WorkFrame]
     items: list[Item]
     series: list[Series] = field(default_factory=list)
+    constraints: list[Constraint] = field(default_factory=list)
 
     def horizon(self) -> tuple[datetime, datetime]:
         """Monday 00:00 local to the next Monday 00:00 local, in UTC."""
@@ -93,7 +94,17 @@ def parse_week(data: dict[str, Any]) -> Week:
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Series {raw.get('title')!r}: {error}") from error
 
-    return Week(settings, data["week_start"], frames, items, series)
+    constraints = [
+        Constraint(
+            kind=raw["kind"],
+            params={key: value for key, value in raw.items() if key not in ("kind", "hard", "weight")},
+            weight=raw.get("weight", 1.0),
+            hard=raw.get("hard", False),
+        )
+        for raw in data.get("constraints", [])
+    ]
+
+    return Week(settings, data["week_start"], frames, items, series, constraints)
 
 
 def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
@@ -179,7 +190,7 @@ def plan_week(week: Week) -> tuple[list[Item], SolveResult]:
         replace(item, windows=compile_windows(item, week.work_frames, timezone, start, end))
         for item in week.items + occurrences
     ]
-    return items, solve(items, [], week.work_frames, [], week.settings)
+    return items, solve(items, [], week.work_frames, week.constraints, week.settings)
 
 
 def format_schedule(items: list[Item], result: SolveResult, timezone: str) -> str:

@@ -20,6 +20,14 @@ weekdays = [5, 6]
 start_time = 10:00:00
 end_time = 16:00:00
 
+# Extra rules. daily_limit caps scheduled minutes on matching days
+# (everything counts, fixed events included). Only hard limits for now.
+[[constraints]]
+kind = "daily_limit"
+hard = true
+max_min = 120
+weekdays = [5, 6]  # at most 2h on Saturday and Sunday
+
 # Series repeat every week. `rrule` is an iCalendar RRULE (FREQ=DAILY or
 # WEEKLY, INTERVAL, BYDAY, UNTIL or COUNT). Template params hold times of day
 # only; each occurrence's date fills in the day. Optional: end_date,

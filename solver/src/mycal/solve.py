@@ -48,8 +48,9 @@ def solve(
         work_frames: repeating frames. Already folded into windows, so they
             never decide placement; CP-SAT uses them only to measure how full
             each day is.
-        constraints: extra rules. Soft ones are ignored for now; a hard one
-            raises ValueError until some engine supports its kind.
+        constraints: extra rules. Supported: hard "daily_limit" (params
+            max_min, optional weekdays). A soft daily_limit or any other hard
+            kind raises ValueError; other soft kinds are ignored for now.
         settings: slot size, home timezone and engine.
 
     Hard constraints:
@@ -58,6 +59,8 @@ def solve(
         - all blocks of an item end by its deadline
         - an item starts after every item in `depends_on` has ended
         - with `one_block_per_day`, no two of an item's blocks share a local day
+        - daily limits: minutes on a limited local day stay within the limit
+          (if kept blocks alone exceed it, nothing more is placed that day)
 
     Returns:
         SolveResult with `feasible=True` and the arrangement, or

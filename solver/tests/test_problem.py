@@ -1,6 +1,7 @@
 """Problem setup: settings, chunk splitting, remaining work and slot rounding."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -74,3 +75,24 @@ def test_item_without_estimate_needs_a_single_window() -> None:
 def test_unsupported_hard_constraint_rejected() -> None:
     with pytest.raises(ValueError, match="buffer"):
         build_problem([], [], [Constraint(kind="buffer", hard=True)], SETTINGS)
+
+
+def test_daily_limit_defaults_to_every_day() -> None:
+    limit = Constraint(kind="daily_limit", params={"max_min": 180}, hard=True)
+    [parsed] = build_problem([], [], [limit], SETTINGS).daily_limits
+    assert (parsed.max_min, parsed.weekdays) == (180, (0, 1, 2, 3, 4, 5, 6))
+
+
+@pytest.mark.parametrize(
+    ("params", "hard"),
+    [
+        ({"max_min": 180}, False),  # soft is not supported yet
+        ({}, True),
+        ({"max_min": -1}, True),
+        ({"max_min": 180, "weekdays": [7]}, True),
+        ({"max_min": 180, "days": [5]}, True),
+    ],
+)
+def test_bad_daily_limit_rejected(params: dict[str, Any], hard: bool) -> None:
+    with pytest.raises(ValueError, match="daily_limit"):
+        build_problem([], [], [Constraint(kind="daily_limit", params=params, hard=hard)], SETTINGS)

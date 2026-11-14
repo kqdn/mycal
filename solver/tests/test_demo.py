@@ -125,6 +125,14 @@ def test_series_end_given_twice_rejected() -> None:
         week_from(text)
 
 
+def test_constraints_are_read_and_applied() -> None:
+    limit = '\n[[constraints]]\nkind = "daily_limit"\nhard = true\nmax_min = 30\nweekdays = [0]\n'
+    week = week_from(TINY + limit)
+    assert week.constraints[0].params == {"max_min": 30, "weekdays": [0]}
+    _, result = plan_week(week)
+    assert not result.feasible  # the 60-minute Monday gym session no longer fits
+
+
 def test_infeasible_week_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     text = TINY.replace("estimate_min = 60", "estimate_min = 120")
     path = tmp_path / "week.toml"

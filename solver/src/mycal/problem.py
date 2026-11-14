@@ -8,9 +8,12 @@ by the item's deadline.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from mycal.model import Block, BlockStatus, Constraint, Item, WorkFrame
 from mycal.settings import SolverSettings
@@ -29,6 +32,18 @@ class Chunk:
     previous_start: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DailyLimit:
+    """Hard cap on scheduled minutes on matching local days (a daily_limit Constraint).
+
+    Every block counts toward the local day it starts on: fixed, kept and newly
+    placed blocks alike.
+    """
+
+    max_min: int
+    weekdays: tuple[int, ...]
+
+
 @dataclass(slots=True)
 class Problem:
     settings: SolverSettings
@@ -36,6 +51,22 @@ class Problem:
     kept: list[Block]
     chunks: list[Chunk]
     work_frames: list[WorkFrame] = field(default_factory=list)
+    daily_limits: list[DailyLimit] = field(default_factory=list)
+
+
+def day_limit_min(limits: list[DailyLimit], day: date) -> int | None:
+    """The tightest limit for this local day, or None if no limit applies."""
+    caps = [limit.max_min for limit in limits if day.weekday() in limit.weekdays]
+    return min(caps) if caps else None
+
+
+def kept_minutes_by_day(kept: list[Block], timezone: str) -> dict[date, int]:
+    """Minutes of kept blocks per local start day."""
+    zone = ZoneInfo(timezone)
+    minutes: dict[date, int] = defaultdict(int)
+    for block in kept:
+        minutes[block.start.astimezone(zone).date()] += (block.end - block.start) // timedelta(minutes=1)
+    return minutes
 
 
 def floor_slot(moment: datetime, slot_min: int) -> int:
@@ -77,13 +108,11 @@ def build_problem(
     Work frames are passed through only so engines can measure each day's
     capacity; placement still follows item windows alone.
 
-    Raises ValueError for a hard constraint kind no engine supports yet, so a
-    rule is never silently dropped, and for an item with no estimate and more
-    than one window.
+    Raises ValueError for a constraint kind no engine supports yet (unknown
+    soft kinds are ignored), so a rule is never silently dropped, and for an
+    item with no estimate and more than one window.
     """
-    for constraint in constraints:
-        if constraint.hard:
-            raise ValueError(f"Hard constraint kind {constraint.kind!r} is not supported yet")
+    daily_limits = _parse_constraints(constraints)
 
     kept = [b for b in blocks if is_kept(b)]
     replaced = sorted((b for b in blocks if not is_kept(b)), key=lambda b: b.start)
@@ -94,7 +123,39 @@ def build_problem(
         item_old = [b for b in replaced if b.item_id == item.id]
         chunks.extend(_item_chunks(item, item_kept, item_old, settings.slot_min))
 
-    return Problem(settings, {item.id: item for item in items}, kept, chunks, list(work_frames))
+    return Problem(
+        settings,
+        {item.id: item for item in items},
+        kept,
+        chunks,
+        work_frames=list(work_frames),
+        daily_limits=daily_limits,
+    )
+
+
+def _parse_constraints(constraints: list[Constraint]) -> list[DailyLimit]:
+    limits = []
+    for constraint in constraints:
+        if constraint.kind == "daily_limit":
+            if not constraint.hard:
+                raise ValueError("Soft daily_limit is not supported yet; set hard = true")
+            limits.append(_parse_daily_limit(constraint.params))
+        elif constraint.hard:
+            raise ValueError(f"Hard constraint kind {constraint.kind!r} is not supported yet")
+    return limits
+
+
+def _parse_daily_limit(params: dict[str, Any]) -> DailyLimit:
+    """Params: max_min (minutes, required) and weekdays (0 = Monday; default every day)."""
+    if unknown := set(params) - {"max_min", "weekdays"}:
+        raise ValueError(f"daily_limit has unknown params {sorted(unknown)}")
+    max_min = params.get("max_min")
+    if not isinstance(max_min, int) or isinstance(max_min, bool) or max_min < 0:
+        raise ValueError(f"daily_limit max_min must be a non-negative integer, got {max_min!r}")
+    weekdays = params.get("weekdays", list(range(7)))
+    if not isinstance(weekdays, list) or any(day not in range(7) for day in weekdays):
+        raise ValueError(f"daily_limit weekdays must be a list of 0..6, got {weekdays!r}")
+    return DailyLimit(max_min, tuple(sorted(set(weekdays))))
 
 
 def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int) -> list[Chunk]:
