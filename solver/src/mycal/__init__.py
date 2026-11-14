@@ -10,6 +10,7 @@ from mycal.model import (
     Window,
     WorkFrame,
 )
+from mycal.presets import compile_windows
 from mycal.solve import SolveResult, SolverSettings, solve
 from mycal.windows import work_frame_windows
 
@@ -24,6 +25,7 @@ __all__ = [
     "SolverSettings",
     "Window",
     "WorkFrame",
+    "compile_windows",
     "solve",
     "work_frame_windows",
 ]

@@ -61,6 +61,17 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 | Any time before a deadline | Write code, by Friday | Every work frame from now until the deadline |
 | Custom | Anything else | Paint the allowed time on a week grid |
 
+**Preset params.** What `preset_params` holds for each preset. Local dates and times use my home timezone, which is passed in when presets are compiled. Windows are compiled for a planning horizon (usually now to the end of the week), clipped to it, and merged where they overlap or touch.
+
+| Preset | preset_params | Notes |
+| --- | --- | --- |
+| Exact time | start, end (UTC) | Never cut short; dropped only if entirely outside the horizon |
+| Any time on a day | day (local date) | Every work frame that starts on that day |
+| Time range on a day | day, start_time, end_time (local) | End before start crosses midnight |
+| Any of these days | weekdays[], optional start_time and end_time | Uses the time range if given, else the work frames on those weekdays |
+| Any time before a deadline | none | Uses the item's deadline; also clipped to it |
+| Custom | windows[] (UTC) | Clipped to the horizon |
+
 **How items map to blocks**
 
 | Item | Blocks | Why |
@@ -216,11 +227,13 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 - [ ] Among tied arrangements, which tie-breakers matter most after stability: earlier in the day, work spread out, or something else?
 - [ ] Name for the app
+- [ ] Recurring items (weekly lectures, gym): how to model "repeat every week" in the data model. For Milestone 1, presets compile only for one horizon and are recompiled each week. Needed before daily use.
 
 **Decision log** (newest first)
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Presets compile to windows for a planning horizon using my home timezone; params per preset are in the Preset params table. Exact windows are never cut short. Recurring items are deferred (see Open questions) |
 | Nov 14, 2026 | A WorkFrame's weekdays name the day it starts, so a Fri 9pm to 1am frame belongs to Friday. Local times convert to UTC separately for each date, so frames keep their local hours across DST |
 | Nov 14, 2026 | This file becomes the source of truth instead of the claude.ai doc. WorkFrame times are local times plus an IANA timezone (UTC times of day drift across DST); a frame whose end is before its start crosses midnight. catch_up_of holds the missed Block's id |
 | Nov 13, 2026 | Arrangement preview compares against the current plan: a toggle on the same grid, From or To tags with a direction arrow (day shown only when it changes), a changes list, and one old spot shown at a time. Always-on dashed strips for old positions were dropped because they do not scale past a few moves |
