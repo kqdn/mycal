@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearWeekCache, loadWeek, peekWeek, WeekError, type Week } from './api'
+import { addItem, clearWeekCache, loadWeek, peekWeek, WeekError, type Week } from './api'
 
 const WEEK: Week = {
   week_start: '2026-11-16',
@@ -51,5 +51,40 @@ describe('week cache', () => {
     fetchMock.mockResolvedValueOnce(respond(200, { ...WEEK, week_start: '2026-11-23' }))
     await expect(loadWeek('2026-11-23')).resolves.toMatchObject({ week_start: '2026-11-23' })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('addItem', () => {
+  const fetchMock = vi.fn<typeof fetch>()
+
+  beforeEach(() => {
+    clearWeekCache()
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const request = { week_start: '2026-11-16', title: 'Gym', preset: 'days' as const, weekdays: [0], estimate_min: 60, one_block_per_day: false }
+
+  it('posts the item and keeps only the returned week in memory', async () => {
+    fetchMock.mockResolvedValueOnce(respond(200, { ...WEEK, week_start: '2026-11-23' }))
+    await loadWeek('2026-11-23') // another week, now stale
+    fetchMock.mockResolvedValueOnce(respond(201, WEEK))
+
+    expect(await addItem(request)).toEqual(WEEK)
+
+    const [url, init] = fetchMock.mock.calls[1]
+    expect(url).toBe('/api/items')
+    expect(init).toMatchObject({ method: 'POST', body: JSON.stringify(request) })
+    expect(peekWeek('2026-11-16')).toEqual(WEEK)
+    expect(peekWeek('2026-11-23')).toBeUndefined()
+  })
+
+  it("passes on the server's message when the item is refused", async () => {
+    fetchMock.mockResolvedValueOnce(respond(422, { detail: "It doesn't fit." }))
+    await expect(addItem(request)).rejects.toThrow("It doesn't fit.")
   })
 })

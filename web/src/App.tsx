@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { loadWeek, peekWeek, WeekError, type Week } from './api'
+import { NewItemDialog } from './NewItemDialog'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
 import { WeekGrid } from './WeekGrid'
 
@@ -17,6 +18,7 @@ export default function App() {
   const [weekStart, setWeekStart] = useState(weekFromUrl)
   // Each result remembers which week it is for; a newer week shows as loading.
   const [result, setResult] = useState<{ for: DateString } & Result>()
+  const [adding, setAdding] = useState(false)
   // A week already in memory renders right away, with no loading step.
   const inMemory = peekWeek(weekStart)
   const state: State = inMemory
@@ -61,7 +63,26 @@ export default function App() {
         <span className="tab active" aria-current="page">
           Week
         </span>
+        <div className="top-bar-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setAdding(true)}
+            disabled={state.status !== 'ready'}
+          >
+            New item
+          </button>
+        </div>
       </nav>
+
+      {adding && state.status === 'ready' && (
+        <NewItemDialog
+          weekStart={weekStart}
+          timezone={state.week.timezone}
+          onClose={() => setAdding(false)}
+          onAdded={(week) => setResult({ for: weekStart, status: 'ready', week })}
+        />
+      )}
 
       <main className="content">
         <div className="title-row">

@@ -11,3 +11,5 @@ http://localhost:5173/?week=2026-11-16. Other commands are in the repo's CLAUDE.
 - `src/time.ts`: UTC to wall-clock time in the week's timezone, 12-hour formatting, date helpers
 - `src/layout.ts`: splits blocks and frames into per-day pieces, the text-by-height rule and the initial scroll
 - `src/WeekGrid.tsx`: the grid itself
+- `src/itemForm.ts`: the New item form as pure logic: lengths, validation, the request and the summary line
+- `src/NewItemDialog.tsx`: the New item dialog

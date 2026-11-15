@@ -1,6 +1,7 @@
 // Types matching GET /api/weeks/{week_start} in solver/src/mycal/api.py.
 // All times are UTC ISO strings.
 
+import type { ItemRequest } from './itemForm'
 import type { DateString } from './time'
 
 export interface Block {
@@ -70,7 +71,37 @@ export function clearWeekCache(): void {
 export async function fetchWeek(weekStart: DateString): Promise<Week> {
   const response = await fetch(`/api/weeks/${weekStart}`)
   if (response.ok) return response.json()
+  throw await failure(response)
+}
+
+/** The error for a failed response: the server's `detail` sentence, kind by status. */
+async function failure(response: Response): Promise<WeekError> {
   const body = await response.json().catch(() => null)
   const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
-  throw new WeekError(response.status === 404 ? 'missing' : 'invalid', detail || `HTTP ${response.status}`)
+  return new WeekError(response.status === 404 ? 'missing' : 'invalid', detail || `HTTP ${response.status}`)
 }
+
+/**
+ * Add an item. The server re-plans and returns the viewed week. Other weeks may
+ * have changed too (a deadline item can reach several), so the cache keeps only
+ * the returned week. Throws WeekError with the server's message on a 422.
+ */
+export async function addItem(request: ItemRequest): Promise<Week> {
+  const response = await fetch('/api/items', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) throw await failure(response)
+  const week: Week = await response.json()
+  rememberOnly(week)
+  return week
+}
+
+/** Forget every cached week except this one. */
+function rememberOnly(week: Week): void {
+  clearWeekCache()
+  loaded.set(week.week_start, week)
+  pending.set(week.week_start, Promise.resolve(week))
+}
+
