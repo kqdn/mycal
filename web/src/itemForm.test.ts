@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   emptyForm,
   openDays,
+  outsideWorkHours,
   parseDuration,
   showsEachDay,
   showsEstimate,
@@ -222,5 +223,50 @@ describe('every one of these days', () => {
       session_min: 30,
       one_block_per_day: false,
     })
+  })
+})
+
+describe('outsideWorkHours', () => {
+  // Weekdays 9am to 6pm PST (UTC-8); no weekend frames.
+  const frames = [16, 17, 18, 19, 20].map((day) => ({
+    start: `2026-11-${day}T17:00:00Z`,
+    end: `2026-11-${day + 1}T02:00:00Z`,
+  }))
+  const context = { now: SUNDAY_BEFORE, timezone: LA, frames }
+  const outside = (changes: Partial<ItemForm>) => outsideWorkHours(form(changes), WEEK, context)
+  const weekdays = [0, 1, 2, 3, 4]
+
+  it('flags a days range after work hours, not one inside them', () => {
+    expect(outside({ preset: 'days', weekdays, startTime: '18:00', endTime: '20:00' })).toBe(true)
+    expect(outside({ preset: 'days', weekdays, startTime: '10:00', endTime: '12:00' })).toBe(false)
+  })
+
+  it('says nothing without a range or without days', () => {
+    expect(outside({ preset: 'days', weekdays })).toBe(false)
+    expect(outside({ preset: 'days', weekdays: [], startTime: '18:00', endTime: '20:00' })).toBe(false)
+  })
+
+  it('checks a time range on its day, only inside the viewed week', () => {
+    expect(outside({ preset: 'day_range', day: '2026-11-17', startTime: '17:00', endTime: '20:00' })).toBe(true)
+    expect(outside({ preset: 'day_range', day: '2026-11-17', startTime: '13:00', endTime: '15:00' })).toBe(false)
+    expect(outside({ preset: 'day_range', day: '2026-11-24', startTime: '17:00', endTime: '20:00' })).toBe(false)
+  })
+
+  it('flags a picked day with no work frame', () => {
+    expect(outside({ preset: 'every_day', weekdays: [5], startTime: '10:00', endTime: '11:00', eachDay: '30m' })).toBe(true)
+  })
+
+  it('flags an overnight range', () => {
+    expect(outside({ preset: 'days', weekdays: [1], startTime: '23:00', endTime: '01:00' })).toBe(true)
+  })
+
+  it('never flags an exact-time item', () => {
+    expect(outside({ preset: 'exact', day: '2026-11-17', startTime: '19:00', endTime: '20:00' })).toBe(false)
+  })
+
+  it('never blocks adding', () => {
+    const late = form({ preset: 'every_day', weekdays, startTime: '18:00', endTime: '20:00', eachDay: '30m' })
+    expect(outsideWorkHours(late, WEEK, context)).toBe(true)
+    expect(validate(late, SUNDAY_BEFORE, LA, { weekStart: WEEK, frames })).toEqual({})
   })
 })

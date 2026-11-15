@@ -125,6 +125,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
 
    - **Time pairs:** on one row, as `[start] to [end]`. The inputs are 44px tall, radius `--radius-control`, with centered text. "to" is 14px in `--text-muted`.
    - **Overnight times:** an end time earlier than the start time means the next day. The summary line says so.
+   - **Outside your work hours:** when any part of a Time range on a day, Any of these days or Every one of these days range falls outside the work frames on the days it applies to, a 12px `--text-muted` line "Outside your work hours" shows under the start/end pair. It is informational only and never blocks Add, since a range overrides the work frames.
    - **Weekday picker:** seven segmented buttons (Mon to Sun) with a 6px gap, sharing one row. Each is 44px tall, 13px / 600. At least one day is required.
    - **Optional fields:** labels inside a panel use the normal label style (13px / 600), and optional ones end with "(optional)" in `--text-muted` 400, as in "Only between (optional)".
    - **Dates and times:** use native `<input type="date">` and `<input type="time">`, styled like the text inputs. No date library.

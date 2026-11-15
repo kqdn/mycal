@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { addItem, WeekError, type Week } from './api'
 import {
   emptyForm,
+  outsideWorkHours,
   PRESETS,
   showsEachDay,
   showsEstimate,
@@ -241,6 +242,7 @@ interface PanelProps {
 /** The selected preset's fields, under its row. */
 function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelProps) {
   const line = summary(form, weekStart, context)
+  const outside = outsideWorkHours(form, weekStart, context)
   const date = (
     <div className="field">
       <label htmlFor="item-day" className="field-label">
@@ -283,6 +285,7 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
         />
       </div>
       <FieldError message={shown('times')} />
+      {outside && <p className="hint">Outside your work hours</p>}
     </div>
   )
 

@@ -253,6 +253,31 @@ export function openDays(form: ItemForm, weekStart: DateString, context: DayCont
   })
 }
 
+/**
+ * Whether any part of a flexible item's time range falls outside the work frames on the days
+ * it applies to. Informational only: a range overrides the frames (PRD decision log), so this
+ * never blocks adding. False when there is no complete range, no picked day, or (for a time
+ * range on a day) a date outside the viewed week, whose frames the page doesn't have.
+ */
+export function outsideWorkHours(form: ItemForm, weekStart: DateString, context: DayContext): boolean {
+  if (form.preset !== 'day_range' && !picksDays(form)) return false
+  if (!form.startTime || !form.endTime || form.startTime === form.endTime) return false
+  const dates =
+    form.preset === 'day_range'
+      ? [form.day].filter((d) => d >= weekStart && d <= addDays(weekStart, 6))
+      : [...new Set(form.weekdays)].map((d) => addDays(weekStart, d))
+  const frames = localIntervals(context.frames, context.timezone)
+  const [sh, sm] = form.startTime.split(':').map(Number)
+  const [eh, em] = form.endTime.split(':').map(Number)
+  const start = sh * 60 + sm
+  const end = eh * 60 + em
+  const inside = (date: DateString, from: number, to: number) =>
+    (frames.get(date) ?? []).some(([a, b]) => a <= from && to <= b)
+  return dates.some((date) =>
+    end > start ? !inside(date, start, end) : !inside(date, start, DAY_MIN) || !inside(addDays(date, 1), 0, end),
+  )
+}
+
 /** An "Only between" range on one picked day, in minutes since its midnight. */
 function rangeIntervals(form: ItemForm, weekday: number, picked: number[]): [number, number][] {
   const [sh, sm] = form.startTime.split(':').map(Number)
