@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -164,3 +165,148 @@ def test_a_week_that_cannot_fit_is_stored_as_infeasible(db: Path, client: TestCl
 def minutes(block: dict) -> float:
     start, end = (datetime.fromisoformat(block[k]) for k in ("start", "end"))
     return (end - start) / timedelta(minutes=1)
+
+
+# Adding and deleting items
+
+
+def add(client: TestClient, **fields) -> dict:  # type: ignore[no-untyped-def]
+    response = client.post("/api/items", json={"week_start": WEEK, **fields})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def refused(client: TestClient, **fields) -> str:  # type: ignore[no-untyped-def]
+    response = client.post("/api/items", json={"week_start": WEEK, **fields})
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert isinstance(detail, str)  # a sentence the dialog can show
+    return detail
+
+
+def blocks_titled(week: dict, title: str) -> list[dict]:
+    return [b for b in week["blocks"] if b["title"] == title]
+
+
+def local(block: dict) -> tuple[str, str]:
+    """A block's start and end as local "Day HH:MM"."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/Los_Angeles")
+    return tuple(datetime.fromisoformat(block[k]).astimezone(zone).strftime("%a %H:%M") for k in ("start", "end"))  # type: ignore[return-value]
+
+
+def test_add_an_exact_item(client: TestClient) -> None:
+    week = add(client, title="Dentist", preset="exact", day="2026-11-19", start_time="13:00", end_time="14:00")
+    [block] = blocks_titled(week, "Dentist")
+    assert local(block) == ("Thu 13:00", "Thu 14:00")
+    assert block["fixed"] is True
+
+
+def test_add_an_overnight_exact_item(client: TestClient) -> None:
+    week = add(client, title="Night drive", preset="exact", day="2026-11-19", start_time="23:00", end_time="01:00")
+    assert [local(b) for b in blocks_titled(week, "Night drive")] == [("Thu 23:00", "Fri 01:00")]
+
+
+def test_add_items_on_a_day_and_in_a_range(client: TestClient) -> None:
+    add(client, title="Errand", preset="day", day="2026-11-18", estimate_min=30)
+    week = add(
+        client, title="Call", preset="day_range", day="2026-11-19", start_time="17:00", end_time="21:00", estimate_min=30
+    )
+    [errand] = blocks_titled(week, "Errand")
+    [call] = blocks_titled(week, "Call")
+    assert local(errand)[0].startswith("Wed")
+    assert "17:00" <= local(call)[0][4:] and local(call)[1][4:] <= "21:00" and local(call)[0].startswith("Thu")
+
+
+def test_a_days_item_stays_in_the_viewed_week(client: TestClient) -> None:
+    week = add(client, title="Swim", preset="days", weekdays=[1, 3], estimate_min=120, max_chunk_min=60, one_block_per_day=True)
+    assert sorted(local(b)[0][:3] for b in blocks_titled(week, "Swim")) == ["Thu", "Tue"]
+    assert blocks_titled(get(client, "2026-11-23"), "Swim") == []
+
+
+MONDAY_MORNING = datetime(2026, 11, 16, 8, tzinfo=UTC)  # Mon Nov 16, 12am PST
+
+
+def test_a_deadline_item_fills_the_earliest_week_first(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Due next Wednesday, added on Monday morning: this week takes all of it.
+    monkeypatch.setattr(api, "now", lambda: MONDAY_MORNING)
+    essay = {"title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-25", "deadline_time": "17:00"}
+    week = add(client, **essay, estimate_min=120)
+    assert sum(minutes(b) for b in blocks_titled(week, "Essay")) == 120
+    assert blocks_titled(get(client, "2026-11-23"), "Essay") == []
+
+
+def test_a_deadline_item_can_start_in_the_rest_of_the_current_week(client: TestClient) -> None:
+    # Added on Sunday Nov 15 at 4am: that Sunday's frame (10am to 4pm) comes first.
+    essay = {"title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-25", "deadline_time": "17:00"}
+    add(client, **essay, estimate_min=60)
+    sunday = get(client, "2026-11-09")
+    assert [local(b) for b in blocks_titled(sunday, "Essay")] == [("Sun 10:00", "Sun 11:00")]
+    assert blocks_titled(get(client), "Essay") == []
+
+
+def test_adding_keeps_other_blocks_in_place(client: TestClient) -> None:
+    before = {b["id"]: b for b in get(client)["blocks"]}
+    # Sunday has free frame time and nothing else wants it.
+    week = add(client, title="Tea", preset="day", day="2026-11-22", estimate_min=15)
+    after = {b["id"]: b for b in week["blocks"] if b["title"] != "Tea"}
+    assert after == before
+
+
+def test_an_added_item_is_stored_as_added_in_the_app(db: Path, client: TestClient) -> None:
+    add(client, title="Errand", preset="day", day="2026-11-18", estimate_min=30)
+    row = store.connect(db).execute("SELECT source FROM items WHERE title = 'Errand'").fetchone()
+    assert row["source"] is None
+
+
+def test_an_item_that_does_not_fit_is_refused_and_nothing_changes(db: Path, client: TestClient) -> None:
+    before = get(client)
+    items_before = len(store.list_items(store.connect(db)))
+    detail = refused(client, title="Marathon", preset="day", day="2026-11-18", estimate_min=20 * 60)
+    assert "doesn't fit" in detail
+    assert get(client) == before
+    assert len(store.list_items(store.connect(db))) == items_before
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"title": "  ", "preset": "day", "day": "2026-11-18", "estimate_min": 30}, "title"),
+        ({"title": "X", "preset": "day", "day": "2026-11-18"}, "estimate"),
+        ({"title": "X", "preset": "exact", "day": "2026-11-18", "start_time": "09:00", "end_time": "10:00", "estimate_min": 60}, "no estimate"),
+        ({"title": "X", "preset": "exact", "day": "2026-11-18", "start_time": "9", "end_time": "10:00"}, "start_time"),
+        ({"title": "X", "preset": "day_range", "day": "2026-11-18", "start_time": "09:00", "estimate_min": 30}, "start and an end"),
+        ({"title": "X", "preset": "days", "weekdays": [], "estimate_min": 30}, "at least one day"),
+        ({"title": "X", "preset": "before_deadline", "deadline_date": "2026-11-10", "deadline_time": "12:00", "estimate_min": 30}, "already passed"),
+        ({"title": "X", "preset": "day", "day": "2026-11-10", "estimate_min": 30}, "already passed"),
+        ({"title": "X", "preset": "day", "estimate_min": 30}, "date"),
+    ],
+)
+def test_bad_items_are_refused_with_a_message(client: TestClient, fields: dict, message: str) -> None:
+    assert message in refused(client, **fields)
+
+
+def test_custom_items_cannot_be_added_yet(client: TestClient) -> None:
+    response = client.post("/api/items", json={"week_start": WEEK, "title": "X", "preset": "custom", "estimate_min": 30})
+    assert response.status_code == 422
+
+
+def test_delete_an_item_and_its_blocks(db: Path, client: TestClient) -> None:
+    week = add(client, title="Errand", preset="day", day="2026-11-18", estimate_min=30)
+    [errand] = blocks_titled(week, "Errand")
+    response = client.delete(f"/api/items/{errand['item_id']}", params={"week": WEEK})
+    assert response.status_code == 200
+    assert blocks_titled(response.json(), "Errand") == []
+    assert store.get_item(store.connect(db), UUID(errand["item_id"])) is None
+
+
+def test_delete_an_imported_item(db: Path, client: TestClient) -> None:
+    [lab] = blocks_titled(get(client), "Chemistry lab")
+    response = client.delete(f"/api/items/{lab['item_id']}", params={"week": WEEK})
+    assert blocks_titled(response.json(), "Chemistry lab") == []
+
+
+def test_deleting_a_missing_item_is_404(client: TestClient) -> None:
+    response = client.delete(f"/api/items/{uuid4()}", params={"week": WEEK})
+    assert response.status_code == 404

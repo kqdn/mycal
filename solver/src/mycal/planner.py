@@ -83,6 +83,48 @@ def plan_week(conn: sqlite3.Connection, settings: SolverSettings, week_start: da
     return result
 
 
+def replan(conn: sqlite3.Connection, settings: SolverSettings, weeks: list[date], now: datetime) -> dict[date, SolveResult]:
+    """Re-plan each week, earliest first, so earlier weeks get an item's work before later ones."""
+    return {week: plan_week(conn, settings, week, now) for week in sorted(set(weeks))}
+
+
+def monday(day: date) -> date:
+    return day - timedelta(days=day.weekday())
+
+
+def local_monday(moment: datetime, timezone: str) -> date:
+    """The Monday of the local week a UTC moment falls in."""
+    return monday(moment.astimezone(ZoneInfo(timezone)).date())
+
+
+def weeks_touched(item: Item, timezone: str, now: datetime) -> list[date]:
+    """The Mondays of the weeks an item's windows can fall in (it can't be placed before now)."""
+    params = item.preset_params
+    last_moment = timedelta(microseconds=1)  # an end moment belongs to the week before it
+    if item.flex_preset is FlexPreset.EXACT:
+        return sorted({local_monday(params["start"], timezone), local_monday(params["end"] - last_moment, timezone)})
+    if item.flex_preset in (FlexPreset.DAY, FlexPreset.DAY_RANGE):
+        day: date = params["day"]
+        overnight = item.flex_preset is FlexPreset.DAY_RANGE and params["end_time"] <= params["start_time"]
+        return sorted({monday(day), monday(day + timedelta(days=1 if overnight else 0))})
+    if item.flex_preset is FlexPreset.DAYS:
+        return [params["week"]]
+    if item.flex_preset is FlexPreset.BEFORE_DEADLINE and item.deadline is not None:
+        first, last = local_monday(now, timezone), local_monday(item.deadline - last_moment, timezone)
+        return [first + timedelta(weeks=n) for n in range((last - first).days // 7 + 1)]
+    if item.flex_preset is FlexPreset.CUSTOM:
+        return sorted({local_monday(w.start, timezone) for w in params.get("windows", [])})
+    return []
+
+
+def weeks_of_blocks(blocks: list[Block], timezone: str) -> list[date]:
+    """The Mondays of the weeks the blocks start or end in."""
+    last_moment = timedelta(microseconds=1)
+    return sorted(
+        {local_monday(b.start, timezone) for b in blocks} | {local_monday(b.end - last_moment, timezone) for b in blocks}
+    )
+
+
 def _is_current_plan(block: Block, open_from: datetime) -> bool:
     return block.status is BlockStatus.PLANNED and not block.locked and block.start >= open_from
 

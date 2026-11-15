@@ -137,6 +137,20 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def copy_in_memory(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """A throwaway in-memory copy of the whole database, to try a change on before keeping it."""
+    copy = sqlite3.connect(":memory:")
+    conn.backup(copy)
+    copy.row_factory = sqlite3.Row
+    copy.execute("PRAGMA foreign_keys = ON")
+    return copy
+
+
+def keep_copy(copy: sqlite3.Connection, conn: sqlite3.Connection) -> None:
+    """Write a copy made by copy_in_memory back over the database, replacing it as a whole."""
+    copy.backup(conn)
+
+
 def migrate(conn: sqlite3.Connection) -> None:
     """Run every migration the database hasn't had yet, each in its own transaction."""
     current = conn.execute("PRAGMA user_version").fetchone()[0]
