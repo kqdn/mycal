@@ -142,7 +142,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
 
 ### States
 
-- **Add button:** disabled until the required fields are valid. While saving, it reads "Adding..." and the whole form is disabled. Saving re-plans the week, which takes about a second.
+- **Add button:** disabled until the required fields are valid. While saving, it reads "Adding..." and the whole form is disabled. Saving re-plans the weeks the item touches. That usually takes a second or two, and can take longer on busy weeks, up to the planner's work limit.
 - **Field errors:** shown under the field in 12px `--attention-strong`, with the field's border in `--attention-strong`. Messages say how to fix the problem:
   - "Use a length like 45m or 1h 30m."
   - "Pick at least one day."
@@ -172,9 +172,9 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 2. **When:** the block's day and time range, 13px, `--text`, for example "Tue, Nov 17, 2:00 to 2:30pm". A block that crosses midnight gives its full range: "Fri, Nov 20, 5:00pm to 2:00am (ends the next day)".
 3. **Kind and sessions:** one line in 12px `--text-muted`.
    - "Fixed" or "Placed by the solver".
-   - If the item has more than one session, add where this one fits and the total, for example "Placed by the solver Â· Session 2 of 4 Â· 2h in all". Sessions are counted across every week, in time order.
+   - If the item has more than one session, add where this one fits and how much of the work is placed, for example "Placed by the solver · Session 2 of 4 · 2h in all". When the placed minutes are less than the estimate (work waiting on a week that can't be planned, or not yet within planning range), say so instead: "Session 2 of 2 · 2h of 4h placed". "In all" is only for an item whose work is all placed. Sessions are counted across every week, in time order. The week response carries what this needs for each block: its session number, the item's session count, its placed minutes and its estimate.
    - If the block has already started: "Already started", because the solver no longer moves it.
-   - For an Unscheduled row instead of a block: "Not scheduled: it has no times to go in yet", then its estimate, for example "Â· 15m".
+   - For an Unscheduled row instead of a block: its reason, the same text as the row ("Waiting on Nov 30 to Dec 6, which can't be planned."), or "Not scheduled: it has no times to go in yet" if it has none. Then its estimate, for example "· 15m".
 4. **Actions:** a row of buttons at the bottom, right-aligned, with an 8px gap.
    - Milestone 3: "Delete item", a secondary button.
    - Milestone 4: "Edit" goes to the left of it, also secondary. Nothing else in the popover moves.
@@ -182,13 +182,15 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 ### Deleting
 
 - **What it deletes:** the whole item, with every session in every week, past sessions included. The button says "Delete item" for that reason. Deleting a single session isn't offered: the solver would just place that work again.
+- **Imported items:** deleting an item that came from a week file doesn't stop a later `mycal-import --replace` of that file from bringing it back.
 - **Confirming:** pressing "Delete item" swaps the actions row, in place, for a confirm row. Nothing else opens.
   - The question, 13px / 600 `--text`: "Delete this item?", then a 12px `--text-muted` line saying what goes: "All 4 sessions go, in every week." or "Its one session goes." or "It has no sessions yet."
   - Two buttons, right-aligned: "Cancel" (secondary) and "Delete" (secondary, with `--attention-strong` text and border). Focus moves to "Cancel".
   - Cancel brings the actions row back. Escape still closes the whole popover.
-- **While deleting:** the solver re-plans the weeks the item was in, which takes about a second. "Delete" reads "Deleting..." and both buttons are disabled. The popover stays open and the grid behind it stays as it was, so nothing jumps around. Clicking outside or pressing Escape doesn't close it until the delete finishes.
+- **While deleting:** the solver re-plans the weeks the item was in. That usually takes a second or two, and can take longer on busy weeks, up to the planner's work limit. "Delete" reads "Deleting..." and both buttons are disabled. The grid stays as it was until the delete finishes, so nothing jumps around. Closing isn't blocked: Escape and clicking outside close the popover as usual (plain `popover="auto"`), the delete keeps running, and the grid updates when it finishes.
 - **When it's done:** the popover closes and the grid shows the re-planned week. Focus goes to the grid's scroll area, since the block it came from is gone.
-- **If it fails:** the confirm row stays, and a line under it in 12px `--attention-strong` says what went wrong, using the server's message, for example "Couldn't delete it: Can't reach the planner." The buttons are enabled again so it can be retried.
+- **If the planner runs out of time:** the item is still deleted, and the weeks it was in re-plan when next viewed. The popover closes as when it's done.
+- **If it fails:** if the popover is still open, the confirm row stays, and a line under it in 12px `--attention-strong` says what went wrong, using the server's message, for example "Couldn't delete it: Can't reach the planner." The buttons are enabled again so it can be retried. If the popover was already closed, the page's attention banner shows the same message instead.
 - **If the item was already gone** (a 404, say it was deleted from another tab): the popover closes and the week reloads, without an error.
 
 ### Past blocks
