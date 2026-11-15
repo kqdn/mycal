@@ -8,7 +8,7 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 Milestone 3: storage and adding items. The week lives in SQLite instead of a TOML file: I import my week file once, add and delete items from the page, and the solver re-plans and stores the result. No editing of existing items (that is Milestone 4), no recurrence or check-ins yet. Done when I can add an item to my real week in the browser and see it placed, and the plan survives a server restart.
 
-The New item dialog is built to the Add item section of `web/DESIGN.md`. Until I add that section, work on the storage and API parts only.
+The New item dialog is built to the Add item dialog section of `web/DESIGN.md` (preview: `web/add-item-preview.png`). Build it after the storage and API parts it depends on.
 
 Milestones 1 (solver package, printed schedule) and 2 (read-only week view) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 
