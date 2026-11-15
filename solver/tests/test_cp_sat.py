@@ -331,3 +331,44 @@ def test_one_unit_worse_balance_stays_outside_the_gap_even_with_all_earliness_ga
     penalty, slack = forced_penalty([essay], (essay, at(16, 9)), [monday, tuesday])
     assert slack == 600 // 15
     assert penalty == slack + 1  # just outside the gap limit
+
+
+# Earlier week. A two-week span: the week of Mon Nov 16 and the week of Mon Nov 23.
+
+
+def test_work_lands_in_the_earlier_week_when_it_has_room() -> None:
+    read = task("Read", 60, [window(16, 9, 17), window(23, 9, 17)])
+    assert spans(run([read], frames=[EVERY_DAY])) == [(at(16, 9), at(16, 10))]
+
+
+def test_only_the_work_that_does_not_fit_spills_into_the_next_week() -> None:
+    # Two 1h sessions on different days. Week 1 has one hour left (Sunday 9 to 10),
+    # and Sunday is already busy, so balance alone would put both in the next week.
+    lecture = task("Lecture", None, [window(22, 10, 13)])
+    locked = Block(lecture.id, at(22, 10), at(22, 13), locked=True)
+    item = task(
+        "Reading", 120, [window(22, 9, 10), window(23, 9, 17), window(24, 9, 17)], max_chunk_min=60, one_block_per_day=True
+    )
+    result = run([lecture, item], [locked], frames=[EVERY_DAY])
+    assert [(b.start, b.end) for b in blocks_of(result, item)] == [(at(22, 9), at(22, 10)), (at(23, 9), at(23, 10))]
+
+
+def test_a_preference_beats_the_earlier_week() -> None:
+    read = task("Read", 60, [window(16, 9, 17), window(23, 9, 17)])
+    next_monday = preference([window(23, 14, 16)], [read])
+    assert spans(run([read], frames=[EVERY_DAY], constraints=[next_monday])) == [(at(23, 14), at(23, 15))]
+
+
+def test_the_earlier_week_beats_balance() -> None:
+    # Monday the 16th is already busy, so balance alone would pick the empty Monday a week later.
+    lecture = task("Lecture", None, [window(16, 9, 12)])
+    locked = Block(lecture.id, at(16, 9), at(16, 12), locked=True)
+    read = task("Read", 60, [window(16, 12, 17), window(23, 9, 17)])
+    [block] = blocks_of(run([lecture, read], [locked], frames=[EVERY_DAY]), read)
+    assert (block.start, block.end) == (at(16, 12), at(16, 13))
+
+
+def test_a_later_week_is_outside_the_gap() -> None:
+    read = task("Read", 60, [window(16, 9, 17), window(23, 9, 17)])
+    penalty, slack = forced_penalty([read], (read, at(23, 9)), [EVERY_DAY])
+    assert penalty > slack

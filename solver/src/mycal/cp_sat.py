@@ -22,15 +22,20 @@ best plan:
     3. preferences: weighted soft constraints (time_preference: a block's
        slots on the wrong side of its preferred or avoided windows;
        rest_between: sessions too few days apart)
-    4. balance: the fullest local day, as load / work-frame minutes, kept
+    4. earlier week: each block's slots times how many weeks after the first
+       week it starts in. It only picks the week; within a week the tiers
+       below pick the day. So work lands in the earliest week with room and
+       spills into a later week only when it has to. A one-week solve has
+       nothing to choose here.
+    5. balance: the fullest local day, as load / work-frame minutes, kept
        blocks included (a day with no work frame is left out)
-    5. earlier in the frame: slots from the start of the work-frame
+    6. earlier in the frame: slots from the start of the work-frame
        occurrence (else the item window) holding each block's start
 
 Stopping is deterministic: one worker, a fixed seed, no wall-clock limit.
 CP-SAT stops when it proves its plan is within `slack` of the best (the gap
 limit), where slack is earliness_slack_min per flexible block, in slots.
-Because of the weights above, only tier 5 can come out worse, and by at most
+Because of the weights above, only tier 6 can come out worse, and by at most
 `slack` slots summed over the week. Proving the exact tier-5 optimum can take
 minutes, since many arrangements tie in the tiers above. A deterministic
 work limit is the backstop. Same input and same OR-Tools version, same plan.
@@ -222,7 +227,7 @@ def _add_score(
     busy: list[Interval],
     local_day: Callable[[int], date],
 ) -> int:
-    """Add the five score terms, minimize them in priority order, and return the slack in slots."""
+    """Add the six score terms, minimize them in priority order, and return the slack in slots."""
     chunks = problem.chunks
     slot_min = problem.settings.slot_min
     zone = ZoneInfo(problem.settings.timezone)
@@ -259,7 +264,12 @@ def _add_score(
     rests, max_rests = _rest_penalties(model, problem, day_vars, chunks_of)
     preferences, max_preferences = times + rests, max_times + max_rests
 
-    # 4. Balance: the fullest day, in thousandths of that day's work-frame minutes.
+    # 4. Earlier week: a chunk on day d costs its size times d's week number,
+    #    counted from the Monday of the earliest day any chunk could start on.
+    #    Linear in the day booleans, like spread and balance.
+    later, max_later = _later_week_penalty(chunks, day_vars)
+
+    # 5. Balance: the fullest day, in thousandths of that day's work-frame minutes.
     #    "fullest >= load / capacity" is a division, but capacity is a constant per
     #    day, so it multiplies out to the linear "fullest * capacity >= 1000 * load".
     #    Days with no work-frame time have no capacity and are left out.
@@ -278,7 +288,7 @@ def _add_score(
         load = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
         model.add(fullest * capacity[day] >= 1000 * slot_min * (load + kept_load[day]))
 
-    # 5. Earlier in the frame: slots from the start of the work-frame occurrence
+    # 6. Earlier in the frame: slots from the start of the work-frame occurrence
     #    holding each start, so a 12pm to 2am frame prefers 12pm over 12am. The
     #    whole occurrence counts, even the part before the planning week, and a
     #    start outside every frame counts from the start of its item window.
@@ -306,13 +316,14 @@ def _add_score(
     # Only blocks with a choice of start can come out later than optimal.
     flexible = sum(1 for chunk in chunks if len(chunk.candidates) > 1)
     slack = flexible * problem.settings.earliness_slack_min // slot_min
-    w_offset, w_balance, w_preferences, w_spread, w_stability = tier_weights(
-        [max_offset_total, max_fullest, max_preferences, len(chunks), len(moved)], slack
+    w_offset, w_balance, w_later, w_preferences, w_spread, w_stability = tier_weights(
+        [max_offset_total, max_fullest, max_later, max_preferences, len(chunks), len(moved)], slack
     )
     model.minimize(
         w_stability * sum(moved)
         + w_spread * sum(extras)
         + w_preferences * preferences
+        + w_later * later
         + w_balance * fullest
         + w_offset * sum(offsets)
     )
@@ -365,6 +376,24 @@ def _time_preference_penalties(
         penalties.append(penalty)
         bound += top
     return sum(penalties), bound
+
+
+def _later_week_penalty(
+    chunks: list[Chunk], day_vars: list[dict[date, cp_model.IntVar]]
+) -> tuple[cp_model.LinearExprT, int]:
+    """Sum of size * week number over chunks' start days, and the most it can add up to."""
+    all_days = [day for vars_ in day_vars for day in vars_]
+    if not all_days:
+        return 0, 0
+    first = min(all_days)
+    monday = first - timedelta(days=first.weekday())
+    terms: list[cp_model.LinearExprT] = []
+    bound = 0
+    for chunk, vars_ in zip(chunks, day_vars):
+        costs = {day: (day - monday).days // 7 * chunk.size for day in vars_}
+        terms += [cost * vars_[day] for day, cost in costs.items() if cost]
+        bound += max(costs.values(), default=0)
+    return sum(terms), bound
 
 
 def _rest_penalties(
