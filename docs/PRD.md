@@ -323,6 +323,8 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 - [ ] Name for the app
 - [ ] rest_between sees only this week's input, so last Sunday's session does not stop one on Monday. Pass recent done blocks from the previous week, or a rule of its own?
+- [ ] Follow-up: count the span cap from now instead of the current week's Monday, so an add on a weekend still looks two weeks ahead (today a Saturday add's span is that weekend plus one week)
+- [ ] Follow-up: engine settings (work_limit, and likewise earliness_slack_min, slot_min and engine) are stored from the imported week file, so a database imported before a default changed keeps the old value (a database imported before the work limit dropped to 10 still has 20). They belong to the engine, not to a week file, and shouldn't come from imports. Imports currently also replace the work frames, with the latest file winning; decide both together
 - [ ] Follow-up: give an item cut off by the span cap a pro-rata share of its remaining work in the capped span, through a reduced estimate in the planner (solve() unchanged), so long-deadline work starts early instead of only in the 2 weeks before its deadline
 - [ ] Milestone 6 candidate: partial placement. Let an item place less than its remaining work (optional chunks, a top score tier per unplaced minute, and SolveResult reporting unplaced minutes per item), so an item waiting on a broken week gets as much work as fits instead of none. It changes solve()'s outputs
 - [ ] Balance only limits the fullest day; should a second term even out the other days too? Revisit if real weeks look uneven
