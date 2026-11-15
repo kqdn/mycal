@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchWeek, WeekError, type Week } from './api'
+import { loadWeek, peekWeek, WeekError, type Week } from './api'
 import { addDays, dayLabel, mondayOf, today, type DateString } from './time'
 import { WeekGrid } from './WeekGrid'
 
@@ -16,7 +16,13 @@ export default function App() {
   const [weekStart, setWeekStart] = useState(weekFromUrl)
   // Each result remembers which week it is for; a newer week shows as loading.
   const [result, setResult] = useState<{ for: DateString } & Result>()
-  const state: State = result && result.for === weekStart ? result : { status: 'loading' }
+  // A week already in memory renders right away, with no loading step.
+  const inMemory = peekWeek(weekStart)
+  const state: State = inMemory
+    ? { status: 'ready', week: inMemory }
+    : result && result.for === weekStart
+      ? result
+      : { status: 'loading' }
 
   useEffect(() => {
     const onPop = () => setWeekStart(weekFromUrl())
@@ -26,8 +32,14 @@ export default function App() {
 
   useEffect(() => {
     let current = true
-    fetchWeek(weekStart)
-      .then((week) => current && setResult({ for: weekStart, status: 'ready', week }))
+    loadWeek(weekStart)
+      .then((week) => {
+        if (current) setResult({ for: weekStart, status: 'ready', week })
+        // Warm the neighbors so the arrows are instant. A missing week is normal, so errors are ignored.
+        for (const neighbor of [addDays(weekStart, -7), addDays(weekStart, 7)]) {
+          loadWeek(neighbor).catch(() => {})
+        }
+      })
       .catch((error: unknown) => {
         const message =
           error instanceof WeekError ? error.message : 'Could not reach the API. Is `uv run mycal-api` running?'

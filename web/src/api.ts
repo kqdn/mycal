@@ -23,6 +23,42 @@ export interface Week {
 
 export class WeekError extends Error {}
 
+// Weeks fetched this page session (a stopgap until Milestone 3 storage). The
+// promise map shares one request between callers; the plain map lets a render
+// read an already-loaded week synchronously, so going back shows no loading flash.
+const pending = new Map<DateString, Promise<Week>>()
+const loaded = new Map<DateString, Week>()
+
+/** The week from memory, or fetched once. A failed fetch is forgotten, so it retries next time. */
+export function loadWeek(weekStart: DateString): Promise<Week> {
+  let promise = pending.get(weekStart)
+  if (!promise) {
+    promise = fetchWeek(weekStart).then(
+      (week) => {
+        loaded.set(weekStart, week)
+        return week
+      },
+      (error: unknown) => {
+        pending.delete(weekStart)
+        throw error
+      },
+    )
+    pending.set(weekStart, promise)
+  }
+  return promise
+}
+
+/** An already-loaded week, without waiting. */
+export function peekWeek(weekStart: DateString): Week | undefined {
+  return loaded.get(weekStart)
+}
+
+/** Drop everything in memory. For tests. */
+export function clearWeekCache(): void {
+  pending.clear()
+  loaded.clear()
+}
+
 export async function fetchWeek(weekStart: DateString): Promise<Week> {
   const response = await fetch(`/api/weeks/${weekStart}`)
   if (response.ok) return response.json()
