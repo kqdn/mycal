@@ -430,3 +430,40 @@ def test_work_deferred_by_the_span_cap_is_not_listed_as_waiting(db: Path, client
     assert blocks_titled(week, "Thesis") == []
     assert all(u["title"] != "Thesis" for u in week["unscheduled"])
 
+
+
+# Planner timeouts: the work limit ran out before any arrangement was found.
+
+
+@pytest.fixture
+def slow(db: Path) -> Path:
+    """A database whose solves always run out of work budget."""
+    from dataclasses import replace as replaced
+
+    conn = store.connect(db)
+    store.save_settings(conn, replaced(store.load_settings(conn), work_limit=0.001))
+    store.clear_plans(conn)
+    return db
+
+
+def test_a_timeout_while_viewing_is_503_and_the_week_stays_unplanned(slow: Path, client: TestClient) -> None:
+    response = client.get(f"/api/weeks/{WEEK}")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The planner ran out of time planning this week. Its old plan is kept."
+    assert status(slow, WEEK) is None  # the next view tries again
+
+
+def test_a_timeout_while_adding_is_503_not_doesnt_fit_and_adds_nothing(slow: Path, client: TestClient) -> None:
+    response = client.post(
+        "/api/items", json={"week_start": WEEK, "title": "Errand", "preset": "day", "day": "2026-11-18", "estimate_min": 30}
+    )
+    assert response.status_code == 503
+    assert "ran out of time" in response.json()["detail"] and "doesn't fit" not in response.json()["detail"]
+    assert all(i.title != "Errand" for i in store.list_items(store.connect(slow)))
+
+
+def test_a_timeout_while_deleting_still_deletes(slow: Path, client: TestClient) -> None:
+    lab = next(i for i in store.list_items(store.connect(slow)) if i.title == "Chemistry lab")
+    response = client.delete(f"/api/items/{lab.id}", params={"week": WEEK})
+    assert response.status_code == 200
+    assert store.get_item(store.connect(slow), lab.id) is None

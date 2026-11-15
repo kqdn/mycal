@@ -60,6 +60,10 @@ MAX_SPAN_WEEKS = 2
 WEEK = timedelta(weeks=1)
 
 
+class PlannerTimeout(Exception):
+    """CP-SAT hit the work limit before finding any arrangement: no proof either way, so nothing was saved."""
+
+
 @dataclass(frozen=True, slots=True)
 class Horizon:
     """A stretch of time as UTC moments, from a local Monday 00:00 to a later one."""
@@ -160,7 +164,10 @@ def _solve_span(
         for item in items
     ]
     constraints = [compile_constraint(c, settings.timezone, span.start, span.end) for c in store.list_constraints(conn)]
-    result = solve(planned, kept + current, frames, constraints, settings)
+    try:
+        result = solve(planned, kept + current, frames, constraints, settings)
+    except RuntimeError as error:  # the engine's "no arrangement within the work limit"
+        raise PlannerTimeout(str(error)) from error
     return _Attempt(result, current, kept)
 
 

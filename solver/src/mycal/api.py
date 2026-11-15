@@ -43,6 +43,7 @@ from mycal.planner import (
     plan_weeks,
     remaining_min,
     span_for_item,
+    PlannerTimeout,
     span_for_view,
     waiting_on_broken_weeks,
     week_horizon,
@@ -126,7 +127,12 @@ def database() -> Iterator[tuple[sqlite3.Connection, SolverSettings]]:
 def get_week(week_start: date) -> WeekOut:
     """The week's stored plan, planning it first if it has none. A week that can't be planned is still 200."""
     with database() as (conn, settings):
-        return week_out(conn, settings, week_start, _status(conn, settings, week_start, now()))
+        try:
+            feasible = _status(conn, settings, week_start, now())
+        except PlannerTimeout as error:
+            log.warning("%s: %s", week_start, error)
+            raise HTTPException(status_code=503, detail=VIEW_TIMED_OUT) from error
+        return week_out(conn, settings, week_start, feasible)
 
 
 class ItemIn(BaseModel):
@@ -160,6 +166,15 @@ DOES_NOT_FIT = (
 )
 
 
+# A planner timeout is not "doesn't fit": the solver ran out of work budget
+# before finding any arrangement, which proves nothing either way.
+VIEW_TIMED_OUT = "The planner ran out of time planning this week. Its old plan is kept."
+ADD_TIMED_OUT = (
+    "The planner ran out of time before finishing, so nothing was added. "
+    "Try again with fewer days or a smaller estimate."
+)
+
+
 def waits_on_broken_week(weeks: list[date]) -> str:
     named = " and ".join(f"the week of {week_title(w)}" for w in weeks)
     return f"Nothing was added: {named} already can't be planned. Make room there first, for example by deleting something."
@@ -188,10 +203,13 @@ def add_item(request: ItemIn) -> WeekOut:
                 broken = [week for week, fit in sorted(after.items()) if not fit]
                 raise HTTPException(status_code=422, detail=waits_on_broken_week(broken) if broken else DOES_NOT_FIT)
             store.keep_copy(trial, conn)
+        except PlannerTimeout as error:
+            log.warning("adding %r: %s", item.title, error)
+            raise HTTPException(status_code=503, detail=ADD_TIMED_OUT) from error
         finally:
             trial.close()
         log.info("added %r, re-planned %s to %s", item.title, first, last)
-        return week_out(conn, settings, request.week_start, _status(conn, settings, request.week_start, moment))
+        return week_out(conn, settings, request.week_start, _status_or_stored(conn, settings, request.week_start, moment))
 
 
 @app.delete("/api/items/{item_id}")
@@ -203,9 +221,14 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
         moment = now()
         weeks = weeks_of_blocks([b for b in store.list_blocks(conn) if b.item_id == item_id], settings.timezone)
         store.delete_item(conn, item_id)
-        if weeks:
-            plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
-        return week_out(conn, settings, week, _status(conn, settings, week, moment))
+        try:
+            if weeks:
+                plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
+        except PlannerTimeout as error:
+            # The item is gone either way. Weeks that didn't finish stay unmarked
+            # and re-plan when next viewed.
+            log.warning("re-planning after deleting %s: %s", item_id, error)
+        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment))
 
 
 def _status(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> bool:
@@ -219,6 +242,15 @@ def _status(conn: sqlite3.Connection, settings: SolverSettings, week_start: date
         broken = [str(w) for w, fit in outcome.items() if not fit]
         log.info("%s to %s planned in %.2fs%s", first, last, perf_counter() - began, f", can't plan {broken}" if broken else "")
     return feasible
+
+
+def _status_or_stored(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> bool:
+    """Like _status, but after a change that already happened: a timeout shows the week's last stored plan."""
+    try:
+        return _status(conn, settings, week_start, moment)
+    except PlannerTimeout as error:
+        log.warning("%s: %s", week_start, error)
+        return store.plan_status(conn, week_start) is not False
 
 
 def _baseline(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, moment: datetime) -> dict[date, bool]:
