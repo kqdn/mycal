@@ -61,18 +61,57 @@ export function today(): DateString {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }
 
-/** "Mon Nov 16" style label for a date string. */
-export function dayLabel(date: DateString): string {
-  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
-    timeZone: 'UTC',
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })
+// 12-hour times, as web/DESIGN.md sets them: "2:00pm", "2:00 to 3:30pm",
+// "11:00am to 12:30pm", hour labels "8am". Minutes count from local midnight;
+// 1440 (the end of the day) reads as "12:00am".
+
+function parts12(minutes: number): { clock: string; meridiem: 'am' | 'pm'; hour: number } {
+  const total = minutes % 1440
+  const h24 = Math.floor(total / 60)
+  const hour = h24 % 12 === 0 ? 12 : h24 % 12
+  const clock = `${hour}:${String(total % 60).padStart(2, '0')}`
+  return { clock, meridiem: h24 < 12 ? 'am' : 'pm', hour }
 }
 
-/** "21:00" from minutes since midnight; 1440 shows as "24:00". */
-export function clock(minutes: number): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`
+/** "2:00pm" */
+export function time12(minutes: number): string {
+  const { clock, meridiem } = parts12(minutes)
+  return clock + meridiem
+}
+
+/** "2:00 to 3:30pm", or "11:00am to 12:30pm" when the am/pm differ. */
+export function range12(startMin: number, endMin: number): string {
+  const start = parts12(startMin)
+  const end = parts12(endMin)
+  const first = start.meridiem === end.meridiem ? start.clock : start.clock + start.meridiem
+  return `${first} to ${end.clock}${end.meridiem}`
+}
+
+/** Hour label for the grid: "8am", "12pm", "12am". */
+export function hourLabel(hour: number): string {
+  const { hour: h, meridiem } = parts12(hour * 60)
+  return `${h}${meridiem}`
+}
+
+/** Page title for a week: "Nov 16 to 22", or "Nov 30 to Dec 6" across months. */
+export function weekTitle(weekStart: DateString): string {
+  const month = (date: DateString) =>
+    new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' })
+  const day = (date: DateString) => Number(date.slice(8, 10))
+  const end = addDays(weekStart, 6)
+  const endText = month(end) === month(weekStart) ? `${day(end)}` : `${month(end)} ${day(end)}`
+  return `${month(weekStart)} ${day(weekStart)} to ${endText}`
+}
+
+/** Short weekday for a date: "Mon". */
+export function weekdayShort(date: DateString): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short' })
+}
+
+/** "15m", "1h", "1h 30m" */
+export function estimateLabel(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h === 0) return `${m}m`
+  return m === 0 ? `${h}h` : `${h}h ${m}m`
 }

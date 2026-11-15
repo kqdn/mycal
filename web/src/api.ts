@@ -18,10 +18,18 @@ export interface Week {
   feasible: boolean
   blocks: Block[]
   frames: { start: string; end: string }[]
-  unscheduled: { id: string; title: string }[]
+  unscheduled: { id: string; title: string; estimate_min: number | null }[]
 }
 
-export class WeekError extends Error {}
+/** Why a week could not be shown: no file for it, or a file the API could not use. */
+export class WeekError extends Error {
+  readonly kind: 'missing' | 'invalid'
+
+  constructor(kind: 'missing' | 'invalid', message: string) {
+    super(message)
+    this.kind = kind
+  }
+}
 
 // Weeks fetched this page session (a stopgap until Milestone 3 storage). The
 // promise map shares one request between callers; the plain map lets a render
@@ -62,8 +70,8 @@ export function clearWeekCache(): void {
 export async function fetchWeek(weekStart: DateString): Promise<Week> {
   const response = await fetch(`/api/weeks/${weekStart}`)
   if (response.ok) return response.json()
-  if (response.status === 404) throw new WeekError(`No week file for ${weekStart}.`)
+  if (response.status === 404) throw new WeekError('missing', `No week file for ${weekStart}.`)
   const body = await response.json().catch(() => null)
   const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
-  throw new WeekError(`Could not load the week: ${detail || `HTTP ${response.status}`}`)
+  throw new WeekError('invalid', detail || `HTTP ${response.status}`)
 }

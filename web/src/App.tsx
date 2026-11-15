@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { loadWeek, peekWeek, WeekError, type Week } from './api'
-import { addDays, dayLabel, mondayOf, today, type DateString } from './time'
+import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
 import { WeekGrid } from './WeekGrid'
 
-type Result = { status: 'error'; message: string } | { status: 'ready'; week: Week }
+type Problem = { title: string; body: string }
+type Result = { status: 'error'; problem: Problem } | { status: 'ready'; week: Week }
 type State = { status: 'loading' } | Result
 
 /** The week in the URL (?week=2026-11-16), or this week's Monday. */
@@ -41,9 +42,7 @@ export default function App() {
         }
       })
       .catch((error: unknown) => {
-        const message =
-          error instanceof WeekError ? error.message : 'Could not reach the API. Is `uv run mycal-api` running?'
-        if (current) setResult({ for: weekStart, status: 'error', message })
+        if (current) setResult({ for: weekStart, status: 'error', problem: describe(error, weekStart) })
       })
     return () => {
       current = false
@@ -57,40 +56,98 @@ export default function App() {
   }
 
   return (
-    <main>
-      <header>
-        <button type="button" onClick={() => go(-7)} aria-label="Previous week">
-          &larr;
-        </button>
-        <h1>Week of {dayLabel(weekStart)}</h1>
-        <button type="button" onClick={() => go(7)} aria-label="Next week">
-          &rarr;
-        </button>
-      </header>
+    <>
+      <nav className="top-bar" aria-label="Main">
+        <span className="tab active" aria-current="page">
+          Week
+        </span>
+      </nav>
 
-      {state.status === 'loading' && <p className="note">Loading...</p>}
-      {state.status === 'error' && <p className="note">{state.message}</p>}
-      {state.status === 'ready' && !state.week.feasible && (
-        <p className="note warn">
-          No arrangement fits this week: some deadline, window or dependency can't be met.
-        </p>
-      )}
-      {state.status === 'ready' && state.week.feasible && (
-        <>
-          <WeekGrid week={state.week} />
-          {state.week.unscheduled.length > 0 && (
-            <section className="unscheduled">
-              <h2>Unscheduled</h2>
-              <ul>
-                {state.week.unscheduled.map((item) => (
-                  <li key={item.id}>{item.title}</li>
-                ))}
-              </ul>
-            </section>
-          )}
-          <p className="note small">Times in {state.week.timezone}</p>
-        </>
-      )}
-    </main>
+      <main className="content">
+        <div className="title-row">
+          <div className="title-block">
+            <span className="eyebrow">Your week</span>
+            <h1 className="page-title">{weekTitle(weekStart)}</h1>
+          </div>
+          <div className="week-nav">
+            <button type="button" className="icon-button" onClick={() => go(-7)} aria-label="Previous week">
+              <Chevron direction="left" />
+            </button>
+            <button type="button" className="icon-button" onClick={() => go(7)} aria-label="Next week">
+              <Chevron direction="right" />
+            </button>
+          </div>
+        </div>
+
+        {state.status === 'loading' && <p className="loading">Loading...</p>}
+        {state.status === 'error' && <Banner {...state.problem} />}
+        {state.status === 'ready' && !state.week.feasible && (
+          <Banner
+            title="This week can't be planned"
+            body="Some deadline, window or dependency can't be met. Check the week file's estimates and windows."
+          />
+        )}
+        {state.status === 'ready' && state.week.feasible && (
+          <>
+            <WeekGrid week={state.week} />
+            {state.week.unscheduled.length > 0 && (
+              <section aria-labelledby="unscheduled-label">
+                <h2 id="unscheduled-label" className="section-label">
+                  Unscheduled
+                </h2>
+                <ul className="list-card">
+                  {state.week.unscheduled.map((item) => (
+                    <li key={item.id} className="list-row">
+                      <span className="row-title">{item.title}</span>
+                      {item.estimate_min !== null && (
+                        <span className="row-sub">{estimateLabel(item.estimate_min)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </>
+        )}
+      </main>
+    </>
+  )
+}
+
+/** What to tell the user when a week can't be shown. */
+function describe(error: unknown, weekStart: DateString): Problem {
+  if (error instanceof WeekError && error.kind === 'missing') {
+    return {
+      title: `No week file for ${weekTitle(weekStart)}`,
+      body: `Add solver/weeks/${weekStart}.toml to plan this week.`,
+    }
+  }
+  if (error instanceof WeekError) {
+    return { title: "This week's file has a problem", body: error.message }
+  }
+  return { title: "Can't reach the planner", body: 'Start it with uv run mycal-api in solver/.' }
+}
+
+function Banner({ title, body }: Problem) {
+  return (
+    <div className="banner" role="status">
+      <p className="banner-title">{title}</p>
+      <p className="banner-body">{body}</p>
+    </div>
+  )
+}
+
+function Chevron({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path
+        d={direction === 'left' ? 'M11 4 6 9l5 5' : 'M7 4l5 5-5 5'}
+        fill="none"
+        stroke="var(--text)"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }

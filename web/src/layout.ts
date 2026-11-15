@@ -2,6 +2,7 @@
 // minutes of that local day. A span that crosses local midnight becomes one
 // piece per day, so Fri 5pm to Sat 2am shows in both columns.
 
+import type { Week } from './api'
 import { addDays, toLocal, type DateString } from './time'
 
 export interface Span {
@@ -45,14 +46,43 @@ export function pieces(span: Span, weekStart: DateString, timeZone: string): Pie
   return result
 }
 
-/**
- * The earliest local minute any span starts on any day, for the initial scroll.
- * Pieces that continue from the day before (the tail of a night) don't count.
- */
-export function earliestMinute(spans: Span[], weekStart: DateString, timeZone: string): number | null {
+/** The earliest local minute any span starts on any of the 7 days, ignoring tails of the night before. */
+function earliestStart(spans: Span[], weekStart: DateString, timeZone: string): number | null {
   const starts = spans
     .flatMap((span) => pieces(span, weekStart, timeZone))
     .filter((p) => !p.continuesBefore)
     .map((p) => p.startMin)
   return starts.length ? Math.min(...starts) : null
+}
+
+/**
+ * The minute of the day to scroll to on load (web/DESIGN.md, Initial scroll):
+ * the earliest block start on any day, weekends included, minus 30 minutes.
+ * With no blocks, the earliest work-frame start instead; with neither, the top.
+ */
+export function initialScrollMinute(week: Week): number {
+  const { week_start: weekStart, timezone } = week
+  const first = earliestStart(week.blocks, weekStart, timezone) ?? earliestStart(week.frames, weekStart, timezone)
+  return first === null ? 0 : Math.max(0, first - 30)
+}
+
+// Pixel sizes. HOUR_HEIGHT mirrors --hour-height in tokens.css: JS needs the
+// number to place blocks, so keep the two in step (see web/DESIGN.md).
+export const HOUR_HEIGHT = 52
+
+export function minutesToPx(minutes: number): number {
+  return (minutes * HOUR_HEIGHT) / 60
+}
+
+export type TextMode = 'two-line' | 'one-line' | 'title-only'
+
+/**
+ * What a block shows at its height (web/DESIGN.md, Text by height). With
+ * 15-minute slots: 1 hour and longer gets two lines, 30 and 45 min one line,
+ * 15 min the title only.
+ */
+export function textMode(heightPx: number): TextMode {
+  if (heightPx >= 40) return 'two-line'
+  if (heightPx >= 20) return 'one-line'
+  return 'title-only'
 }
