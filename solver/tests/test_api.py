@@ -282,6 +282,10 @@ def test_an_item_that_does_not_fit_is_refused_and_nothing_changes(db: Path, clie
         ({"title": "X", "preset": "before_deadline", "deadline_date": "2026-11-10", "deadline_time": "12:00", "estimate_min": 30}, "already passed"),
         ({"title": "X", "preset": "day", "day": "2026-11-10", "estimate_min": 30}, "already passed"),
         ({"title": "X", "preset": "day", "estimate_min": 30}, "date"),
+        ({"title": "X", "preset": "every_day", "weekdays": [0]}, "length for each day"),
+        ({"title": "X", "preset": "every_day", "weekdays": [0], "session_min": 20}, "steps of 15 minutes"),
+        ({"title": "X", "preset": "every_day", "weekdays": [0], "session_min": 30, "estimate_min": 30}, "no estimate"),
+        ({"title": "X", "preset": "every_day", "weekdays": [], "session_min": 30}, "at least one day"),
     ],
 )
 def test_bad_items_are_refused_with_a_message(client: TestClient, fields: dict, message: str) -> None:
@@ -595,3 +599,28 @@ def test_an_every_day_item_shows_the_work_it_still_has(db: Path, client: TestCli
 
     assert sorted(local(b)[0][:3] for b in piano) == ["Fri", "Thu", "Wed"]
     assert {(b["placed_min"], b["estimate_min"]) for b in piano} == {(90, 90)}
+
+
+def test_add_an_every_day_item_mid_week(db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Added on Wednesday at noon: all five picked days are saved, sessions go on Wed, Thu and Fri.
+    get(client)
+    monkeypatch.setattr(api, "now", lambda: pacific(18, 12, month=11))
+
+    week = add(client, title="Piano", preset="every_day", weekdays=[0, 1, 2, 3, 4], start_time="18:00", end_time="20:00", session_min=30)
+
+    piano = blocks_titled(week, "Piano")
+    assert sorted(local(b)[0][:3] for b in piano) == ["Fri", "Thu", "Wed"]
+    assert all(minutes(b) == 30 for b in piano)
+    assert {(b["placed_min"], b["estimate_min"]) for b in piano} == {(90, 90)}
+    [item] = [i for i in store.list_items(store.connect(db)) if i.title == "Piano"]
+    assert item.preset_params["weekdays"] == [0, 1, 2, 3, 4]
+    assert (item.preset_params["every_day"], item.preset_params["session_min"]) == (True, 30)
+
+
+def test_an_every_day_item_with_no_day_left_is_refused(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Wednesday 7:45pm: Mon and Tue have passed and Wednesday's 6 to 8pm has 15 minutes left.
+    monkeypatch.setattr(api, "now", lambda: pacific(18, 19, month=11) + timedelta(minutes=45))
+
+    detail = refused(client, title="Piano", preset="every_day", weekdays=[0, 1, 2], start_time="18:00", end_time="20:00", session_min=30)
+
+    assert detail == api.NO_DAY_LEFT

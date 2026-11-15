@@ -24,7 +24,7 @@ import logging
 import sqlite3
 import threading
 from time import perf_counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
@@ -148,13 +148,14 @@ def get_week(week_start: date) -> WeekOut:
 class ItemIn(BaseModel):
     """A new item as the New item dialog collects it: local dates and times in my timezone.
 
-    `week_start` is the week being viewed (its Monday). A "days" item belongs to it,
-    and it is the week the response shows.
+    `week_start` is the week being viewed (its Monday). A "days" or "every_day" item
+    belongs to it, and it is the week the response shows. An "every_day" item is a
+    days item with one session of `session_min` on each chosen day.
     """
 
     week_start: date
     title: str
-    preset: Literal["exact", "day", "day_range", "days", "before_deadline"]
+    preset: Literal["exact", "day", "day_range", "days", "every_day", "before_deadline"]
     day: date | None = None
     start_time: time | None = None
     end_time: time | None = None
@@ -164,12 +165,14 @@ class ItemIn(BaseModel):
     estimate_min: int | None = None
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
+    session_min: int | None = None
 
 
 class Invalid(ValueError):
     """A request the dialog should explain in words; it becomes a 422 with that message."""
 
 
+NO_DAY_LEFT = "None of these days has room left this week."
 DOES_NOT_FIT = (
     "It doesn't fit: there isn't enough free time in its days and work frames. "
     "Try more days, a later deadline or a smaller estimate."
@@ -199,6 +202,10 @@ def add_item(request: ItemIn) -> WeekOut:
             item = to_item(request, settings, moment)
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+        if request.preset == "every_day":
+            frames = store.list_work_frames(conn)
+            if effective_item(item, [], frames, settings, moment).estimate_min == 0:
+                raise HTTPException(status_code=422, detail=NO_DAY_LEFT)
 
         first, last = span_for_item(item, settings.timezone, moment)
         trial = store.copy_in_memory(conn)
@@ -284,6 +291,8 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime) -> Item
     title = request.title.strip()
     if not title:
         raise Invalid("Give the item a title.")
+    if request.preset == "every_day":
+        return _every_day_item(request, title, _days_params(request, at, moment), settings.slot_min)
     preset = FlexPreset(request.preset)
     exact = preset is FlexPreset.EXACT
     if exact and (request.estimate_min is not None or request.max_chunk_min is not None):
@@ -312,17 +321,7 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime) -> Item
         if ends <= moment:
             raise Invalid("That time has already passed.")
     elif preset is FlexPreset.DAYS:
-        weekdays = sorted(set(request.weekdays or []))
-        if not weekdays or any(d not in range(7) for d in weekdays):
-            raise Invalid("Pick at least one day.")
-        if request.week_start.weekday() != 0:
-            raise Invalid("week_start must be a Monday.")
-        params = {"week": request.week_start, "weekdays": weekdays}
-        start, end = _time_pair(request)
-        if start is not None and end is not None:
-            params |= {"start_time": start, "end_time": end}
-        if at(request.week_start + timedelta(days=7), time()) <= moment:
-            raise Invalid("That week has already passed.")
+        params = _days_params(request, at, moment)
     else:
         due_day = _need(request.deadline_date, "Pick a due date.")
         deadline = at(due_day, _need(request.deadline_time, "Pick a due time."))
@@ -337,6 +336,40 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime) -> Item
         deadline=deadline,
         max_chunk_min=request.max_chunk_min,
         one_block_per_day=request.one_block_per_day,
+    )
+
+
+def _days_params(request: ItemIn, at: Callable[[date, time], datetime], moment: datetime) -> dict[str, Any]:
+    """preset_params for an item on chosen days of the viewed week."""
+    weekdays = sorted(set(request.weekdays or []))
+    if not weekdays or any(d not in range(7) for d in weekdays):
+        raise Invalid("Pick at least one day.")
+    if request.week_start.weekday() != 0:
+        raise Invalid("week_start must be a Monday.")
+    params: dict[str, Any] = {"week": request.week_start, "weekdays": weekdays}
+    start, end = _time_pair(request)
+    if start is not None and end is not None:
+        params |= {"start_time": start, "end_time": end}
+    if at(request.week_start + timedelta(days=7), time()) <= moment:
+        raise Invalid("That week has already passed.")
+    return params
+
+
+def _every_day_item(request: ItemIn, title: str, params: dict[str, Any], slot_min: int) -> Item:
+    """One session of session_min on each chosen day. Weekdays are kept as picked; the planner
+    works out which are still open (effective_item)."""
+    if request.estimate_min is not None or request.max_chunk_min is not None:
+        raise Invalid("An every-day item takes its length from Each day, so it has no estimate or longest session.")
+    session = _need(request.session_min, "Add a length for each day, like 30m or 1h.")
+    if session <= 0 or session % slot_min:
+        raise Invalid(f"Use a length in steps of {slot_min} minutes, like 30m or 1h.")
+    return Item(
+        title=title,
+        flex_preset=FlexPreset.DAYS,
+        preset_params=params | {"every_day": True, "session_min": session},
+        estimate_min=session * len(params["weekdays"]),
+        max_chunk_min=session,
+        one_block_per_day=True,
     )
 
 
