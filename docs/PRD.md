@@ -321,6 +321,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 **Open questions**
 
+- [ ] Decide before Milestone 4 or 5: constraints treat empty targets (no item_ids and no series_ids) as "every item". That is why deleting a constraint's last target has to delete the whole constraint, and why re-adding that item later loses its rules. Consider an explicit "all items" flag, with empty targets invalid, so a rule can outlive its last target without turning into a rule for everything
 - [ ] Name for the app
 - [ ] rest_between sees only this week's input, so last Sunday's session does not stop one on Monday. Pass recent done blocks from the previous week, or a rule of its own?
 - [ ] Follow-up: count the span cap from now instead of the current week's Monday, so an add on a weekend still looks two weeks ahead (today a Saturday add's span is that weekend plus one week)
