@@ -3,8 +3,9 @@
 Each chunk gets a start variable whose domain is its candidate start slots
 (windows and deadline are already built in), plus an interval variable
 [start, start + size). One NoOverlap constraint covers all the intervals.
-Kept blocks are fixed, so instead of adding them as intervals, any start that
-would overlap one is removed from the domain up front.
+Kept blocks and fixed events never move, so instead of adding them as
+intervals, any start that would overlap a slot they touch is removed from the
+domain up front.
 
 Each chunk also gets one true/false variable per local day it could start on;
 exactly one is true, and when it is, the start must be one of that day's
@@ -134,7 +135,7 @@ def build_model(problem: Problem) -> BuiltModel | None:
     busy: list[Interval] = []
     kept_by_item: dict[UUID, list[Interval]] = defaultdict(list)
     kept_days: dict[UUID, set[date]] = defaultdict(set)
-    for block in problem.kept:
+    for block in problem.pinned:
         interval = (floor_slot(block.start, slot_min), ceil_slot(block.end, slot_min))
         busy.append(interval)
         kept_by_item[block.item_id].append(interval)
@@ -207,7 +208,7 @@ def build_model(problem: Problem) -> BuiltModel | None:
 
     # Daily limits: placed minutes on a day fit in what kept blocks leave free.
     # If kept blocks alone are over, nothing more goes there (not infeasible).
-    kept_min = kept_minutes_by_day(problem.kept, settings.timezone)
+    kept_min = kept_minutes_by_day(problem.pinned, settings.timezone)
     for day in {d for vars_ in day_vars for d in vars_}:
         limit = day_limit_min(problem.daily_limits, day)
         if limit is not None:
@@ -244,7 +245,7 @@ def _add_score(
 
     # 2. Spread: per item and day, blocks beyond the first (kept blocks count too).
     kept_count: dict[tuple[UUID, date], int] = defaultdict(int)
-    for block in problem.kept:
+    for block in problem.pinned:
         kept_count[(block.item_id, block.start.astimezone(zone).date())] += 1
     extras = []
     for item_id, mine in chunks_of.items():
@@ -419,7 +420,7 @@ def _rest_penalties(
                 continue
             kept = [
                 (b.start.astimezone(zone).date(), max(1, covered_min(b) // slot_min))
-                for b in problem.kept
+                for b in problem.pinned
                 if b.item_id == item_id and covered_min(b) > 0
             ]
             for a, i in enumerate(mine):

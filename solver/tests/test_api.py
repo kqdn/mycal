@@ -203,6 +203,11 @@ def test_add_an_exact_item(client: TestClient) -> None:
     assert block["fixed"] is True
 
 
+def test_add_an_exact_item_off_the_slot_grid(client: TestClient) -> None:
+    week = add(client, title="Class", preset="exact", day="2026-11-19", start_time="13:10", end_time="14:00")
+    assert [local(b) for b in blocks_titled(week, "Class")] == [("Thu 13:10", "Thu 14:00")]
+
+
 def test_add_an_overnight_exact_item(client: TestClient) -> None:
     week = add(client, title="Night drive", preset="exact", day="2026-11-19", start_time="23:00", end_time="01:00")
     assert [local(b) for b in blocks_titled(week, "Night drive")] == [("Thu 23:00", "Fri 01:00")]

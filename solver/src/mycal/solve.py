@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 
 from mycal import backtracking, cp_sat
 from mycal.model import Block, Constraint, Item, WorkFrame
-from mycal.problem import Problem, SearchResult, build_problem
+from mycal.problem import Problem, SearchResult, build_problem, fixed_clash
 from mycal.settings import Engine, SolverSettings
 
 ENGINES: dict[Engine, Callable[[Problem], SearchResult]] = {
@@ -18,7 +18,7 @@ ENGINES: dict[Engine, Callable[[Problem], SearchResult]] = {
 
 @dataclass(slots=True)
 class SolveResult:
-    """`blocks` is the full arrangement: kept blocks unchanged plus placed ones, by start.
+    """`blocks` is the full arrangement: kept blocks unchanged, fixed events at their real times and placed blocks, by start.
 
     `status` says how the search ended: OPTIMAL, FEASIBLE (CP-SAT stopped at its
     time limit with a valid but unproven arrangement) or INFEASIBLE, and FOUND
@@ -45,8 +45,9 @@ def solve(
     Inputs:
         items: what needs scheduling. The solver reads `Item.windows` only,
             never `flex_preset` or `preset_params`. An item with no windows is
-            skipped. An item with no estimate gets one block filling its
-            single window.
+            skipped. An item with no estimate is a fixed event: one block at
+            its single window's real times, never moved or rounded to the
+            slot grid.
         blocks: existing blocks. Locked blocks and completion history (any
             status other than planned) are kept and returned unchanged.
             Unlocked planned blocks are the current plan: they are replaced,
@@ -68,6 +69,9 @@ def solve(
     Hard constraints:
         - every block lies inside one of its item's windows
         - no two blocks overlap, and nothing overlaps a kept block
+        - other work stays off every slot a kept block or fixed event
+          touches (9:10 to 10:00 blocks 9:00 to 10:00), but fixed events
+          clash with each other and with kept blocks only on real times
         - all blocks of an item end by its deadline
         - an item starts after every item in `depends_on` has ended
         - with `one_block_per_day`, no two of an item's blocks share a local day
@@ -80,8 +84,10 @@ def solve(
         hold (a deadline is at risk).
     """
     problem = build_problem(items, blocks, constraints, settings, work_frames)
+    if fixed_clash(problem):
+        return SolveResult(feasible=False, status="INFEASIBLE")
     found = ENGINES[settings.engine](problem)
     if found.blocks is None:
         return SolveResult(feasible=False, status=found.status)
-    arrangement = [replace(b) for b in problem.kept] + found.blocks
+    arrangement = [replace(b) for b in problem.kept] + problem.fixed + found.blocks
     return SolveResult(feasible=True, blocks=sorted(arrangement, key=lambda b: b.start), status=found.status)

@@ -4,6 +4,10 @@ Time is a grid of slots of `slot_min` minutes, numbered from the Unix epoch
 in UTC. Each Chunk is one block still to be placed; its candidates are the
 start slots where it fits entirely inside one of its item's windows and ends
 by the item's deadline.
+
+An item with no estimate is a fixed event: one block at its window's real
+times, never moved or rounded to the grid. Like a kept block, it takes every
+slot it touches, rounded outward, away from other work.
 """
 
 from __future__ import annotations
@@ -106,10 +110,27 @@ class Problem:
     items: dict[UUID, Item]
     kept: list[Block]
     chunks: list[Chunk]
+    fixed: list[Block] = field(default_factory=list)  # fixed events, at their real times
     work_frames: list[WorkFrame] = field(default_factory=list)
     daily_limits: list[DailyLimit] = field(default_factory=list)
     preferences: list[TimePreference] = field(default_factory=list)
     rests: list[RestBetween] = field(default_factory=list)
+
+    @property
+    def pinned(self) -> list[Block]:
+        """Blocks no engine may move: kept blocks and fixed events."""
+        return self.kept + self.fixed
+
+
+def fixed_clash(problem: Problem) -> bool:
+    """True if a fixed event's real times overlap another fixed event or a kept block.
+
+    Real times, not slots: 9:00 to 9:10 and 9:10 to 10:00 share a slot but don't clash.
+    """
+    fixed = sorted(problem.fixed, key=lambda b: b.start)
+    if any(a.end > b.start for a, b in zip(fixed, fixed[1:])):
+        return True
+    return any(f.start < k.end and k.start < f.end for f in fixed for k in problem.kept)
 
 
 def day_limit_min(limits: list[DailyLimit], day: date) -> int | None:
@@ -176,16 +197,21 @@ def build_problem(
     replaced = sorted((b for b in blocks if not is_kept(b)), key=lambda b: b.start)
 
     chunks: list[Chunk] = []
+    fixed: list[Block] = []
     for item in items:
         item_kept = [b for b in kept if b.item_id == item.id]
         item_old = [b for b in replaced if b.item_id == item.id]
-        chunks.extend(_item_chunks(item, item_kept, item_old, settings.slot_min))
+        if item.estimate_min is None:
+            fixed.extend(_fixed_event(item, item_kept, item_old))
+        else:
+            chunks.extend(_item_chunks(item, item_kept, item_old, settings.slot_min))
 
     return Problem(
         settings,
         {item.id: item for item in items},
         kept,
         chunks,
+        fixed=fixed,
         work_frames=list(work_frames),
         daily_limits=daily_limits,
         preferences=preferences,
@@ -276,14 +302,12 @@ def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int)
     if not item.windows:
         return []  # not scheduled yet; stays in the task list
 
-    if item.estimate_min is None:
-        sizes = _fill_window_size(item, kept, slot_min)
-    else:
-        remaining = item.estimate_min - sum(covered_min(b) for b in kept)
-        if remaining <= 0:
-            return []
-        total_slots = -(-remaining // slot_min)
-        sizes = split_slots(total_slots, item.max_chunk_min, slot_min)
+    assert item.estimate_min is not None  # items with no estimate are fixed events
+    remaining = item.estimate_min - sum(covered_min(b) for b in kept)
+    if remaining <= 0:
+        return []
+    total_slots = -(-remaining // slot_min)
+    sizes = split_slots(total_slots, item.max_chunk_min, slot_min)
 
     chunks = []
     for size, previous in _match_old_blocks(sizes, old, slot_min):
@@ -319,8 +343,10 @@ def _match_old_blocks(sizes: list[int], old: list[Block], slot_min: int) -> list
     return pairs + [(size, None) for size in remaining]
 
 
-def _fill_window_size(item: Item, kept: list[Block], slot_min: int) -> list[int]:
-    """An item without an estimate gets one block filling its single window exactly."""
+def _fixed_event(item: Item, kept: list[Block], old: list[Block]) -> list[Block]:
+    """A fixed event's one block, at its window's real times, keeping its old id. Nothing if it is already kept."""
+    if not item.windows:
+        return []  # not scheduled yet; stays in the task list
     if len(item.windows) > 1:
         raise ValueError(
             f"Item {item.title!r} has no estimate_min but {len(item.windows)} windows; "
@@ -329,8 +355,7 @@ def _fill_window_size(item: Item, kept: list[Block], slot_min: int) -> list[int]
     if kept:
         return []
     window = item.windows[0]
-    size = floor_slot(window.end, slot_min) - ceil_slot(window.start, slot_min)
-    return [max(size, 1)]  # a window smaller than one slot yields no candidates
+    return [Block(item_id=item.id, start=window.start, end=window.end, id=old[0].id if old else uuid4())]
 
 
 def split_slots(total: int, max_chunk_min: int | None, slot_min: int) -> list[int]:

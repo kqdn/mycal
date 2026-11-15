@@ -70,3 +70,20 @@ def test_a_time_range_overrides_the_work_frames(item: Item, start: time, end: ti
         assert local_start.date() == local_end.date()
         assert start <= local_start.time() and local_end.time() <= end
     assert any(b.start.astimezone(zone).time() >= time(18) for b in blocks)  # outside the 9 to 6 frames
+
+
+def test_a_fixed_event_across_a_span_edge_is_saved_whole() -> None:
+    # Sun Nov 22, 11pm to Mon Nov 23, 1am: the span for week 1 ends at Sunday midnight.
+    conn = store.connect(":memory:")
+    store.save_settings(conn, SolverSettings(LA))
+    start, end = pacific(11, 22, 23), pacific(11, 23, 1)
+    late = Item("Late shift", FlexPreset.EXACT, preset_params={"start": start, "end": end})
+    store.put_item(conn, late)
+
+    plan_weeks(conn, store.load_settings(conn), W1, W1, NOW)
+    [first] = [b for b in store.list_blocks(conn) if b.item_id == late.id]
+    plan_weeks(conn, store.load_settings(conn), W2, W2, NOW)
+    [again] = [b for b in store.list_blocks(conn) if b.item_id == late.id]
+
+    assert (first.start, first.end) == (start, end)
+    assert (again.id, again.start, again.end) == (first.id, start, end)

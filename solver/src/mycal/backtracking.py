@@ -46,7 +46,7 @@ def search(problem: Problem) -> SearchResult:
     busy: list[Interval] = []
     kept_by_item: dict[UUID, list[Interval]] = defaultdict(list)
     kept_days: dict[UUID, set[date]] = defaultdict(set)
-    for block in problem.kept:
+    for block in problem.pinned:
         interval = (floor_slot(block.start, slot_min), ceil_slot(block.end, slot_min))
         busy.append(interval)
         kept_by_item[block.item_id].append(interval)
@@ -58,7 +58,7 @@ def search(problem: Problem) -> SearchResult:
         for dep in item.depends_on:
             dependents[dep].append(item.id)
 
-    kept_min = kept_minutes_by_day(problem.kept, problem.settings.timezone)
+    kept_min = kept_minutes_by_day(problem.pinned, problem.settings.timezone)
     placed: dict[int, int] = {}  # chunk index -> start slot
 
     def intervals_of(item_id: UUID) -> list[Interval]:

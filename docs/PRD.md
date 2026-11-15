@@ -54,7 +54,7 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 
 | Preset | Example | Windows it creates |
 | --- | --- | --- |
-| Exact time (pinned) | Lecture, Tue 11am to 12:30pm | One window exactly the item's length |
+| Exact time (pinned) | Lecture, Tue 11am to 12:30pm | One window exactly the item's length, kept at its real times even off the slot grid (a 9:10 class stays at 9:10) |
 | Any time on a day | Lab, sometime Wednesday | That day's work frame |
 | Time range on a day | Call home, Thu 5 to 9pm | That range on that day |
 | Any of these days | Gym, Mon, Wed or Fri | The work frame on each chosen day (optional time range) |
@@ -66,7 +66,7 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 
 | Preset | preset_params | Notes |
 | --- | --- | --- |
-| Exact time | start, end (UTC) | Never cut short; dropped only if entirely outside the horizon |
+| Exact time | start, end (UTC) | Never cut short or rounded; dropped only if entirely outside the horizon |
 | Any time on a day | day (local date) | Every work frame that starts on that day |
 | Time range on a day | day, start_time, end_time (local) | End before start crosses midnight |
 | Any of these days | week (local date of its Monday), weekdays[], optional start_time and end_time | Only that week: the time range if given, else the work frames that start on those weekdays of that week. Week files fill week from week_start, and the New item dialog from the week being viewed |
@@ -172,12 +172,12 @@ Buffers come later as Constraint kinds. The backtracking engine does not score; 
 
 **Solver input rules**
 
-- Kept blocks: locked blocks and completion history (any status other than planned) are returned unchanged and nothing may overlap them. Unlocked planned blocks are the current plan and get re-placed.
+- Kept blocks and fixed events: locked blocks and completion history (any status other than planned) are returned unchanged, and nothing may overlap the slots they touch, rounded outward. Unlocked planned blocks are the current plan and get re-placed.
 - Remaining work: estimate minus time already covered (done and partial blocks count actual_min, or their length if missing; locked planned blocks count their length).
 - Chunks: remaining work, rounded up to whole slots, is split into the fewest near-equal blocks no longer than max_chunk_min (5h with a 2h max is 105 + 105 + 90 min).
-- An item with no estimate gets one block filling its single window exactly (how Exact items are placed); no estimate with several windows is an error. An item with no windows is skipped and stays in the task list.
+- An item with no estimate is a fixed event (how Exact items are placed): one block at its window's real times, never moved or rounded to the slot grid, and returned with those times. For other work it blocks every slot it touches, rounded outward (9:10 to 10:00 blocks 9:00 to 10:00). Two fixed events, or a fixed event and a kept block, clash only if their real times overlap, so 9:00 to 9:10 and 9:10 to 10:00 can both be planned. No estimate with several windows is an error. An item with no windows is skipped and stays in the task list.
 - Stability: the item's current blocks, in start order, each pass their id and start on to a chunk of their own length when one is left (else the next chunk), and the engines try that old start first. Pairing by position alone would stretch a shorter session that was placed first.
-- Window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
+- For flexible work, window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
 - My home timezone is a required solver setting, used only to find a block's local day for one_block_per_day.
 - Stopping is deterministic: one worker, a fixed seed, the gap limit above, and a deterministic work limit (CP-SAT's max_deterministic_time, setting work_limit, default 10) as the backstop. There is no wall-clock limit, so the same input and OR-Tools version give the same plan on any machine. The status says how it ended: OPTIMAL (within the slack), FEASIBLE (stopped by the work limit) or INFEASIBLE.
 - Soft constraints only change the CP-SAT score, in the preferences tier. Their weight is scaled by 100 and rounded, since CP-SAT takes integer coefficients. A hard Constraint of a kind the solver does not support is an error rather than silently ignored.
@@ -332,12 +332,14 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 - [ ] Follow-up: engine settings (work_limit, and likewise earliness_slack_min, slot_min and engine) are stored from the imported week file, so a database imported before a default changed keeps the old value (a database imported before the work limit dropped to 10 still has 20). They belong to the engine, not to a week file, and shouldn't come from imports. Imports currently also replace the work frames, with the latest file winning; decide both together
 - [ ] Follow-up: give an item cut off by the span cap a pro-rata share of its remaining work in the capped span, through a reduced estimate in the planner (solve() unchanged), so long-deadline work starts early instead of only in the 2 weeks before its deadline
 - [ ] Milestone 6 candidate: partial placement. Let an item place less than its remaining work (optional chunks, a top score tier per unplaced minute, and SolveResult reporting unplaced minutes per item), so an item waiting on a broken week gets as much work as fits instead of none. It changes solve()'s outputs
+- [ ] Fixed events that really overlap (double-booking, like two classes at the same hour) still make the week unplannable. Consider planning the week anyway with a warning instead
 - [ ] Balance only limits the fullest day; should a second term even out the other days too? Revisit if real weeks look uneven
 
 **Decision log** (newest first)
 
 | Date | Decision |
 | --- | --- |
+| Nov 15, 2026 | Fixed events keep their real times. An item with no estimate (an Exact item) is no longer a chunk on the slot grid but a pinned block at its window's real times, returned unchanged by solve(). Before, its window edges were rounded inward like flexible work: a 9:10 to 10:00 class was stored as 9:15 to 10:00, flexible work could overlap its first 5 minutes, a 9:10 to 9:20 event rounded to nothing and made the week unplannable, and two events that really overlapped could both be planned. Now, for flexible work, a fixed event blocks every slot it touches, rounded outward, as kept blocks already did; daily limits count its real minutes; and fixed events clash with each other or with kept blocks only on real times. Flexible work stays on the 15-minute grid. Berkeley classes start at :10 |
 | Nov 15, 2026 | A time range overrides the work frames. On "Time range on a day", "Any of these days" and "Every one of these days", a range given with the item replaces the work frames instead of being cut to them, so a range outside work hours (piano 6 to 8pm) is placed there. Work frames are not a solver constraint: they only feed windows for presets without a range, plus the balance and earlier-in-the-day scores. Item windows stay hard. The New item dialog says so with an "Outside your work hours" hint that never blocks adding. This settles the contradiction between the Work frame definition (flexible blocks live in work frames) and the preset tables (the range is used instead of the frames), found when ranged items landed after 6pm |
 | Nov 15, 2026 | "Every one of these days" items: the same length on every chosen day of one week (different lengths per day are separate items). Stored as an "any of these days" item with every_day and session_min in preset_params, and weekdays as picked. The solver never sees the flag. The planner (a caller) works out the item's work as of now with effective_item: what its kept sessions cover (done, partial, locked, or already started) plus one session_min for each open day, meaning a chosen day with no kept session and room for a whole session after now. It also sets max_chunk_min to session_min and one_block_per_day. So k open days give exactly k sessions of session_min, and "at most one per item per day" puts one on each. Windows are cut at local midnight so an overnight frame can't push a session onto the next, unchosen day. Everything that reads an item's remaining work (planning, waiting on broken weeks, the refused-add check, the week response's estimates) goes through effective_item, never estimate_min, because a stored estimate is out of date once a day passes. Leftover time never carries into another day or week: once a day passes it simply has no work. Adding is refused if no chosen day is open. Rule for Milestone 6: a session of an every_day item belongs to its day. Done, partial or missed, it never adds work to another day or week (on_miss acts as skip, a partial leaves no remainder, no catch-ups), and every read of remaining work keeps going through effective_item |
 | Nov 14, 2026 | Item details popover built to web/DESIGN.md: blocks and Unscheduled rows open it, and "Delete item" deletes the whole item after an inline confirm. A delete runs in the page, not the popover, so closing the popover (Escape, a click outside) never stops it; when it finishes, the shown week updates only if it is still the one being viewed, and other weeks reload when viewed. A failure goes in the popover if it's still open, else in a page banner with a close button. One addition to the spec: "2h of 4h placed" also shows for a single session when work is waiting, since it says the item isn't all planned. Milestone 3 (storage and adding items) is complete with this |
