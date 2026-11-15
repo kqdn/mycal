@@ -580,3 +580,18 @@ def test_deleting_an_item_a_constraint_targets_keeps_planning_working(db: Path, 
     left = {c.id: c for c in store.list_constraints(store.connect(db))}
     assert rest.id not in left  # its only target is gone, so the rule goes too
     assert left[prefer.id].params["item_ids"] == [call.id]
+
+
+def test_an_every_day_item_shows_the_work_it_still_has(db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The week was planned before it began; Piano arrives on Wednesday at noon. Mon and Tue
+    # have passed, so its work is three sessions, not the five its stored estimate says.
+    get(client)
+    conn = store.connect(db)
+    params = {"week": date(2026, 11, 16), "weekdays": [0, 1, 2, 3, 4], "every_day": True, "session_min": 30}
+    store.put_item(conn, Item("Piano", FlexPreset.DAYS, preset_params=params, estimate_min=150, max_chunk_min=30, one_block_per_day=True))
+    plan_again(db, pacific(18, 12, month=11), monkeypatch)
+
+    piano = blocks_titled(get(client), "Piano")
+
+    assert sorted(local(b)[0][:3] for b in piano) == ["Fri", "Thu", "Wed"]
+    assert {(b["placed_min"], b["estimate_min"]) for b in piano} == {(90, 90)}

@@ -64,6 +64,7 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 - Concise and readable over clever. Small functions, type hints everywhere, dataclasses for the model.
 - Solver tests use small hand-built weeks and check that the hard constraints hold (inside windows, no overlap, deadlines met, dependencies respected). Only assert exact slot positions when a case has one valid answer.
 - Never use em dashes in code, comments, docs or commit messages.
+- Read an item's remaining work through `effective_item` (`solver/src/mycal/planner.py`), never `item.estimate_min` directly. An "every one of these days" item's stored estimate is out of date once a day passes.
 - The web UI follows `web/DESIGN.md`: use only `web/src/tokens.css` variables, no raw hex, no shadows.
 
 ## How to work with me

@@ -10,9 +10,13 @@ Expected `preset_params` per preset (local dates and times are in the
     DAY_RANGE        day: local date; start_time, end_time: local times
     DAYS             week: local date of the week's Monday;
                      weekdays: list of ints (0 = Monday);
-                     optional start_time and end_time (both or neither).
+                     optional start_time and end_time (both or neither);
+                     optional every_day (bool) with session_min (int):
+                     one session of session_min on every chosen day.
                      Only that week's chosen days count, so a days item
-                     never repeats into other weeks.
+                     never repeats into other weeks. For every_day, each
+                     window is cut at local midnight, so every window lies
+                     inside one chosen day.
     BEFORE_DEADLINE  none; uses item.deadline
     CUSTOM           windows: list of Window
 """
@@ -20,7 +24,7 @@ Expected `preset_params` per preset (local dates and times are in the
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -74,6 +78,9 @@ def compile_windows(
             ]
         # Frames that start on that week's days, like a frame's weekdays name the day it starts.
         windows = [w for f in frames for w in work_frame_windows(f, week, week + timedelta(days=6))]
+        if every_day_session(params) is not None:
+            days = [week + timedelta(days=d) for d in sorted(set(weekdays))]
+            return _cut_at_midnight(_clip(windows, horizon_start, horizon_end), days, timezone)
     elif preset is FlexPreset.BEFORE_DEADLINE:
         if item.deadline is None:
             raise ValueError("BEFORE_DEADLINE needs item.deadline")
@@ -117,6 +124,38 @@ def compile_constraint(
     compiled = {k: v for k, v in params.items() if k not in RANGE_KEYS and k != "ranges"}
     compiled["windows"] = merge_windows(_clip(windows, horizon_start, horizon_end))
     return replace(constraint, params=compiled)
+
+
+def every_day_session(params: dict[str, Any]) -> int | None:
+    """A DAYS item's session_min if it is set to every_day, else None. Raises ValueError for bad params."""
+    every_day = params.get("every_day", False)
+    if not isinstance(every_day, bool):
+        raise ValueError(f"preset_params['every_day'] must be bool, got {every_day!r}")
+    if not every_day:
+        if "session_min" in params:
+            raise ValueError("preset_params['session_min'] needs every_day")
+        return None
+    session = _param(params, "session_min", int)
+    if isinstance(session, bool) or session <= 0:
+        raise ValueError(f"preset_params['session_min'] must be a positive int, got {session!r}")
+    return session
+
+
+def local_day_window(day: date, timezone: str) -> Window:
+    """A local date from midnight to the next midnight, as UTC."""
+    zone = ZoneInfo(timezone)
+    start = datetime.combine(day, time(), tzinfo=zone).astimezone(UTC)
+    end = datetime.combine(day + timedelta(days=1), time(), tzinfo=zone).astimezone(UTC)
+    return Window(start, end)
+
+
+def _cut_at_midnight(windows: list[Window], days: list[date], timezone: str) -> list[Window]:
+    """The parts of `windows` inside each of `days`, merged within a day but never across midnight."""
+    cut = []
+    for day in days:
+        bounds = local_day_window(day, timezone)
+        cut.extend(merge_windows(_clip(windows, bounds.start, bounds.end)))
+    return sorted(cut, key=lambda w: w.start)
 
 
 def _param(params: dict[str, Any], key: str, kind: type) -> Any:

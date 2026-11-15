@@ -58,6 +58,7 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 | Any time on a day | Lab, sometime Wednesday | That day's work frame |
 | Time range on a day | Call home, Thu 5 to 9pm | That range on that day |
 | Any of these days | Gym, Mon, Wed or Fri | The work frame on each chosen day (optional time range) |
+| Every one of these days | Piano, 30 min every day Mon to Fri | The same as any of these days, cut at local midnight, with one session on each chosen day that is still open |
 | Any time before a deadline | Write code, by Friday | Every work frame from now until the deadline |
 | Custom | Anything else | Paint the allowed time on a week grid |
 
@@ -69,6 +70,7 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 | Any time on a day | day (local date) | Every work frame that starts on that day |
 | Time range on a day | day, start_time, end_time (local) | End before start crosses midnight |
 | Any of these days | week (local date of its Monday), weekdays[], optional start_time and end_time | Only that week: the time range if given, else the work frames that start on those weekdays of that week. Week files fill week from week_start, and the New item dialog from the week being viewed |
+| Every one of these days | the same as any of these days, plus every_day = true and session_min | Stored as an "any of these days" item. Windows are cut at local midnight, so each lies inside one chosen day. The item's work is worked out when it is planned (see the decision log), not read from estimate_min |
 | Any time before a deadline | none | Uses the item's deadline; also clipped to it |
 | Custom | windows[] (UTC) | Clipped to the horizon |
 
@@ -258,6 +260,7 @@ Built after Milestone 1 (model and expansion in the solver package; the solver i
 | Any time on a day | none | day = occurrence date |
 | Time range on a day | start_time, end_time | the same, plus day = occurrence date |
 | Any of these days | weekdays[], optional start_time and end_time | week = the Monday of the occurrence date |
+| Every one of these days | weekdays[], every_day, session_min, optional start_time and end_time | week = the Monday of the occurrence date |
 | Any time before a deadline | none; deadline_time required | deadline = occurrence date at deadline_time |
 | Custom | not allowed | Painted windows are fixed dates; a weekday-pattern version can come later if needed |
 
@@ -267,6 +270,7 @@ Built after Milestone 1 (model and expansion in the solver package; the solver i
 | --- | --- | --- |
 | Fixed weekly event | Weekly rule, Exact time preset | CS 70 lecture, Tue and Thu 11am |
 | N times a week | One weekly occurrence (weekly rule on Monday) with an "any of these days" preset, estimate = N sessions, max_chunk_min = one session, and one_block_per_day set so sessions land on different days | Gym 3x a week: estimate 3h, max chunk 1h, one block per day |
+| Every day | An "every one of these days" item: one session of session_min on each chosen day | Piano 30 min, Mon to Fri |
 
 **Links to other features**
 
@@ -334,6 +338,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 15, 2026 | "Every one of these days" items: the same length on every chosen day of one week (different lengths per day are separate items). Stored as an "any of these days" item with every_day and session_min in preset_params, and weekdays as picked. The solver never sees the flag. The planner (a caller) works out the item's work as of now with effective_item: what its kept sessions cover (done, partial, locked, or already started) plus one session_min for each open day, meaning a chosen day with no kept session and room for a whole session after now. It also sets max_chunk_min to session_min and one_block_per_day. So k open days give exactly k sessions of session_min, and "at most one per item per day" puts one on each. Windows are cut at local midnight so an overnight frame can't push a session onto the next, unchosen day. Everything that reads an item's remaining work (planning, waiting on broken weeks, the refused-add check, the week response's estimates) goes through effective_item, never estimate_min, because a stored estimate is out of date once a day passes. Leftover time never carries into another day or week: once a day passes it simply has no work. Adding is refused if no chosen day is open. Rule for Milestone 6: a session of an every_day item belongs to its day. Done, partial or missed, it never adds work to another day or week (on_miss acts as skip, a partial leaves no remainder, no catch-ups), and every read of remaining work keeps going through effective_item |
 | Nov 14, 2026 | Item details popover built to web/DESIGN.md: blocks and Unscheduled rows open it, and "Delete item" deletes the whole item after an inline confirm. A delete runs in the page, not the popover, so closing the popover (Escape, a click outside) never stops it; when it finishes, the shown week updates only if it is still the one being viewed, and other weeks reload when viewed. A failure goes in the popover if it's still open, else in a page banner with a close button. One addition to the spec: "2h of 4h placed" also shows for a single session when work is waiting, since it says the item isn't all planned. Milestone 3 (storage and adding items) is complete with this |
 | Nov 14, 2026 | Deleting an item (in the app, or by mycal-import --replace) also removes its id from every constraint's item_ids, in the same transaction. A constraint left with no targets is deleted, since no targets would mean every item. Found when deleting Gym left its rest and time-preference rules naming a missing item: the solver refuses unknown ids (on purpose, so a rule is never silently dropped), and every week after that failed to plan with a 500 |
 | Nov 14, 2026 | Each block in the week response also carries session (its place among the item's blocks in every week, in start order), sessions, placed_min (the item's minutes placed so far, in every week) and estimate_min; unscheduled items carry sessions. This feeds the details popover's "Session 2 of 4 · 2h in all" or "2h of 4h placed". Requests that plan or write never overlap: the API holds one lock per process around each request. That holds while the API runs as one process; several workers would need a lock across processes. mycal-import runs outside it, but it clears every plan mark, so the next view re-plans |

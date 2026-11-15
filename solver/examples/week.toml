@@ -4,6 +4,9 @@
 # Local dates, times and datetimes are in `timezone`. Weekdays: 0 = Monday.
 # Presets: exact, day, day_range, days, before_deadline, custom.
 # A days item belongs to this file's week (week_start); `week` can override it.
+# A days item with every_day = true and session_min gets one session of that
+# length on every chosen day; it sets estimate_min, max_chunk_min and
+# one_block_per_day itself, so leave those out.
 
 timezone = "America/Los_Angeles"
 week_start = 2026-11-16  # a Monday
@@ -105,6 +108,15 @@ day = 2026-11-19
 start_time = 17:00:00
 end_time = 21:00:00
 estimate_min = 30
+
+[[items]]
+title = "Practice piano"  # 30 min on every weekday evening
+preset = "days"
+weekdays = [0, 1, 2, 3, 4]
+start_time = 18:00:00
+end_time = 20:00:00
+every_day = true
+session_min = 30
 
 # A project with steps that depend on each other
 

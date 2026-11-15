@@ -47,8 +47,8 @@ from zoneinfo import ZoneInfo
 
 from mycal import store
 from mycal.model import Block, BlockStatus, FlexPreset, Item, Window, WorkFrame
-from mycal.presets import compile_constraint, compile_windows
-from mycal.problem import ceil_slot, covered_min, slot_start
+from mycal.presets import compile_constraint, compile_windows, every_day_session
+from mycal.problem import ceil_slot, covered_min, floor_slot, slot_start
 from mycal.settings import SolverSettings
 from mycal.solve import SolveResult, solve
 from mycal.windows import merge_windows, work_frame_windows
@@ -143,22 +143,23 @@ def _solve_span(
     """One solve of the span [first..last], deferring deadline items due after `defer_after`. Saves nothing."""
     span = span_horizon(first, last, settings.timezone)
     # New blocks only go after now, rounded up to the slot grid.
-    open_from = max(span.start, slot_start(ceil_slot(now, settings.slot_min), settings.slot_min))
+    open_from = max(span.start, open_from_moment(now, settings.slot_min))
     items = store.list_items(conn)
     deferred = {i.id for i in items if _due_after(i, defer_after)}
 
+    blocks = store.list_blocks(conn)
+    frames = store.list_work_frames(conn)
+    items = effective_items(items, blocks, frames, settings, now)
+
     current: list[Block] = []
     kept: list[Block] = []
-    for block in store.list_blocks(conn):
+    for block in blocks:
         in_span = block.start < span.end and block.end > span.start
         if in_span and block.item_id not in deferred and _is_current_plan(block, open_from):
             current.append(block)
-        elif block.status is BlockStatus.PLANNED and not block.locked:
-            kept.append(replace(block, locked=True))  # stays put, still counts toward its item
         else:
-            kept.append(block)
+            kept.append(_as_kept(block))  # stays put, still counts toward its item
 
-    frames = store.list_work_frames(conn)
     planned = [
         replace(item, windows=[] if item.id in deferred else _windows(item, frames, settings.timezone, span, open_from))
         for item in items
@@ -198,6 +199,63 @@ def span_for_item(item: Item, timezone: str, now: datetime) -> tuple[date, date]
 # Remaining work and waiting
 
 
+def open_from_moment(now: datetime, slot_min: int) -> datetime:
+    """The first slot boundary at or after now: new blocks only go from here."""
+    return slot_start(ceil_slot(now, slot_min), slot_min)
+
+
+def effective_item(
+    item: Item, blocks: list[Block], frames: list[WorkFrame], settings: SolverSettings, now: datetime
+) -> Item:
+    """The item with the work it still has as of now. Read remaining work through this, never estimate_min.
+
+    Only "every one of these days" items change. Their work is what their kept
+    sessions cover (done, partial, locked, or already started, which the
+    planner keeps) plus one session for each open day: a chosen day with no
+    kept session and room for a whole session after now. So a day that passed
+    without a session is simply missed, and no work moves to another day or
+    week. max_chunk_min and one_block_per_day are set here too, so k sessions
+    over k open days put exactly one on each.
+    """
+    if item.flex_preset is not FlexPreset.DAYS:
+        return item
+    session = every_day_session(item.preset_params)
+    if session is None:
+        return item
+    slot = settings.slot_min
+    if session % slot:
+        raise ValueError(f"{item.title!r}: session_min {session} is not a multiple of the {slot}-minute slot")
+
+    zone = ZoneInfo(settings.timezone)
+    open_from = open_from_moment(now, slot)
+    kept = [_as_kept(b) for b in blocks if b.item_id == item.id and not _is_current_plan(b, open_from)]
+    covered = [(b, covered_min(b)) for b in kept]
+    kept_days = {b.start.astimezone(zone).date() for b, minutes in covered if minutes > 0}
+
+    week = week_horizon(item.preset_params["week"], settings.timezone)
+    windows = _windows(item, frames, settings.timezone, week, open_from)
+    open_days = {
+        w.start.astimezone(zone).date()
+        for w in windows
+        if floor_slot(w.end, slot) - ceil_slot(w.start, slot) >= session // slot
+    } - kept_days
+    estimate = sum(minutes for _, minutes in covered) + session * len(open_days)
+    return replace(item, estimate_min=estimate, max_chunk_min=session, one_block_per_day=True)
+
+
+def effective_items(
+    items: list[Item], blocks: list[Block], frames: list[WorkFrame], settings: SolverSettings, now: datetime
+) -> list[Item]:
+    return [effective_item(item, blocks, frames, settings, now) for item in items]
+
+
+def _as_kept(block: Block) -> Block:
+    """How the planner keeps a block that isn't part of the current plan: planned ones become locked."""
+    if block.status is BlockStatus.PLANNED and not block.locked:
+        return replace(block, locked=True)
+    return block
+
+
 def placed_min(item: Item, blocks: list[Block]) -> int:
     """Minutes of the item's work its blocks cover, in every week: planned blocks count their
     length, finished ones what they covered (covered_min)."""
@@ -229,16 +287,19 @@ def due_week(item: Item, timezone: str) -> date | None:
     return None
 
 
-def waiting_on_broken_weeks(conn: sqlite3.Connection, timezone: str, week_start: date) -> dict[UUID, str]:
+def waiting_on_broken_weeks(
+    conn: sqlite3.Connection, settings: SolverSettings, week_start: date, now: datetime
+) -> dict[UUID, str]:
     """Items shown in this week's Unscheduled list because their work waits on a week that can't be planned.
 
     Only broken weeks count: items deferred by the span cap are normal and not listed.
     An item is listed in its broken week and the MAX_SPAN_WEEKS - 1 weeks before it.
     """
     blocks = store.list_blocks(conn)
+    frames = store.list_work_frames(conn)
     reasons: dict[UUID, str] = {}
-    for item in store.list_items(conn):
-        due = due_week(item, timezone)
+    for item in effective_items(store.list_items(conn), blocks, frames, settings, now):
+        due = due_week(item, settings.timezone)
         if due is None or not (due - (MAX_SPAN_WEEKS - 1) * WEEK <= week_start <= due):
             continue
         if store.plan_status(conn, due) is False and remaining_min(item, blocks) > 0:
