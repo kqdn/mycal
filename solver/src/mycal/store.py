@@ -22,6 +22,7 @@ database from version n to n + 1; a database newer than this code is refused.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, date, datetime, time
 from pathlib import Path
@@ -91,6 +92,13 @@ MIGRATIONS = [
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
+DB_ENV = "MYCAL_DB"
+
+
+def db_path() -> Path:
+    """Where the database lives: $MYCAL_DB, or data/mycal.db (run from solver/, gitignored)."""
+    return Path(os.environ.get(DB_ENV, "data/mycal.db"))
+
 
 # Connection and migrations
 
@@ -121,10 +129,67 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(f"BEGIN; {MIGRATIONS[version]} PRAGMA user_version = {version + 1}; COMMIT;")
 
 
+# Whole contents
+
+
+def has_items(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM items LIMIT 1").fetchone() is not None
+
+
+def replace_all(
+    conn: sqlite3.Connection,
+    settings: SolverSettings,
+    frames: list[WorkFrame],
+    items: list[Item],
+    constraints: list[Constraint],
+) -> None:
+    """Replace everything (blocks included) with the given contents, in one transaction.
+
+    If anything fails, nothing changes. Item rows go in before dependency links,
+    and parents before their subtasks, since foreign keys are checked right away.
+    """
+    with conn:
+        for table in ("blocks", "item_deps", "items", "work_frames", "constraints", "settings"):
+            conn.execute(f"DELETE FROM {table}")
+        _write_settings(conn, settings)
+        for frame in frames:
+            _write_work_frame(conn, frame)
+        for item in _parents_first(items):
+            _write_item(conn, item)
+        for item in items:
+            _write_deps(conn, item)
+        for constraint in constraints:
+            _write_constraint(conn, constraint)
+
+
+def _parents_first(items: list[Item]) -> list[Item]:
+    """Items ordered so each parent comes before its subtasks; otherwise in the given order."""
+    by_id = {item.id: item for item in items}
+    ordered: list[Item] = []
+    placed: set[UUID] = set()
+
+    def place(item: Item) -> None:
+        if item.id in placed:
+            return
+        if item.parent_id in by_id:
+            place(by_id[item.parent_id])
+        placed.add(item.id)
+        ordered.append(item)
+
+    for item in items:
+        place(item)
+    return ordered
+
+
 # Settings
 
 
 def save_settings(conn: sqlite3.Connection, settings: SolverSettings) -> None:
+    with conn:
+        _write_settings(conn, settings)
+
+
+def _write_settings(conn: sqlite3.Connection, settings: SolverSettings) -> None:
     values = {
         "timezone": settings.timezone,
         "slot_min": settings.slot_min,
@@ -132,11 +197,10 @@ def save_settings(conn: sqlite3.Connection, settings: SolverSettings) -> None:
         "earliness_slack_min": settings.earliness_slack_min,
         "work_limit": settings.work_limit,
     }
-    with conn:
-        conn.executemany(
-            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-            [(key, json.dumps(value)) for key, value in values.items()],
-        )
+    conn.executemany(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        [(key, json.dumps(value)) for key, value in values.items()],
+    )
 
 
 def load_settings(conn: sqlite3.Connection) -> SolverSettings | None:
@@ -153,43 +217,51 @@ def load_settings(conn: sqlite3.Connection) -> SolverSettings | None:
 def put_item(conn: sqlite3.Connection, item: Item) -> None:
     """Insert or replace an item and its dependencies. Its windows are not stored."""
     with conn:
-        conn.execute(
-            """
-            INSERT INTO items (id, title, flex_preset, preset_params, checkable, estimate_min, deadline,
-                               parent_id, max_chunk_min, one_block_per_day, on_miss, catch_up_of,
-                               series_id, occurrence_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET
-                title = excluded.title, flex_preset = excluded.flex_preset,
-                preset_params = excluded.preset_params, checkable = excluded.checkable,
-                estimate_min = excluded.estimate_min, deadline = excluded.deadline,
-                parent_id = excluded.parent_id, max_chunk_min = excluded.max_chunk_min,
-                one_block_per_day = excluded.one_block_per_day, on_miss = excluded.on_miss,
-                catch_up_of = excluded.catch_up_of, series_id = excluded.series_id,
-                occurrence_date = excluded.occurrence_date
-            """,
-            (
-                str(item.id),
-                item.title,
-                item.flex_preset.value,
-                dump_json(item.preset_params),
-                int(item.checkable),
-                item.estimate_min,
-                _moment(item.deadline),
-                _id(item.parent_id),
-                item.max_chunk_min,
-                int(item.one_block_per_day),
-                item.on_miss.value,
-                _id(item.catch_up_of),
-                _id(item.series_id),
-                item.occurrence_date.isoformat() if item.occurrence_date else None,
-            ),
-        )
-        conn.execute("DELETE FROM item_deps WHERE item_id = ?", (str(item.id),))
-        conn.executemany(
-            "INSERT INTO item_deps (item_id, depends_on, position) VALUES (?, ?, ?)",
-            [(str(item.id), str(dep), i) for i, dep in enumerate(item.depends_on)],
-        )
+        _write_item(conn, item)
+        _write_deps(conn, item)
+
+
+def _write_item(conn: sqlite3.Connection, item: Item) -> None:
+    conn.execute(
+        """
+        INSERT INTO items (id, title, flex_preset, preset_params, checkable, estimate_min, deadline,
+                           parent_id, max_chunk_min, one_block_per_day, on_miss, catch_up_of,
+                           series_id, occurrence_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            title = excluded.title, flex_preset = excluded.flex_preset,
+            preset_params = excluded.preset_params, checkable = excluded.checkable,
+            estimate_min = excluded.estimate_min, deadline = excluded.deadline,
+            parent_id = excluded.parent_id, max_chunk_min = excluded.max_chunk_min,
+            one_block_per_day = excluded.one_block_per_day, on_miss = excluded.on_miss,
+            catch_up_of = excluded.catch_up_of, series_id = excluded.series_id,
+            occurrence_date = excluded.occurrence_date
+        """,
+        (
+            str(item.id),
+            item.title,
+            item.flex_preset.value,
+            dump_json(item.preset_params),
+            int(item.checkable),
+            item.estimate_min,
+            _moment(item.deadline),
+            _id(item.parent_id),
+            item.max_chunk_min,
+            int(item.one_block_per_day),
+            item.on_miss.value,
+            _id(item.catch_up_of),
+            _id(item.series_id),
+            item.occurrence_date.isoformat() if item.occurrence_date else None,
+        ),
+    )
+
+
+def _write_deps(conn: sqlite3.Connection, item: Item) -> None:
+    conn.execute("DELETE FROM item_deps WHERE item_id = ?", (str(item.id),))
+    conn.executemany(
+        "INSERT INTO item_deps (item_id, depends_on, position) VALUES (?, ?, ?)",
+        [(str(item.id), str(dep), i) for i, dep in enumerate(item.depends_on)],
+    )
 
 
 def get_item(conn: sqlite3.Connection, item_id: UUID) -> Item | None:
@@ -291,20 +363,24 @@ def delete_blocks(conn: sqlite3.Connection, block_ids: list[UUID]) -> None:
 
 def put_work_frame(conn: sqlite3.Connection, frame: WorkFrame) -> None:
     with conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO work_frames (id, name, weekdays, start_time, end_time, timezone)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(frame.id),
-                frame.name,
-                json.dumps(frame.weekdays),
-                frame.start_time.isoformat(),
-                frame.end_time.isoformat(),
-                frame.timezone,
-            ),
-        )
+        _write_work_frame(conn, frame)
+
+
+def _write_work_frame(conn: sqlite3.Connection, frame: WorkFrame) -> None:
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO work_frames (id, name, weekdays, start_time, end_time, timezone)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(frame.id),
+            frame.name,
+            json.dumps(frame.weekdays),
+            frame.start_time.isoformat(),
+            frame.end_time.isoformat(),
+            frame.timezone,
+        ),
+    )
 
 
 def list_work_frames(conn: sqlite3.Connection) -> list[WorkFrame]:
@@ -331,10 +407,14 @@ def delete_work_frame(conn: sqlite3.Connection, frame_id: UUID) -> None:
 
 def put_constraint(conn: sqlite3.Connection, constraint: Constraint) -> None:
     with conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO constraints (id, kind, params, weight, hard) VALUES (?, ?, ?, ?, ?)",
-            (str(constraint.id), constraint.kind, dump_json(constraint.params), constraint.weight, int(constraint.hard)),
-        )
+        _write_constraint(conn, constraint)
+
+
+def _write_constraint(conn: sqlite3.Connection, constraint: Constraint) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO constraints (id, kind, params, weight, hard) VALUES (?, ?, ?, ?, ?)",
+        (str(constraint.id), constraint.kind, dump_json(constraint.params), constraint.weight, int(constraint.hard)),
+    )
 
 
 def list_constraints(conn: sqlite3.Connection) -> list[Constraint]:
