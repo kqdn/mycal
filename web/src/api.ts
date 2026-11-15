@@ -19,7 +19,8 @@ export interface Week {
   feasible: boolean
   blocks: Block[]
   frames: { start: string; end: string }[]
-  unscheduled: { id: string; title: string; estimate_min: number | null }[]
+  // `reason` is set when the item waits on a week that can't be planned.
+  unscheduled: { id: string; title: string; estimate_min: number | null; reason: string | null }[]
 }
 
 /** Why a week could not be shown: nothing imported yet (404), or data the API could not use. */

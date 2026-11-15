@@ -120,8 +120,12 @@ export default function App() {
                   {state.week.unscheduled.map((item) => (
                     <li key={item.id} className="list-row">
                       <span className="row-title">{item.title}</span>
-                      {item.estimate_min !== null && (
-                        <span className="row-sub">{estimateLabel(item.estimate_min)}</span>
+                      {(item.estimate_min !== null || item.reason) && (
+                        <span className="row-sub">
+                          {item.estimate_min !== null && estimateLabel(item.estimate_min)}
+                          {item.estimate_min !== null && item.reason && ' · '}
+                          {item.reason && <span className="row-reason">{item.reason}</span>}
+                        </span>
                       )}
                     </li>
                   ))}

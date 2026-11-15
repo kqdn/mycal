@@ -237,19 +237,21 @@ def plan_status(conn: sqlite3.Connection, week_start: date) -> bool | None:
 
 def save_plan(
     conn: sqlite3.Connection,
-    week_start: date,
     drop: list[UUID],
     blocks: list[Block],
-    feasible: bool,
+    marks: dict[date, bool],
     planned_at: datetime,
 ) -> None:
-    """Store a week's new plan in one transaction: drop the old plan's blocks, write the new ones, mark the week."""
+    """Store a plan in one transaction: drop the old plan's blocks, write the new ones, mark weeks.
+
+    `marks` maps a week's Monday to whether it fit. Weeks not in it keep their mark (or lack of one).
+    """
     with conn:
         conn.executemany("DELETE FROM blocks WHERE id = ?", [(str(i),) for i in drop])
         _write_blocks(conn, blocks)
-        conn.execute(
+        conn.executemany(
             "INSERT OR REPLACE INTO planned_weeks (week_start, feasible, planned_at) VALUES (?, ?, ?)",
-            (week_start.isoformat(), int(feasible), _moment(planned_at)),
+            [(week.isoformat(), int(fit), _moment(planned_at)) for week, fit in marks.items()],
         )
 
 

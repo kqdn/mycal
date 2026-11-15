@@ -69,7 +69,7 @@ def test_a_week_is_planned_and_returned_in_utc(client: TestClient) -> None:
     )
     assert blocks["Chemistry lab"]["fixed"] is False
     assert week["frames"][0] == {"start": "2026-11-16T17:00:00Z", "end": "2026-11-17T02:00:00Z"}  # Mon 9 to 6
-    assert week["unscheduled"] == [{"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15}]
+    assert week["unscheduled"] == [{"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None}]
 
 
 def test_a_stored_plan_is_served_without_solving_again(client: TestClient, solves: list[int]) -> None:
@@ -237,13 +237,14 @@ def test_a_deadline_item_fills_the_earliest_week_first(client: TestClient, monke
     assert blocks_titled(get(client, "2026-11-23"), "Essay") == []
 
 
-def test_a_deadline_item_can_start_in_the_rest_of_the_current_week(client: TestClient) -> None:
-    # Added on Sunday Nov 15 at 4am: that Sunday's frame (10am to 4pm) comes first.
+def test_a_deadline_item_only_uses_the_weeks_up_to_its_deadline(client: TestClient) -> None:
+    # Added Sunday Nov 15, due Wed Nov 25. Spans hold at most two weeks, so it is
+    # planned in the weeks of Nov 16 and 23, not that Sunday (three weeks back),
+    # and the earlier of the two takes it.
     essay = {"title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-25", "deadline_time": "17:00"}
     add(client, **essay, estimate_min=60)
-    sunday = get(client, "2026-11-09")
-    assert [local(b) for b in blocks_titled(sunday, "Essay")] == [("Sun 10:00", "Sun 11:00")]
-    assert blocks_titled(get(client), "Essay") == []
+    assert blocks_titled(get(client, "2026-11-09"), "Essay") == []
+    assert sum(minutes(b) for b in blocks_titled(get(client), "Essay")) == 60
 
 
 def test_adding_keeps_other_blocks_in_place(client: TestClient) -> None:
@@ -310,3 +311,122 @@ def test_delete_an_imported_item(db: Path, client: TestClient) -> None:
 def test_deleting_a_missing_item_is_404(client: TestClient) -> None:
     response = client.delete(f"/api/items/{uuid4()}", params={"week": WEEK})
     assert response.status_code == 404
+
+
+SATURDAY_EVENING = datetime(2026, 11, 15, 3, 44, tzinfo=UTC)  # Sat Nov 14, 7:44pm PST
+
+
+def test_work_that_cannot_fit_the_rest_of_this_week_goes_to_next_week(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Reproduces a reported bug. On Saturday evening only Sunday is left of the
+    # week of Nov 9, and 2h in 1h sessions, one per day, needs two days. The week
+    # of Nov 16 has plenty of room, so the add must succeed, with the work there.
+    monkeypatch.setattr(api, "now", lambda: SATURDAY_EVENING)
+    get(client)  # the page shows Nov 16 first...
+    get(client, "2026-11-09")  # ...then prefetches the week before, which fits
+    week = add(
+        client,
+        title="Reading",
+        preset="before_deadline",
+        deadline_date="2026-11-21",
+        deadline_time="23:59",
+        estimate_min=120,
+        max_chunk_min=60,
+        one_block_per_day=True,
+    )
+    reading = blocks_titled(week, "Reading") + blocks_titled(get(client, "2026-11-09"), "Reading")
+    assert sum(minutes(b) for b in reading) == 120
+    assert len({local(b)[0][:3] for b in reading}) == 2  # two different days
+
+
+# Spans and broken weeks. Week 2 is Nov 23 to 29, week 3 is Nov 30 to Dec 6.
+
+WEEK_2, WEEK_3 = "2026-11-23", "2026-11-30"
+
+
+def pacific(day: int, hour: int, month: int = 12) -> datetime:
+    from zoneinfo import ZoneInfo
+
+    return datetime(2026, month, day, hour, tzinfo=ZoneInfo("America/Los_Angeles")).astimezone(UTC)
+
+
+def break_week_3(db: Path) -> None:
+    """Two fixed events in the same hour on Tue Dec 1: week 3 can't be planned."""
+    conn = store.connect(db)
+    for title in ("Dentist", "Exam"):
+        store.put_item(conn, Item(title, FlexPreset.EXACT, preset_params={"start": pacific(1, 13), "end": pacific(1, 14)}))
+    store.clear_plans(conn)
+
+
+def status(db: Path, week: str) -> bool | None:
+    return store.plan_status(store.connect(db), date.fromisoformat(week))
+
+
+def test_viewing_a_week_plans_its_span_and_marks_only_that_week(db: Path, client: TestClient) -> None:
+    # Due next Tuesday: the span is this week and next, and the work lands in this week.
+    conn = store.connect(db)
+    store.put_item(conn, Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=60, deadline=pacific(24, 17, month=11)))
+    store.clear_plans(conn)
+    assert sum(minutes(b) for b in blocks_titled(get(client), "Report")) == 60
+    assert (status(db, WEEK), status(db, WEEK_2)) == (True, None)  # next week re-plans when viewed
+
+
+def test_an_item_due_far_ahead_is_only_planned_in_the_weeks_up_to_its_deadline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(api, "now", lambda: MONDAY_MORNING)
+    add(client, title="Thesis", preset="before_deadline", deadline_date="2027-01-13", deadline_time="17:00", estimate_min=120)
+    assert blocks_titled(get(client), "Thesis") == []  # not this week, eight weeks early
+    assert sum(minutes(b) for b in blocks_titled(get(client, "2027-01-04"), "Thesis")) == 120
+
+
+def test_a_broken_week_is_blamed_alone_and_its_waiting_item_is_listed(db: Path, client: TestClient) -> None:
+    # Report is due Wed of the broken week, with more work than week 2 can hold.
+    break_week_3(db)
+    conn = store.connect(db)
+    store.put_item(
+        conn, Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=55 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
+    )
+    store.clear_plans(conn)
+
+    week_2 = get(client, WEEK_2)
+
+    assert (week_2["feasible"], status(db, WEEK_2), status(db, WEEK_3)) == (True, True, False)
+    assert blocks_titled(week_2, "Report") == []
+    [waiting] = [u for u in week_2["unscheduled"] if u["title"] == "Report"]
+    assert waiting["reason"] == "Waiting on Nov 30 to Dec 6, which can't be planned."
+    assert get(client, WEEK_3)["feasible"] is False
+
+
+def test_an_item_due_before_the_broken_week_is_added(db: Path, client: TestClient) -> None:
+    break_week_3(db)
+    add(client, week_start=WEEK_2, title="Memo", preset="before_deadline", deadline_date="2026-11-27", deadline_time="17:00", estimate_min=60)
+    memo = blocks_titled(get(client), "Memo") + blocks_titled(get(client, WEEK_2), "Memo")
+    assert sum(minutes(b) for b in memo) == 60  # the earlier week takes it
+    assert status(db, WEEK_3) is None  # the broken week wasn't part of it
+
+
+def test_an_item_due_in_the_broken_week_goes_before_it(db: Path, client: TestClient) -> None:
+    break_week_3(db)
+    week = add(client, week_start=WEEK_2, title="Memo", preset="before_deadline", deadline_date="2026-12-02", deadline_time="17:00", estimate_min=60)
+    [memo] = blocks_titled(week, "Memo")
+    assert datetime.fromisoformat(memo["end"]) <= pacific(30, 0, month=11)  # in week 2
+
+
+def test_an_item_that_can_only_go_in_the_broken_week_is_refused(db: Path, client: TestClient) -> None:
+    break_week_3(db)
+    detail = refused(client, week_start=WEEK_3, title="Errand", preset="day", day="2026-12-01", estimate_min=30)
+    assert detail.startswith("Nothing was added: the week of Nov 30 to Dec 6 already can't be planned.")
+    assert all(i.title != "Errand" for i in store.list_items(store.connect(db)))
+
+
+def test_work_deferred_by_the_span_cap_is_not_listed_as_waiting(db: Path, client: TestClient) -> None:
+    # Due four weeks out: deferred while this week is planned, but nothing is broken.
+    conn = store.connect(db)
+    store.put_item(conn, Item("Thesis", FlexPreset.BEFORE_DEADLINE, estimate_min=120, deadline=pacific(16, 17)))
+    store.clear_plans(conn)
+    week = get(client)
+    assert blocks_titled(week, "Thesis") == []
+    assert all(u["title"] != "Thesis" for u in week["unscheduled"])
+

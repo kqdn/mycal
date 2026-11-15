@@ -21,16 +21,17 @@ class SolverSettings:
     the lowest score tier (earlier in the frame) may come out. CP-SAT stops
     once it proves its plan is that close; every higher tier stays exact.
     `work_limit` caps the CP-SAT search in deterministic time (CP-SAT's
-    max_deterministic_time, about a second of work on a typical laptop, but
-    counted the same on every machine), so the same input always gives the
-    same plan. There is no wall-clock limit on purpose.
+    max_deterministic_time). It is counted the same on every machine, so the
+    same input always gives the same plan, but it isn't seconds: one unit took
+    from about 1 second on a single week to 5 seconds on several imported
+    weeks on a laptop. There is no wall-clock limit on purpose.
     """
 
     timezone: str
     slot_min: int = 15
     engine: Engine = "cp_sat"
     earliness_slack_min: int = 15
-    work_limit: float = 20.0
+    work_limit: float = 10.0
 
     def __post_init__(self) -> None:
         if self.slot_min <= 0:

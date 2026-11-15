@@ -38,7 +38,17 @@ from pydantic import BaseModel
 
 from mycal import store
 from mycal.model import FlexPreset, Item
-from mycal.planner import frame_spans, plan_week, replan, week_horizon, weeks_of_blocks, weeks_touched
+from mycal.planner import (
+    frame_spans,
+    plan_weeks,
+    remaining_min,
+    span_for_item,
+    span_for_view,
+    waiting_on_broken_weeks,
+    week_horizon,
+    week_title,
+    weeks_of_blocks,
+)
 from mycal.settings import SolverSettings
 
 # A child of uvicorn's logger, so lines show in the server console at INFO
@@ -78,6 +88,7 @@ class ItemRef(BaseModel):
     id: UUID
     title: str
     estimate_min: int | None  # None when the item has no estimate
+    reason: str | None = None  # why it isn't scheduled, when it is waiting on a week that can't be planned
 
 
 class WeekOut(BaseModel):
@@ -115,13 +126,7 @@ def database() -> Iterator[tuple[sqlite3.Connection, SolverSettings]]:
 def get_week(week_start: date) -> WeekOut:
     """The week's stored plan, planning it first if it has none. A week that can't be planned is still 200."""
     with database() as (conn, settings):
-        feasible = store.plan_status(conn, week_start)
-        if feasible is None:
-            began = perf_counter()
-            result = plan_week(conn, settings, week_start, now())
-            feasible = result.feasible
-            log.info("%s planned in %.2fs, %s", week_start, perf_counter() - began, result.status)
-        return week_out(conn, settings, week_start, feasible)
+        return week_out(conn, settings, week_start, _status(conn, settings, week_start, now()))
 
 
 class ItemIn(BaseModel):
@@ -155,6 +160,11 @@ DOES_NOT_FIT = (
 )
 
 
+def waits_on_broken_week(weeks: list[date]) -> str:
+    named = " and ".join(f"the week of {week_title(w)}" for w in weeks)
+    return f"Nothing was added: {named} already can't be planned. Make room there first, for example by deleting something."
+
+
 @app.post("/api/items", status_code=201)
 def add_item(request: ItemIn) -> WeekOut:
     """Add an item, re-plan the weeks it touches and return the viewed week. 422 if it doesn't fit."""
@@ -165,19 +175,23 @@ def add_item(request: ItemIn) -> WeekOut:
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-        weeks = sorted(set(weeks_touched(item, settings.timezone, moment)))
+        first, last = span_for_item(item, settings.timezone, moment)
         trial = store.copy_in_memory(conn)
         try:
-            fit_before = {week: _feasible(trial, settings, week, moment) for week in weeks}
+            before = _baseline(trial, settings, first, last, moment)
             store.put_item(trial, item)
-            results = replan(trial, settings, weeks, moment)
-            if any(fit_before[week] and not result.feasible for week, result in results.items()):
+            after = plan_weeks(trial, settings, first, last, moment)
+            if any(before.get(week) and not fit for week, fit in after.items()):
                 raise HTTPException(status_code=422, detail=DOES_NOT_FIT)
+            if remaining_min(item, store.list_blocks(trial)) > 0:
+                # Its work could only go into weeks that can't be planned.
+                broken = [week for week, fit in sorted(after.items()) if not fit]
+                raise HTTPException(status_code=422, detail=waits_on_broken_week(broken) if broken else DOES_NOT_FIT)
             store.keep_copy(trial, conn)
         finally:
             trial.close()
-        log.info("added %r, re-planned %s", item.title, ", ".join(str(w) for w in results) or "no weeks")
-        return week_out(conn, settings, request.week_start, _feasible(conn, settings, request.week_start, moment))
+        log.info("added %r, re-planned %s to %s", item.title, first, last)
+        return week_out(conn, settings, request.week_start, _status(conn, settings, request.week_start, moment))
 
 
 @app.delete("/api/items/{item_id}")
@@ -189,14 +203,31 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
         moment = now()
         weeks = weeks_of_blocks([b for b in store.list_blocks(conn) if b.item_id == item_id], settings.timezone)
         store.delete_item(conn, item_id)
-        replan(conn, settings, weeks, moment)
-        return week_out(conn, settings, week, _feasible(conn, settings, week, moment))
+        if weeks:
+            plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
+        return week_out(conn, settings, week, _status(conn, settings, week, moment))
 
 
-def _feasible(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> bool:
-    """The viewed week's plan status, planning it first if it has none."""
+def _status(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> bool:
+    """The week's plan status, planning it (and the weeks its deadline items reach) first if it has none."""
     feasible = store.plan_status(conn, week_start)
-    return plan_week(conn, settings, week_start, moment).feasible if feasible is None else feasible
+    if feasible is None:
+        first, last = span_for_view(conn, settings, week_start, moment)
+        began = perf_counter()
+        outcome = plan_weeks(conn, settings, first, last, moment)
+        feasible = outcome[week_start]
+        broken = [str(w) for w, fit in outcome.items() if not fit]
+        log.info("%s to %s planned in %.2fs%s", first, last, perf_counter() - began, f", can't plan {broken}" if broken else "")
+    return feasible
+
+
+def _baseline(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, moment: datetime) -> dict[date, bool]:
+    """Whether each week in the span fit before an item was added: its stored status, or a plan without the item."""
+    weeks = [first + timedelta(weeks=n) for n in range((last - first).days // 7 + 1)]
+    stored = {week: store.plan_status(conn, week) for week in weeks}
+    if all(status is not None for status in stored.values()):
+        return {week: bool(status) for week, status in stored.items()}
+    return plan_weeks(conn, settings, first, last, moment)
 
 
 def to_item(request: ItemIn, settings: SolverSettings, moment: datetime) -> Item:
@@ -286,6 +317,7 @@ def week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: dat
     week = week_horizon(week_start, settings.timezone)
     items = {item.id: item for item in store.list_items(conn)}
     blocks = store.list_blocks(conn, week.start, week.end) if feasible else []
+    waiting = waiting_on_broken_weeks(conn, settings.timezone, week_start)
     return WeekOut(
         week_start=week_start,
         timezone=settings.timezone,
@@ -305,11 +337,12 @@ def week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: dat
             SpanOut(start=w.start, end=w.end)
             for w in frame_spans(store.list_work_frames(conn), week_start, settings.timezone)
         ],
-        # Items that can never be placed: a custom preset with no windows painted yet.
+        # Items that can't be placed: a custom preset with no windows painted yet, and
+        # items whose work waits on a week that can't be planned (with the reason).
         unscheduled=[
-            ItemRef(id=i.id, title=i.title, estimate_min=i.estimate_min)
+            ItemRef(id=i.id, title=i.title, estimate_min=i.estimate_min, reason=waiting.get(i.id))
             for i in items.values()
-            if i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")
+            if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
         ],
     )
 

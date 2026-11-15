@@ -415,6 +415,11 @@ ul {
   color: var(--text-muted);
 }
 
+/* Waiting on a week that can't be planned: that week needs you. */
+.row-reason {
+  color: var(--attention-text);
+}
+
 /* Narrow screens: the grid scrolls sideways instead of squashing. */
 
 @media (max-width: 640px) {

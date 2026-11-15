@@ -82,7 +82,7 @@ Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted
 
 ## Other pieces
 
-- **Unscheduled list:** a card (`--surface`, 1px `--border`, radius `--radius-card`) under the grid, headed "Unscheduled" as a section label. Each row is at least 56px tall with 14px side padding and a 1px `--divider` between rows. It shows the title (15px / 600) and the estimate under it (12px, `--text-muted`), for example "15m".
+- **Unscheduled list:** a card (`--surface`, 1px `--border`, radius `--radius-card`) under the grid, headed "Unscheduled" as a section label. Each row is at least 56px tall with 14px side padding and a 1px `--divider` between rows. It shows the title (15px / 600) and the estimate under it (12px, `--text-muted`), for example "15m". An item whose work waits on a week that can't be planned adds the reason after the estimate, in `--attention-text` (that week needs you), and the line wraps: "12h · Waiting on Nov 30 to Dec 6, which can't be planned." Work that is only waiting for its deadline to come within planning range is normal and gets no reason, so it isn't listed here.
 - **Attention banner** (infeasible week, missing week file): `--attention-bg` background, 1px `--attention-border`, radius 12px, 12px 16px padding. The title is 14px / 600 in `--text`. The body is 13px in `--attention-text`. Example: "This week can't be planned" / "6h of work doesn't fit before Wed 11:59pm."
 
 ## Add item dialog (Milestone 3)
