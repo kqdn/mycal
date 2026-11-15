@@ -16,6 +16,7 @@ dist/
 # Local data and secrets
 solver/weeks/
 solver/cache/
+solver/data/
 *.db
 *.sqlite
 *.sqlite3

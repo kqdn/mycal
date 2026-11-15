@@ -1,0 +1,217 @@
+"""SQLite store: every entity round-trips exactly, deletes cascade, and the schema migrates."""
+
+import sqlite3
+from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+
+from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, OnMiss, SolverSettings, Window, WorkFrame
+from mycal import store
+
+LA = "America/Los_Angeles"
+MON_9AM = datetime(2026, 11, 16, 17, tzinfo=UTC)  # 9am PST
+
+
+@pytest.fixture
+def conn() -> sqlite3.Connection:
+    return store.connect(":memory:")
+
+
+def item(title: str = "Task", preset: FlexPreset = FlexPreset.DAY, **fields) -> Item:  # type: ignore[no-untyped-def]
+    fields.setdefault("preset_params", {"day": date(2026, 11, 16)})
+    return Item(title, preset, **fields)
+
+
+# Items
+
+
+@pytest.mark.parametrize(
+    ("preset", "params"),
+    [
+        (FlexPreset.EXACT, {"start": MON_9AM, "end": MON_9AM + timedelta(hours=1, minutes=30)}),
+        (FlexPreset.DAY, {"day": date(2026, 11, 18)}),
+        (FlexPreset.DAY_RANGE, {"day": date(2026, 11, 19), "start_time": time(17), "end_time": time(21)}),
+        (FlexPreset.DAYS, {"weekdays": [0, 2, 4], "start_time": time(16), "end_time": time(21)}),
+        (FlexPreset.BEFORE_DEADLINE, {}),
+        (FlexPreset.CUSTOM, {"windows": [Window(MON_9AM, MON_9AM + timedelta(hours=2))]}),
+    ],
+)
+def test_item_round_trips_with_its_preset_params(conn: sqlite3.Connection, preset: FlexPreset, params: dict) -> None:
+    original = item("Gym", preset, preset_params=params, estimate_min=60)
+    store.put_item(conn, original)
+    assert store.get_item(conn, original.id) == original
+
+
+def test_item_round_trips_every_field(conn: sqlite3.Connection) -> None:
+    parent = item("Project 3")
+    design = item("Design")
+    store.put_item(conn, parent)
+    store.put_item(conn, design)
+    full = Item(
+        "Implement",
+        FlexPreset.BEFORE_DEADLINE,
+        checkable=True,
+        estimate_min=300,
+        deadline=datetime(2026, 11, 23, 0, tzinfo=UTC),
+        parent_id=parent.id,
+        depends_on=[design.id, parent.id],  # order is kept
+        max_chunk_min=120,
+        one_block_per_day=True,
+        on_miss=OnMiss.CATCH_UP,
+        catch_up_of=uuid4(),
+        series_id=uuid4(),
+        occurrence_date=date(2026, 11, 16),
+    )
+    store.put_item(conn, full)
+    assert store.get_item(conn, full.id) == full
+    assert [i.title for i in store.list_items(conn)] == ["Project 3", "Design", "Implement"]
+
+
+def test_windows_are_not_stored(conn: sqlite3.Connection) -> None:
+    compiled = item(windows=[Window(MON_9AM, MON_9AM + timedelta(hours=8))])
+    store.put_item(conn, compiled)
+    assert store.get_item(conn, compiled.id).windows == []
+
+
+def test_putting_an_item_again_updates_it(conn: sqlite3.Connection) -> None:
+    first = item("Draft", estimate_min=30)
+    store.put_item(conn, first)
+    first.title, first.estimate_min = "Final", 45
+    store.put_item(conn, first)
+    assert [(i.title, i.estimate_min) for i in store.list_items(conn)] == [("Final", 45)]
+
+
+def test_deleting_an_item_takes_its_blocks_and_links(conn: sqlite3.Connection) -> None:
+    keep, gone = item("Keep"), item("Gone")
+    store.put_item(conn, gone)
+    keep.depends_on = [gone.id]
+    store.put_item(conn, keep)
+    store.put_blocks(conn, [Block(gone.id, MON_9AM, MON_9AM + timedelta(hours=1))])
+
+    store.delete_item(conn, gone.id)
+
+    assert store.get_item(conn, gone.id) is None
+    assert store.list_blocks(conn) == []
+    assert store.get_item(conn, keep.id).depends_on == []
+
+
+def test_two_occurrences_of_a_series_cannot_share_a_date(conn: sqlite3.Connection) -> None:
+    series_id = uuid4()
+    store.put_item(conn, item("Gym", series_id=series_id, occurrence_date=date(2026, 11, 16)))
+    with pytest.raises(sqlite3.IntegrityError):
+        store.put_item(conn, item("Gym", series_id=series_id, occurrence_date=date(2026, 11, 16)))
+
+
+# Blocks
+
+
+def test_block_round_trips_with_its_history(conn: sqlite3.Connection) -> None:
+    owner = item()
+    store.put_item(conn, owner)
+    done = Block(
+        owner.id,
+        MON_9AM,
+        MON_9AM + timedelta(minutes=45),
+        locked=True,
+        status=BlockStatus.PARTIAL,
+        completed_at=MON_9AM + timedelta(minutes=50),
+        actual_min=30,
+    )
+    store.put_blocks(conn, [done])
+    [loaded] = store.list_blocks(conn)
+    assert loaded == done
+    assert loaded.start.tzinfo is not None and loaded.start.utcoffset() == timedelta(0)
+
+
+def test_blocks_can_be_listed_by_time_range(conn: sqlite3.Connection) -> None:
+    owner = item()
+    store.put_item(conn, owner)
+    hour = timedelta(hours=1)
+    early = Block(owner.id, MON_9AM, MON_9AM + hour)
+    overnight = Block(owner.id, MON_9AM + 14 * hour, MON_9AM + 18 * hour)  # 11pm to 3am
+    later = Block(owner.id, MON_9AM + 48 * hour, MON_9AM + 49 * hour)
+    store.put_blocks(conn, [later, early, overnight])
+
+    assert store.list_blocks(conn) == [early, overnight, later]
+    assert store.list_blocks(conn, MON_9AM + 15 * hour, MON_9AM + 16 * hour) == [overnight]
+    assert store.list_blocks(conn, MON_9AM + hour, MON_9AM + 14 * hour) == []  # touching is not overlapping
+
+
+def test_a_block_needs_an_existing_item(conn: sqlite3.Connection) -> None:
+    with pytest.raises(sqlite3.IntegrityError):
+        store.put_blocks(conn, [Block(uuid4(), MON_9AM, MON_9AM + timedelta(hours=1))])
+
+
+def test_blocks_can_be_deleted(conn: sqlite3.Connection) -> None:
+    owner = item()
+    store.put_item(conn, owner)
+    a, b = (Block(owner.id, MON_9AM + timedelta(hours=h), MON_9AM + timedelta(hours=h + 1)) for h in (0, 2))
+    store.put_blocks(conn, [a, b])
+    store.delete_blocks(conn, [a.id])
+    assert store.list_blocks(conn) == [b]
+
+
+# Work frames, constraints, settings
+
+
+def test_work_frame_round_trips(conn: sqlite3.Connection) -> None:
+    night = WorkFrame("Weekday night", [0, 1, 2, 3, 4], time(21), time(2), LA)
+    store.put_work_frame(conn, night)
+    assert store.list_work_frames(conn) == [night]
+    store.delete_work_frame(conn, night.id)
+    assert store.list_work_frames(conn) == []
+
+
+def test_constraint_round_trips_with_nested_params(conn: sqlite3.Connection) -> None:
+    pref = Constraint(
+        kind="time_preference",
+        params={
+            "mode": "prefer",
+            "item_ids": [uuid4()],
+            "series_ids": [uuid4()],
+            "ranges": [{"weekdays": [5, 6], "start_time": time(12), "end_time": time(14)}],
+        },
+        weight=1.5,
+    )
+    limit = Constraint(kind="daily_limit", params={"max_min": 120, "weekdays": [5, 6]}, hard=True)
+    store.put_constraint(conn, pref)
+    store.put_constraint(conn, limit)
+    assert store.list_constraints(conn) == [pref, limit]
+    store.delete_constraint(conn, pref.id)
+    assert store.list_constraints(conn) == [limit]
+
+
+def test_settings_round_trip(conn: sqlite3.Connection) -> None:
+    assert store.load_settings(conn) is None  # no default timezone, on purpose
+    settings = SolverSettings(LA, slot_min=30, earliness_slack_min=10, work_limit=5.0)
+    store.save_settings(conn, settings)
+    assert store.load_settings(conn) == settings
+
+
+def test_unstorable_values_are_refused() -> None:
+    with pytest.raises(TypeError):
+        store.dump_json({"when": object()})
+
+
+# Schema
+
+
+def test_a_new_database_gets_the_current_schema_and_keeps_its_data(tmp_path: Path) -> None:
+    path = tmp_path / "data" / "mycal.db"
+    conn = store.connect(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION
+    saved = item("Survives a restart")
+    store.put_item(conn, saved)
+    conn.close()
+
+    reopened = store.connect(path)  # migrations don't run twice
+    assert store.list_items(reopened) == [saved]
+
+
+def test_a_newer_database_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "mycal.db"
+    store.connect(path).execute(f"PRAGMA user_version = {store.SCHEMA_VERSION + 1}")
+    with pytest.raises(RuntimeError, match="newer"):
+        store.connect(path)
