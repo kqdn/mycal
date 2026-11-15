@@ -26,13 +26,13 @@ Run Python commands from `solver/` and web commands from `web/`. Keep this secti
 
 **Solver and API** (`solver/`)
 
-- One-time setup (installs uv): `winget install --id=astral-sh.uv -e`
+- One-time setup (installs uv). Windows: `winget install --id=astral-sh.uv -e`. Mac: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Install dependencies (also downloads Python 3.12 if needed): `uv sync`
 - Run tests: `uv run pytest`
 - Add a dependency (after I approve): `uv add <package>`; dev-only: `uv add --dev <package>`
 - Demo schedule (sample week): `uv run mycal-demo examples/week.toml`
 - Demo schedule (my real week, gitignored): `uv run mycal-demo weeks/<week-start>.toml`
-- Week API on http://127.0.0.1:8000 (serves weeks from the database, reloads on code changes): `uv run mycal-api`. Import a week file first. Another database: `$env:MYCAL_DB = "<file>"; uv run mycal-api`
+- Week API on http://127.0.0.1:8000 (serves weeks from the database, reloads on code changes): `uv run mycal-api`. Import a week file first. Another database, in PowerShell: `$env:MYCAL_DB = "<file>"; uv run mycal-api`; on a Mac: `MYCAL_DB=<file> uv run mycal-api`
 - Import a week file into the database (`data/mycal.db`, gitignored; another file: `--db` or `MYCAL_DB`): `uv run mycal-import weeks/<week-start>.toml`. Each new file adds to the database; to import a changed file again, add `--replace`, which replaces only that file's items and constraints (items added in the app stay). Every import sets the work frames and settings from its file
 - A week is planned the first time it's viewed and the plan is stored. Importing a file clears every week's plan, so weeks re-plan when next viewed
 
@@ -73,7 +73,7 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 - When we make a decision, record it in the same commit as the code. A rule every session must follow goes in CLAUDE.md. Anything about how the app works goes in docs/PRD.md, plus a row at the top of its decision log.
 - Keep changes small: one logical change per commit, with a short imperative commit message.
 - Before staging, run `git status` and ask me about any file you didn't create or change in this session, before it goes into a commit. Then stage with `git add -A` so changes outside the current folder aren't missed.
-- I'm on Windows. When I need to run something myself, give PowerShell commands.
+- I use Windows and sometimes a Mac. When I need to run something myself, give commands for the machine this session is running on (it's in the session's environment info): PowerShell on Windows, zsh (the default shell in the macOS Terminal) on a Mac.
 - Commit only when I ask. Never push, force-push or rewrite git history without asking.
 - The repo will be public. Keep my email out of project files (pyproject.toml, package.json and the like); my name is fine. Keep my real schedule out too: real week files go in `solver/weeks/` (gitignored), and examples and tests use made-up data.
 - `docs/PRD.md` is the source of truth. If the code and the PRD disagree, or the PRD contradicts itself, ask me instead of guessing. Its decision log is newest first and wins over older sections.
