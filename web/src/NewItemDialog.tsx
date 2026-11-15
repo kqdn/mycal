@@ -3,12 +3,14 @@ import { addItem, WeekError, type Week } from './api'
 import {
   emptyForm,
   PRESETS,
+  showsEachDay,
   showsEstimate,
   showsOneSessionPerDay,
   summary,
   toRequest,
   validate,
   WEEKDAYS,
+  type DayContext,
   type Errors,
   type Field,
   type ItemForm,
@@ -19,20 +21,22 @@ import { today, type DateString } from './time'
 interface Props {
   weekStart: DateString
   timezone: string
+  frames: DayContext['frames'] // the week's work-frame time, to tell which picked days are still open
   onClose: () => void
   onAdded: (week: Week) => void
 }
 
 /** The New item dialog (web/DESIGN.md, "Add item dialog"). Mounted while open. */
-export function NewItemDialog({ weekStart, timezone, onClose, onAdded }: Props) {
+export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleInput = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState<ItemForm>(() => emptyForm(weekStart, today()))
   const [touched, setTouched] = useState<Set<Field>>(new Set())
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
-  // "Now" for the deadline check, taken when the dialog opens. The server checks again on add.
+  // "Now" for the deadline and open-day checks, taken when the dialog opens. The server checks again on add.
   const [openedAt] = useState(() => new Date().toISOString())
+  const context: DayContext = { now: openedAt, timezone, frames }
 
   // A native modal dialog keeps focus inside and makes Esc cancel.
   useEffect(() => {
@@ -41,7 +45,7 @@ export function NewItemDialog({ weekStart, timezone, onClose, onAdded }: Props) 
     titleInput.current?.focus()
   }, [])
 
-  const errors: Errors = validate(form, openedAt, timezone)
+  const errors: Errors = validate(form, openedAt, timezone, { weekStart, frames })
   const valid = Object.keys(errors).length === 0
   const shown = (field: Field) => (touched.has(field) ? errors[field] : undefined)
 
@@ -133,7 +137,7 @@ export function NewItemDialog({ weekStart, timezone, onClose, onAdded }: Props) 
                     {form.preset === value && <Check />}
                   </label>
                   {form.preset === value && (
-                    <PresetPanel form={form} weekStart={weekStart} update={update} touch={touch} shown={shown} />
+                    <PresetPanel form={form} weekStart={weekStart} context={context} update={update} touch={touch} shown={shown} />
                   )}
                 </div>
               ))}
@@ -178,6 +182,25 @@ export function NewItemDialog({ weekStart, timezone, onClose, onAdded }: Props) 
             </div>
           )}
 
+          {showsEachDay(form) && (
+            <div className="field">
+              <label htmlFor="item-each-day" className="field-label">
+                Each day
+              </label>
+              <input
+                id="item-each-day"
+                className={shown('eachDay') ? 'text-input invalid' : 'text-input'}
+                placeholder="30m"
+                value={form.eachDay}
+                onChange={(e) => update({ eachDay: e.target.value })}
+                onBlur={() => touch('eachDay')}
+                autoComplete="off"
+              />
+              <FieldError message={shown('eachDay')} />
+              <p className="hint">One session this long on every day you picked that hasn't passed.</p>
+            </div>
+          )}
+
           {showsOneSessionPerDay(form) && (
             <div className="switch-card">
               <div className="switch-text">
@@ -209,14 +232,15 @@ export function NewItemDialog({ weekStart, timezone, onClose, onAdded }: Props) 
 interface PanelProps {
   form: ItemForm
   weekStart: DateString
+  context: DayContext
   update: (changes: Partial<ItemForm>) => void
   touch: (field: Field) => void
   shown: (field: Field) => string | undefined
 }
 
 /** The selected preset's fields, under its row. */
-function PresetPanel({ form, weekStart, update, touch, shown }: PanelProps) {
-  const line = summary(form, weekStart)
+function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelProps) {
+  const line = summary(form, weekStart, context)
   const date = (
     <div className="field">
       <label htmlFor="item-day" className="field-label">
@@ -266,7 +290,7 @@ function PresetPanel({ form, weekStart, update, touch, shown }: PanelProps) {
     <div className="preset-panel">
       {(form.preset === 'exact' || form.preset === 'day' || form.preset === 'day_range') && date}
       {(form.preset === 'exact' || form.preset === 'day_range') && times('Time', false)}
-      {form.preset === 'days' && (
+      {(form.preset === 'days' || form.preset === 'every_day') && (
         <>
           <div className="field">
             <div className="weekday-picker" role="group" aria-label="Days">

@@ -137,6 +137,7 @@ export default function App() {
         <NewItemDialog
           weekStart={weekStart}
           timezone={state.week.timezone}
+          frames={state.week.frames}
           onClose={() => setAdding(false)}
           onAdded={(week) => setResult({ for: weekStart, status: 'ready', week })}
         />

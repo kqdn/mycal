@@ -3,15 +3,16 @@
 // The dialog (NewItemDialog.tsx) only renders this. See web/DESIGN.md,
 // "Add item dialog".
 
-import { addDays, dayName, range12, time12, toLocal, weekTitle, type DateString } from './time'
+import { addDays, dayName, estimateLabel, range12, time12, toLocal, weekTitle, type DateString } from './time'
 
-export type Preset = 'exact' | 'day' | 'day_range' | 'days' | 'before_deadline'
+export type Preset = 'exact' | 'day' | 'day_range' | 'days' | 'every_day' | 'before_deadline'
 
 export const PRESETS: { value: Preset; label: string }[] = [
   { value: 'exact', label: 'Exact time' },
   { value: 'day', label: 'Any time on a day' },
   { value: 'day_range', label: 'Time range on a day' },
   { value: 'days', label: 'Any of these days' },
+  { value: 'every_day', label: 'Every one of these days' },
   { value: 'before_deadline', label: 'Before a deadline' },
 ]
 
@@ -30,9 +31,17 @@ export interface ItemForm {
   estimate: string // "1h 30m", "45m", "2h" or minutes
   longestSession: string // same format; empty means no limit
   oneSessionPerDay: boolean
+  eachDay: string // an every-day item's length on each day, same format as estimate
 }
 
-export type Field = 'title' | 'day' | 'times' | 'weekdays' | 'due' | 'estimate' | 'longestSession'
+export type Field = 'title' | 'day' | 'times' | 'weekdays' | 'due' | 'estimate' | 'longestSession' | 'eachDay'
+
+/** What the form needs to know which picked days are still open: now (UTC ISO), the week's timezone and work frames. */
+export interface DayContext {
+  now: string
+  timezone: string
+  frames: { start: string; end: string }[] // the week's work-frame time, UTC
+}
 export type Errors = Partial<Record<Field, string>>
 
 /** The request body for POST /api/items (solver/src/mycal/api.py, ItemIn). */
@@ -49,6 +58,7 @@ export interface ItemRequest {
   estimate_min?: number
   max_chunk_min?: number
   one_block_per_day: boolean
+  session_min?: number
 }
 
 /** A fresh form for the viewed week: dates default to today if it is in that week, else its Monday. */
@@ -67,6 +77,7 @@ export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
     estimate: '',
     longestSession: '',
     oneSessionPerDay: false,
+    eachDay: '',
   }
 }
 
@@ -80,8 +91,10 @@ export function parseDuration(text: string): number | null {
   return minutes > 0 ? minutes : null
 }
 
-export const showsEstimate = (form: ItemForm) => form.preset !== 'exact'
-export const usesTimes = (form: ItemForm) => form.preset === 'exact' || form.preset === 'day_range' || form.preset === 'days'
+export const showsEstimate = (form: ItemForm) => form.preset !== 'exact' && form.preset !== 'every_day'
+export const showsEachDay = (form: ItemForm) => form.preset === 'every_day'
+const picksDays = (form: ItemForm) => form.preset === 'days' || form.preset === 'every_day'
+export const usesTimes = (form: ItemForm) => form.preset === 'exact' || form.preset === 'day_range' || picksDays(form)
 
 /** The one-session-per-day switch only matters when the work splits into more than one session. */
 export function showsOneSessionPerDay(form: ItemForm): boolean {
@@ -91,8 +104,14 @@ export function showsOneSessionPerDay(form: ItemForm): boolean {
   return estimate !== null && longest !== null && longest < estimate
 }
 
-/** Field errors, worded to say how to fix them. `now` is a UTC ISO time; `timezone` is the week's. */
-export function validate(form: ItemForm, now: string, timezone: string): Errors {
+/** Field errors, worded to say how to fix them. `now` is a UTC ISO time; `timezone` is the week's.
+ * With `week` (the viewed week and its frames), an every-day item with no open day left is an error too. */
+export function validate(
+  form: ItemForm,
+  now: string,
+  timezone: string,
+  week?: { weekStart: DateString; frames: DayContext['frames'] },
+): Errors {
   const errors: Errors = {}
   if (!form.title.trim()) errors.title = 'Give the item a title.'
 
@@ -102,8 +121,11 @@ export function validate(form: ItemForm, now: string, timezone: string): Errors 
   if (form.preset === 'exact' || form.preset === 'day_range') {
     if (!form.startTime || !form.endTime) errors.times = 'Give a start and an end time.'
   }
-  if (form.preset === 'days') {
+  if (picksDays(form)) {
     if (form.weekdays.length === 0) errors.weekdays = 'Pick at least one day.'
+    else if (form.preset === 'every_day' && week && openDays(form, week.weekStart, { now, timezone, frames: week.frames }).length === 0) {
+      errors.weekdays = 'None of these days has room left this week.'
+    }
     if (Boolean(form.startTime) !== Boolean(form.endTime)) errors.times = 'Give both times, or neither.'
   }
   if (usesTimes(form) && form.startTime && form.startTime === form.endTime) {
@@ -119,6 +141,9 @@ export function validate(form: ItemForm, now: string, timezone: string): Errors 
   }
   if (showsEstimate(form) && form.longestSession.trim() && parseDuration(form.longestSession) === null) {
     errors.longestSession = 'Use a length like 45m or 1h 30m.'
+  }
+  if (showsEachDay(form) && parseDuration(form.eachDay) === null) {
+    errors.eachDay = 'Use a length like 30m or 1h.'
   }
   return errors
 }
@@ -143,7 +168,7 @@ export function toRequest(form: ItemForm, weekStart: DateString): ItemRequest {
     request.start_time = form.startTime
     request.end_time = form.endTime
   }
-  if (form.preset === 'days') request.weekdays = [...form.weekdays].sort((a, b) => a - b)
+  if (picksDays(form)) request.weekdays = [...form.weekdays].sort((a, b) => a - b)
   if (form.preset === 'before_deadline') {
     request.deadline_date = form.dueDate
     request.deadline_time = form.dueTime
@@ -153,11 +178,13 @@ export function toRequest(form: ItemForm, weekStart: DateString): ItemRequest {
     const longest = parseDuration(form.longestSession)
     if (longest !== null) request.max_chunk_min = longest
   }
+  if (showsEachDay(form)) request.session_min = parseDuration(form.eachDay) ?? undefined
   return request
 }
 
-/** The line under a preset's fields saying what the solver will get, or '' until there is enough to say. */
-export function summary(form: ItemForm, weekStart: DateString): string {
+/** The line under a preset's fields saying what the solver will get, or '' until there is enough to say.
+ * An every-day item lists only its open days, so it needs `context`. */
+export function summary(form: ItemForm, weekStart: DateString, context?: DayContext): string {
   const minutes = (time: string) => {
     const [h, m] = time.split(':').map(Number)
     return h * 60 + m
@@ -184,9 +211,77 @@ export function summary(form: ItemForm, weekStart: DateString): string {
       const when = range ? `, ${range}` : ', in your work hours'
       return `The solver sees: ${days} this week (${weekTitle(weekStart)})${when}`
     }
+    case 'every_day': {
+      if (!context) return ''
+      const open = openDays(form, weekStart, context)
+      if (open.length === 0) return ''
+      const days = open.map((d) => WEEKDAYS[d]).join(', ')
+      const session = parseDuration(form.eachDay)
+      const range = timeRange()
+      const when = range ? `, ${range}` : ', in your work hours'
+      const each = session === null ? `each of ${days}` : `${estimateLabel(session)} on each of ${days}`
+      return `The solver sees: ${each} this week (${weekTitle(weekStart)})${when}`
+    }
     case 'before_deadline': {
       if (!form.dueDate || !form.dueTime) return ''
       return `Due ${dayName(form.dueDate)} at ${time12(minutes(form.dueTime))}`
     }
   }
+}
+
+const DAY_MIN = 24 * 60
+
+/**
+ * The picked weekdays (0 = Monday) that still have room for one whole session after now,
+ * the same rule as the planner's effective_item. A day's allowed time is the
+ * "Only between" range (cut at midnight; an overnight range's tail counts for the
+ * next day only if that day is picked too) or else the week's work frames.
+ * Without a valid length, a day is open if any of its time is left.
+ * The server checks again on add, and its answer wins.
+ */
+export function openDays(form: ItemForm, weekStart: DateString, context: DayContext): number[] {
+  const session = parseDuration(form.eachDay) ?? 1
+  const current = toLocal(context.now, context.timezone)
+  const picked = [...new Set(form.weekdays)].sort((a, b) => a - b)
+  const frameTime = form.startTime && form.endTime ? null : localIntervals(context.frames, context.timezone)
+  return picked.filter((weekday) => {
+    const date = addDays(weekStart, weekday)
+    if (date < current.date) return false
+    const from = date === current.date ? current.minutes : 0
+    const intervals = frameTime ? (frameTime.get(date) ?? []) : rangeIntervals(form, weekday, picked)
+    return intervals.some(([start, end]) => end - Math.max(start, from) >= session)
+  })
+}
+
+/** An "Only between" range on one picked day, in minutes since its midnight. */
+function rangeIntervals(form: ItemForm, weekday: number, picked: number[]): [number, number][] {
+  const [sh, sm] = form.startTime.split(':').map(Number)
+  const [eh, em] = form.endTime.split(':').map(Number)
+  const start = sh * 60 + sm
+  const end = eh * 60 + em
+  if (end > start) return [[start, end]]
+  const intervals: [number, number][] = [[start, DAY_MIN]]
+  if (picked.includes(weekday - 1)) intervals.push([0, end]) // yesterday's range runs past midnight
+  return intervals
+}
+
+/** UTC spans as local [start, end) minutes per local date, split at midnight. */
+function localIntervals(spans: DayContext['frames'], timezone: string): Map<DateString, [number, number][]> {
+  const byDate = new Map<DateString, [number, number][]>()
+  const add = (date: DateString, start: number, end: number) => {
+    if (end > start) byDate.set(date, [...(byDate.get(date) ?? []), [start, end]])
+  }
+  for (const span of spans) {
+    const start = toLocal(span.start, timezone)
+    const end = toLocal(span.end, timezone)
+    let date = start.date
+    let from = start.minutes
+    while (date < end.date) {
+      add(date, from, DAY_MIN)
+      date = addDays(date, 1)
+      from = 0
+    }
+    add(date, from, end.minutes)
+  }
+  return byDate
 }

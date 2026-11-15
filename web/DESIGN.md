@@ -110,7 +110,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
 1. **Title:** a text input. Required.
 
 2. **Flexibility:** a label, then a radio group inside a card (`--surface`, 1px `--border`, radius `--radius-input`, overflow hidden).
-   - **Rows:** one 44px row per preset, 15px text, 14px side padding, and a 1px `--divider` between rows. The presets are Exact time, Any time on a day, Time range on a day, Any of these days, and Before a deadline. Custom stays out until painted windows exist.
+   - **Rows:** one 44px row per preset, 15px text, 14px side padding, and a 1px `--divider` between rows. The presets are Exact time, Any time on a day, Time range on a day, Any of these days, Every one of these days, and Before a deadline. Custom stays out until painted windows exist.
    - **The selected row:** `--accent-tint` background, 600 weight, and an 18px `--accent` check on the right.
    - **Its fields panel:** directly under the selected row, with an `--surface-sunken` background, 12px 14px padding, a 10px gap, and a 1px `--divider` below. Only the selected preset's panel is shown.
 
@@ -120,6 +120,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
    | Any time on a day | Date |
    | Time range on a day | Date, then start "to" end |
    | Any of these days | Weekday picker, then an optional "Only between" start "to" end |
+   | Every one of these days | The same as Any of these days |
    | Before a deadline | Due date and due time |
 
    - **Time pairs:** on one row, as `[start] to [end]`. The inputs are 44px tall, radius `--radius-control`, with centered text. "to" is 14px in `--text-muted`.
@@ -129,12 +130,15 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
    - **Dates and times:** use native `<input type="date">` and `<input type="time">`, styled like the text inputs. No date library.
    - **Summary line:** every panel ends with one line saying what the solver will get, in 12px `--text-muted`. It updates as you type. This comes straight from the prototype. Examples:
      - "The solver sees: Mon, Wed, Fri this week (Nov 16 to 22), 4:00 to 9:00pm". An "Any of these days" item belongs to the week being viewed, so its summary always names that week. (`add-item-preview.png` predates this and shows the line without the week.)
+     - "The solver sees: 30m on each of Wed, Thu, Fri this week (Nov 16 to 22), 6:00 to 8:00pm". An "Every one of these days" item lists only the picked days that still have room for a whole session (picked days that have passed, and today if too little of it is left, drop out). It leaves out the length until Each day is valid, and says nothing when no picked day is left.
      - "Due Wed, Nov 18 at 11:59pm"
      - "Thu, Nov 19, 11:00pm to 1:00am (ends the next day)"
 
-3. **Estimate and Longest session:** two inputs side by side with a 12px gap. Both are hidden when Exact time is selected, since the start and end set the length.
+3. **Estimate and Longest session:** two inputs side by side with a 12px gap. Both are hidden when Exact time is selected, since the start and end set the length, and when Every one of these days is selected, which uses Each day instead.
    - **Estimate** (required): a text input with the placeholder "1h 30m". It accepts "45m", "2h", "1h 30m", or a plain number of minutes.
    - **Longest session** (optional): the same format, with the placeholder "No limit". Under the pair, a 12px `--text-muted` hint: "Longer work is split into sessions up to this length."
+
+   - **Each day** (Every one of these days only, required): in place of the pair, one text input in the same format, with the placeholder "30m". Under it, a 12px `--text-muted` hint: "One session this long on every day you picked that hasn't passed."
 
 4. **One session per day:** a switch row inside a card, styled like the prototype's "Check in when it ends" row.
    - **Text:** the title "One session per day" (15px / 600), with "Puts each session on a different day." under it (12px, `--text-muted`).
@@ -147,6 +151,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
   - "Use a length like 45m or 1h 30m."
   - "Pick at least one day."
   - "That deadline has already passed."
+  - "None of these days has room left this week." (Every one of these days, under the weekday picker)
 - **Server errors** (a 422 or anything else): an attention banner at the top of the body shows the server's message. Everything you typed stays in the form.
 - **Success:** the dialog closes and the grid shows the re-planned week.
 

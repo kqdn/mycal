@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   emptyForm,
+  openDays,
   parseDuration,
+  showsEachDay,
   showsEstimate,
   showsOneSessionPerDay,
   summary,
@@ -147,5 +149,78 @@ describe('summary', () => {
   it('says nothing until there is enough to say', () => {
     expect(line({ weekdays: [] })).toBe('')
     expect(line({ preset: 'exact', day: '2026-11-19', startTime: '09:00', endTime: '' })).toBe('')
+  })
+})
+
+describe('every one of these days', () => {
+  // Weekdays 9am to 6pm PST (UTC-8), as the week response sends them.
+  const frames = [16, 17, 18, 19, 20].map((day) => ({
+    start: `2026-11-${day}T17:00:00Z`,
+    end: `2026-11-${day + 1}T02:00:00Z`,
+  }))
+  const WEDNESDAY_NOON = '2026-11-18T20:00:00Z'
+  const WEDNESDAY_545PM = '2026-11-19T01:45:00Z'
+  const piano = (changes: Partial<ItemForm> = {}) =>
+    form({ title: 'Piano', preset: 'every_day', weekdays: [0, 1, 2, 3, 4], eachDay: '30m', ...changes })
+  const at = (now: string) => ({ now, timezone: LA, frames })
+
+  it('shows an Each day length in place of the estimate', () => {
+    expect(showsEachDay(piano())).toBe(true)
+    expect(showsEstimate(piano())).toBe(false)
+    expect(showsOneSessionPerDay(piano({ estimate: '3h', longestSession: '1h' }))).toBe(false)
+  })
+
+  it('counts every picked day before the week starts', () => {
+    expect(openDays(piano(), WEEK, at(SUNDAY_BEFORE))).toEqual([0, 1, 2, 3, 4])
+    expect(summary(piano(), WEEK, at(SUNDAY_BEFORE))).toBe(
+      'The solver sees: 30m on each of Mon, Tue, Wed, Thu, Fri this week (Nov 16 to 22), in your work hours',
+    )
+  })
+
+  it('lists only the days that have not passed when added mid-week', () => {
+    expect(summary(piano(), WEEK, at(WEDNESDAY_NOON))).toBe(
+      'The solver sees: 30m on each of Wed, Thu, Fri this week (Nov 16 to 22), in your work hours',
+    )
+  })
+
+  it('drops today when too little of its time is left for a session', () => {
+    expect(openDays(piano(), WEEK, at(WEDNESDAY_545PM))).toEqual([3, 4]) // 15 minutes left of Wednesday
+    expect(openDays(piano({ eachDay: '15m' }), WEEK, at(WEDNESDAY_545PM))).toEqual([2, 3, 4])
+  })
+
+  it('uses the Only between range instead of the work hours', () => {
+    const evenings = piano({ startTime: '18:00', endTime: '20:00' })
+    expect(openDays(evenings, WEEK, at(WEDNESDAY_545PM))).toEqual([2, 3, 4]) // the range has not started yet
+    expect(summary(evenings, WEEK, at(WEDNESDAY_NOON))).toBe(
+      'The solver sees: 30m on each of Wed, Thu, Fri this week (Nov 16 to 22), 6:00 to 8:00pm',
+    )
+  })
+
+  it('is an error when no picked day is left, and says nothing then', () => {
+    const late = piano({ weekdays: [0, 1, 2], startTime: '18:00', endTime: '20:00' })
+    const wednesday745pm = '2026-11-19T03:45:00Z'
+    expect(validate(late, wednesday745pm, LA, { weekStart: WEEK, frames }).weekdays).toBe(
+      'None of these days has room left this week.',
+    )
+    expect(summary(late, WEEK, at(wednesday745pm))).toBe('')
+  })
+
+  it('needs a length for each day', () => {
+    expect(validate(piano({ eachDay: '' }), SUNDAY_BEFORE, LA).eachDay).toBe('Use a length like 30m or 1h.')
+    expect(validate(piano(), SUNDAY_BEFORE, LA, { weekStart: WEEK, frames })).toEqual({})
+  })
+
+  it('sends the picked days and the length, not an estimate', () => {
+    const request = toRequest(piano({ weekdays: [4, 0, 2], startTime: '18:00', endTime: '20:00', estimate: '3h' }), WEEK)
+    expect(request).toEqual({
+      week_start: WEEK,
+      title: 'Piano',
+      preset: 'every_day',
+      weekdays: [0, 2, 4],
+      start_time: '18:00',
+      end_time: '20:00',
+      session_min: 30,
+      one_block_per_day: false,
+    })
   })
 })
