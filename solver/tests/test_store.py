@@ -245,3 +245,16 @@ def test_a_version_1_database_upgrades_in_place(tmp_path: Path) -> None:
     assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION
     [row] = conn.execute("SELECT title, source FROM items").fetchall()
     assert (row["title"], row["source"]) == ("Old item", None)  # existing rows count as added in the app
+
+
+def test_a_rule_that_also_targets_a_series_keeps_it_when_its_item_goes(conn: sqlite3.Connection) -> None:
+    gym = item("Gym")
+    store.put_item(conn, gym)
+    series_id = uuid4()
+    rule = Constraint(kind="rest_between", params={"item_ids": [gym.id], "series_ids": [series_id]})
+    store.put_constraint(conn, rule)
+
+    store.delete_item(conn, gym.id)
+
+    [left] = store.list_constraints(conn)
+    assert left.params == {"item_ids": [], "series_ids": [series_id]}

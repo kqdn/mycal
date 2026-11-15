@@ -191,6 +191,7 @@ def import_source(
     with conn:
         conn.execute("DELETE FROM planned_weeks")  # frames and items change, so every week re-plans
         replaced = conn.execute("DELETE FROM items WHERE source = ?", (source,)).rowcount
+        _drop_deleted_targets(conn)
         conn.execute("DELETE FROM constraints WHERE source = ?", (source,))
         conn.execute("DELETE FROM work_frames")
         _write_settings(conn, settings)
@@ -358,9 +359,33 @@ def list_items(conn: sqlite3.Connection) -> list[Item]:
 
 
 def delete_item(conn: sqlite3.Connection, item_id: UUID) -> None:
-    """Delete an item. Its blocks, subtasks and dependency links go with it."""
+    """Delete an item. Its blocks, subtasks and dependency links go with it, and so does
+    every constraint's reference to it (see _drop_deleted_targets)."""
     with conn:
         conn.execute("DELETE FROM items WHERE id = ?", (str(item_id),))
+        _drop_deleted_targets(conn)
+
+
+def _drop_deleted_targets(conn: sqlite3.Connection) -> None:
+    """Remove ids of items that no longer exist from every constraint's item_ids.
+
+    A constraint left with no targets at all is deleted: no targets would mean
+    "every item", turning a rule for one item into a rule for everything. The
+    solver refuses unknown ids on purpose, so without this, deleting an item a
+    constraint names would stop every week from planning.
+    """
+    existing = {row["id"] for row in conn.execute("SELECT id FROM items")}
+    for row in conn.execute("SELECT id, params FROM constraints").fetchall():
+        params = load_json(row["params"])
+        ids = params.get("item_ids") or []
+        kept = [i for i in ids if str(i) in existing]
+        if len(kept) == len(ids):
+            continue
+        if not kept and not params.get("series_ids"):
+            conn.execute("DELETE FROM constraints WHERE id = ?", (row["id"],))
+        else:
+            params["item_ids"] = kept
+            conn.execute("UPDATE constraints SET params = ? WHERE id = ?", (dump_json(params), row["id"]))
 
 
 def _item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:

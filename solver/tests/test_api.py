@@ -1,13 +1,13 @@
 """The week API, serving stored plans from a temporary database with the made-up sample week."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from mycal import Block, FlexPreset, Item, api, store
+from mycal import Block, Constraint, FlexPreset, Item, api, store
 from mycal.importer import import_week
 from mycal.solve import solve
 
@@ -556,3 +556,27 @@ def test_two_overlapping_requests_run_one_at_a_time(db: Path, client: TestClient
     assert all(a.end <= b.start for a, b in zip(blocks, blocks[1:]))
     assert store.plan_status(conn, date.fromisoformat(WEEK)) is True
 
+
+
+def test_deleting_an_item_a_constraint_targets_keeps_planning_working(db: Path, client: TestClient) -> None:
+    # A rest rule for the lab alone, and a time preference for the lab and the call.
+    conn = store.connect(db)
+    items = {i.title: i for i in store.list_items(conn)}
+    lab, call = items["Chemistry lab"], items["Call home"]
+    rest = Constraint(kind="rest_between", params={"item_ids": [lab.id]})
+    prefer = Constraint(
+        kind="time_preference",
+        params={"item_ids": [lab.id, call.id], "mode": "prefer", "weekdays": [0, 1, 2, 3, 4], "start_time": time(9), "end_time": time(12)},
+    )
+    store.put_constraint(conn, rest)
+    store.put_constraint(conn, prefer)
+    store.clear_plans(conn)
+    get(client)
+
+    response = client.delete(f"/api/items/{lab.id}", params={"week": WEEK})
+
+    assert response.status_code == 200, response.text
+    assert get(client, WEEK_3)["feasible"] is True  # later weeks still plan
+    left = {c.id: c for c in store.list_constraints(store.connect(db))}
+    assert rest.id not in left  # its only target is gone, so the rule goes too
+    assert left[prefer.id].params["item_ids"] == [call.id]
