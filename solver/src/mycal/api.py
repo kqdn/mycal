@@ -79,6 +79,7 @@ class SpanOut(BaseModel):
 class ItemRef(BaseModel):
     id: UUID
     title: str
+    estimate_min: int | None  # None when the item has no estimate
 
 
 class WeekOut(BaseModel):
@@ -183,7 +184,7 @@ def _week_out(week: Week, items: list[Item], result: SolveResult) -> WeekOut:
         feasible=result.feasible,
         blocks=blocks,
         frames=[SpanOut(start=w.start, end=w.end) for w in frame_spans(week)],
-        unscheduled=[ItemRef(id=i.id, title=i.title) for i in items if not i.windows],
+        unscheduled=[ItemRef(id=i.id, title=i.title, estimate_min=i.estimate_min) for i in items if not i.windows],
     )
 
 

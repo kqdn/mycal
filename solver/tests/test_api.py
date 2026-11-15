@@ -62,7 +62,7 @@ def test_week_is_solved_and_returned_in_utc(client: TestClient) -> None:
     )
     assert blocks["Lecture"]["fixed"] is True
     assert week["frames"] == [{"start": "2026-11-16T17:00:00Z", "end": "2026-11-16T19:00:00Z"}]
-    assert [i["title"] for i in week["unscheduled"]] == ["Email advisor"]
+    assert [(i["title"], i["estimate_min"]) for i in week["unscheduled"]] == [("Email advisor", 15)]
 
 
 def test_missing_week_is_404(client: TestClient) -> None:
