@@ -135,10 +135,6 @@ ul {
   overflow: hidden;
 }
 
-.week-hscroll {
-  overflow-x: auto;
-}
-
 .week-inner {
   min-width: 840px;
 }
@@ -152,6 +148,11 @@ ul {
 .week-head {
   min-height: 88px;
   border-bottom: 1px solid var(--border);
+  /* Stays at the top of the scroll container, over the grid. */
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
 }
 
 .day-head {
@@ -190,8 +191,9 @@ ul {
 }
 
 .week-body {
-  height: min(70vh, 640px);
-  overflow-y: auto;
+  /* The grid's visible height plus the 88px header row inside it. */
+  height: calc(min(70vh, 640px) + 88px);
+  overflow: auto;
 }
 
 .week-canvas {

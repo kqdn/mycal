@@ -23,7 +23,9 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
 
   return (
     <section className="week-card" aria-label="Week grid">
-      <div className="week-hscroll">
+      {/* One scroll container for both directions. The day header is its sticky
+          first row, so the header and the grid always share one width, scrollbar or not. */}
+      <div className="week-body" ref={scroller} tabIndex={-1}>
         <div className="week-inner">
           <div className="week-head">
             <div className="gutter" />
@@ -40,42 +42,40 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
             })}
           </div>
 
-          <div className="week-body" ref={scroller} tabIndex={-1}>
-            <div className="week-canvas" style={{ height: minutesToPx(24 * 60) }}>
-              <div className="gutter">
-                {HOURS.slice(1).map((h) => (
-                  <span key={h} className="hour-label" style={{ top: minutesToPx(h * 60) }}>
-                    {hourLabel(h)}
-                  </span>
-                ))}
-              </div>
-              {dates.map((date, day) => (
-                <div key={date} className="day-column">
-                  {frames
-                    .filter((p) => p.day === day)
-                    .map((p) => (
-                      <div key={`frame-${p.startMin}`} className="frame" style={place(p)} />
-                    ))}
-                  {HOURS.slice(1).map((h) => (
-                    <div key={h} className="hour-line" style={{ top: minutesToPx(h * 60) }} />
-                  ))}
-                  {blocks
-                    .filter(({ piece }) => piece.day === day)
-                    .map(({ block, piece }) => (
-                      <BlockView
-                        key={`${block.id}-${piece.day}`}
-                        block={block}
-                        piece={piece}
-                        timezone={timezone}
-                        onOpen={onOpen}
-                      />
-                    ))}
-                  {date === now.date && (
-                    <div className="now-line" style={{ top: minutesToPx(now.minutes) }} aria-hidden="true" />
-                  )}
-                </div>
+          <div className="week-canvas" style={{ height: minutesToPx(24 * 60) }}>
+            <div className="gutter">
+              {HOURS.slice(1).map((h) => (
+                <span key={h} className="hour-label" style={{ top: minutesToPx(h * 60) }}>
+                  {hourLabel(h)}
+                </span>
               ))}
             </div>
+            {dates.map((date, day) => (
+              <div key={date} className="day-column">
+                {frames
+                  .filter((p) => p.day === day)
+                  .map((p) => (
+                    <div key={`frame-${p.startMin}`} className="frame" style={place(p)} />
+                  ))}
+                {HOURS.slice(1).map((h) => (
+                  <div key={h} className="hour-line" style={{ top: minutesToPx(h * 60) }} />
+                ))}
+                {blocks
+                  .filter(({ piece }) => piece.day === day)
+                  .map(({ block, piece }) => (
+                    <BlockView
+                      key={`${block.id}-${piece.day}`}
+                      block={block}
+                      piece={piece}
+                      timezone={timezone}
+                      onOpen={onOpen}
+                    />
+                  ))}
+                {date === now.date && (
+                  <div className="now-line" style={{ top: minutesToPx(now.minutes) }} aria-hidden="true" />
+                )}
+              </div>
+            ))}
           </div>
         </div>
       </div>

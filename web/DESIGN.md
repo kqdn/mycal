@@ -43,7 +43,7 @@ Use Inter for everything and Space Grotesk only for page titles. Load both in `i
 
 ## Week grid
 
-- **Card:** `--surface`, 1px `--border`, radius `--radius-card`, overflow hidden. Inside, a horizontal scroller with a 840px minimum width, so narrow screens scroll instead of squashing the columns.
+- **Card:** `--surface`, 1px `--border`, radius `--radius-card`, overflow hidden. Inside, one scroller for both directions with an 840px minimum width, so narrow screens scroll instead of squashing the columns. The day header row is sticky at its top, inside that scroller, so the header and the columns always share one width, even when a scrollbar takes up room.
 - **Columns:** a `--gutter` (56px) time column, then 7 equal day columns. Each day column has a 1px `--border` left edge.
 - **Day header row:** 88px minimum height, 1px `--border` bottom edge. Each cell is centered, with 12px top padding and a 4px gap, and shows:
   - the weekday (12px / 600, `--text-muted`)
