@@ -117,13 +117,10 @@ export default function App() {
 /** What to tell the user when a week can't be shown. */
 function describe(error: unknown, weekStart: DateString): Problem {
   if (error instanceof WeekError && error.kind === 'missing') {
-    return {
-      title: `No week file for ${weekTitle(weekStart)}`,
-      body: `Add solver/weeks/${weekStart}.toml to plan this week.`,
-    }
+    return { title: `Nothing to show for ${weekTitle(weekStart)} yet`, body: error.message }
   }
   if (error instanceof WeekError) {
-    return { title: "This week's file has a problem", body: error.message }
+    return { title: "This week couldn't be loaded", body: error.message }
   }
   return { title: "Can't reach the planner", body: 'Start it with uv run mycal-api in solver/.' }
 }

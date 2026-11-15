@@ -100,6 +100,15 @@ MIGRATIONS = [
     ALTER TABLE constraints ADD COLUMN source TEXT;
     CREATE INDEX items_by_source ON items (source);
     """,
+    # 3: which weeks have a stored plan. A week with no row has never been
+    # planned (or its plan was cleared); feasible is 0 when nothing fit.
+    """
+    CREATE TABLE planned_weeks (
+        week_start TEXT PRIMARY KEY,
+        feasible INTEGER NOT NULL,
+        planned_at TEXT NOT NULL
+    );
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -166,6 +175,7 @@ def import_source(
     nothing changes.
     """
     with conn:
+        conn.execute("DELETE FROM planned_weeks")  # frames and items change, so every week re-plans
         replaced = conn.execute("DELETE FROM items WHERE source = ?", (source,)).rowcount
         conn.execute("DELETE FROM constraints WHERE source = ?", (source,))
         conn.execute("DELETE FROM work_frames")
@@ -200,6 +210,39 @@ def _parents_first(items: list[Item]) -> list[Item]:
     for item in items:
         place(item)
     return ordered
+
+
+# Plans
+
+
+def plan_status(conn: sqlite3.Connection, week_start: date) -> bool | None:
+    """Whether the stored plan for the week is feasible, or None if the week has no stored plan."""
+    row = conn.execute("SELECT feasible FROM planned_weeks WHERE week_start = ?", (week_start.isoformat(),)).fetchone()
+    return None if row is None else bool(row["feasible"])
+
+
+def save_plan(
+    conn: sqlite3.Connection,
+    week_start: date,
+    drop: list[UUID],
+    blocks: list[Block],
+    feasible: bool,
+    planned_at: datetime,
+) -> None:
+    """Store a week's new plan in one transaction: drop the old plan's blocks, write the new ones, mark the week."""
+    with conn:
+        conn.executemany("DELETE FROM blocks WHERE id = ?", [(str(i),) for i in drop])
+        _write_blocks(conn, blocks)
+        conn.execute(
+            "INSERT OR REPLACE INTO planned_weeks (week_start, feasible, planned_at) VALUES (?, ?, ?)",
+            (week_start.isoformat(), int(feasible), _moment(planned_at)),
+        )
+
+
+def clear_plans(conn: sqlite3.Connection) -> None:
+    """Forget which weeks are planned, so each one re-plans when next viewed. Blocks stay as the current plan."""
+    with conn:
+        conn.execute("DELETE FROM planned_weeks")
 
 
 # Settings
@@ -333,25 +376,29 @@ def _item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
 def put_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:
     """Insert or replace blocks."""
     with conn:
-        conn.executemany(
-            """
-            INSERT OR REPLACE INTO blocks (id, item_id, start, "end", locked, status, completed_at, actual_min)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    str(b.id),
-                    str(b.item_id),
-                    _moment(b.start),
-                    _moment(b.end),
-                    int(b.locked),
-                    b.status.value,
-                    _moment(b.completed_at),
-                    b.actual_min,
-                )
-                for b in blocks
-            ],
-        )
+        _write_blocks(conn, blocks)
+
+
+def _write_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:
+    conn.executemany(
+        """
+        INSERT OR REPLACE INTO blocks (id, item_id, start, "end", locked, status, completed_at, actual_min)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                str(b.id),
+                str(b.item_id),
+                _moment(b.start),
+                _moment(b.end),
+                int(b.locked),
+                b.status.value,
+                _moment(b.completed_at),
+                b.actual_min,
+            )
+            for b in blocks
+        ],
+    )
 
 
 def list_blocks(

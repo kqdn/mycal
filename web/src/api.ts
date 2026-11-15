@@ -21,7 +21,7 @@ export interface Week {
   unscheduled: { id: string; title: string; estimate_min: number | null }[]
 }
 
-/** Why a week could not be shown: no file for it, or a file the API could not use. */
+/** Why a week could not be shown: nothing imported yet (404), or data the API could not use. */
 export class WeekError extends Error {
   readonly kind: 'missing' | 'invalid'
 
@@ -70,8 +70,7 @@ export function clearWeekCache(): void {
 export async function fetchWeek(weekStart: DateString): Promise<Week> {
   const response = await fetch(`/api/weeks/${weekStart}`)
   if (response.ok) return response.json()
-  if (response.status === 404) throw new WeekError('missing', `No week file for ${weekStart}.`)
   const body = await response.json().catch(() => null)
   const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
-  throw new WeekError('invalid', detail || `HTTP ${response.status}`)
+  throw new WeekError(response.status === 404 ? 'missing' : 'invalid', detail || `HTTP ${response.status}`)
 }
