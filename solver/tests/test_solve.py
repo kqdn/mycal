@@ -216,6 +216,19 @@ def test_unmoved_block_keeps_its_spot_and_id() -> None:
     assert block == current
 
 
+def test_re_solving_keeps_sessions_of_different_lengths_in_place() -> None:
+    # 5h at a 2h max is 105, 105 and 90 min. The current plan put the 90 min
+    # session first, so pairing old blocks with chunks by position would
+    # stretch it to 105 min.
+    item = task("Code", 300, [window(16, 9, 17), window(17, 9, 17), window(18, 9, 17)], max_chunk_min=120)
+    current = [
+        Block(item.id, at(16, 9), at(16, 10, 30)),  # 90 min
+        Block(item.id, at(17, 9), at(17, 10, 45)),  # 105 min
+        Block(item.id, at(18, 9), at(18, 10, 45)),  # 105 min
+    ]
+    assert run([item], current).blocks == current
+
+
 def test_soft_constraints_are_ignored_and_hard_ones_rejected() -> None:
     item = task("Gym", 60, [window(16, 9, 10)])
     assert run([item], constraints=[Constraint(kind="buffer")]).feasible

@@ -173,7 +173,7 @@ Buffers come later as Constraint kinds. The backtracking engine does not score; 
 - Remaining work: estimate minus time already covered (done and partial blocks count actual_min, or their length if missing; locked planned blocks count their length).
 - Chunks: remaining work, rounded up to whole slots, is split into the fewest near-equal blocks no longer than max_chunk_min (5h with a 2h max is 105 + 105 + 90 min).
 - An item with no estimate gets one block filling its single window exactly (how Exact items are placed); no estimate with several windows is an error. An item with no windows is skipped and stays in the task list.
-- Stability: chunk i reuses the id of the item's i-th current block and tries its old start first.
+- Stability: the item's current blocks, in start order, each pass their id and start on to a chunk of their own length when one is left (else the next chunk), and the engines try that old start first. Pairing by position alone would stretch a shorter session that was placed first.
 - Window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
 - My home timezone is a required solver setting, used only to find a block's local day for one_block_per_day.
 - Stopping is deterministic: one worker, a fixed seed, the gap limit above, and a deterministic work limit (CP-SAT's max_deterministic_time, setting work_limit, default 20) as the backstop. There is no wall-clock limit, so the same input and OR-Tools version give the same plan on any machine. The status says how it ended: OPTIMAL (within the slack), FEASIBLE (stopped by the work limit) or INFEASIBLE.

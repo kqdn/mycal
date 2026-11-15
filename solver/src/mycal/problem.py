@@ -272,7 +272,7 @@ def _parse_daily_limit(params: dict[str, Any]) -> DailyLimit:
 
 
 def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int) -> list[Chunk]:
-    """Chunks for one item. Old unlocked blocks pass their id and start to chunk i."""
+    """Chunks for one item. Old unlocked blocks pass their id and start on to a chunk (see _match_old_blocks)."""
     if not item.windows:
         return []  # not scheduled yet; stays in the task list
 
@@ -286,8 +286,7 @@ def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int)
         sizes = split_slots(total_slots, item.max_chunk_min, slot_min)
 
     chunks = []
-    for i, size in enumerate(sizes):
-        previous = old[i] if i < len(old) else None
+    for size, previous in _match_old_blocks(sizes, old, slot_min):
         chunks.append(
             Chunk(
                 item_id=item.id,
@@ -298,6 +297,26 @@ def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int)
             )
         )
     return chunks
+
+
+def _match_old_blocks(sizes: list[int], old: list[Block], slot_min: int) -> list[tuple[int, Block | None]]:
+    """Pair chunk sizes with old blocks (in start order), so re-planning can keep them in place.
+
+    Each old block gets back a chunk of its own length when one is left, else
+    the next one. Sessions can differ in length (5h at a 2h max is 105, 105 and
+    90 min) and the shorter one may have been placed first; pairing by position
+    alone would hand a 90 min block a 105 min chunk and stretch it.
+    """
+    remaining = list(sizes)
+    pairs: list[tuple[int, Block | None]] = []
+    for previous in old:
+        if not remaining:
+            break
+        length = round((previous.end - previous.start) / timedelta(minutes=slot_min))
+        size = length if length in remaining else remaining[0]
+        remaining.remove(size)
+        pairs.append((size, previous))
+    return pairs + [(size, None) for size in remaining]
 
 
 def _fill_window_size(item: Item, kept: list[Block], slot_min: int) -> list[int]:
