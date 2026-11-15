@@ -6,17 +6,17 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 ## Current milestone
 
-Milestone 1: the data model and solver as a Python package with tests. No UI yet. Done when I can feed in this week's items and get a printed schedule.
+Milestone 2: see my week in the browser. A FastAPI endpoint loads a week file and returns the solved schedule as JSON, and a React + TypeScript + Vite page shows it as a read-only week grid. No database, no editing, no check-ins yet. Done when I can open my real week in the browser.
 
-I may write a simple backtracking solver by hand first to learn the problem, then switch to OR-Tools CP-SAT. Both must sit behind the same `solve()` interface so they can be swapped.
+Milestone 1 (solver package, printed schedule) is done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 
 ## Stack
 
 | Part | Choice | Folder |
 | --- | --- | --- |
-| Solver | Python 3.12, OR-Tools CP-SAT, pytest; FastAPI wrapper later | `solver/` |
-| Frontend (later) | React + TypeScript + Vite, installable PWA | `web/` |
-| Storage (later) | SQLite first, maybe Supabase later | |
+| Solver | Python 3.12, OR-Tools CP-SAT, pytest; FastAPI wrapper (Milestone 2) | `solver/` |
+| Frontend | React + TypeScript + Vite, installable PWA (PWA install later) | `web/` |
+| Storage (Milestone 3) | SQLite first, maybe Supabase later | |
 
 Python dependencies are managed with uv. Ask me before adding any new dependency.
 
@@ -35,7 +35,7 @@ Run from `solver/`. Keep this section up to date when commands are added or chan
 
 These come from the PRD's "get right now" list. If a change would break one, stop and tell me instead.
 
-1. The solver is a pure function. It takes items, blocks, work frames and constraints and returns placements. No database, HTTP, file I/O or UI code inside it.
+1. The solver is a pure function. It takes items, blocks, work frames and constraints and returns placements. No database, HTTP, file I/O or UI code inside it. The core modules (`solve`, `problem`, `backtracking`, `cp_sat`, `model`, `windows`, `presets`, `recurrence`, `settings`) never import `api.py` or `demo.py`. Those two are callers: they read files, serve HTTP and call `solve()`, never the other way round.
 2. Items and Blocks are separate. An Item is the what; a Block is one calendar slot for it, and an item has zero, one or many. There are no separate event and task types.
 3. Every entity has a UUID. Never use list positions as identity.
 4. Exact moments in time (block start/end, windows, deadlines, completed_at) are timezone-aware UTC. Repeating times of day (WorkFrame start/end) are stored as local time plus an IANA timezone name and turned into UTC windows when presets are compiled.

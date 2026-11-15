@@ -304,7 +304,13 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 **Risk to test early:** check-in notifications on iPhone. They work for a PWA added to the home screen, but are more limited than native.
 
-**First step:** the data model and solver as a Python module with tests, before any UI. Input this week's tasks, print the schedule.
+**Milestones** (in order; each one is usable before the next starts)
+
+1. Solver package: the data model and solver as a Python package with tests. Feed in this week's items, print the schedule. Done.
+2. Read-only week view: a FastAPI endpoint loads a week file and returns the solved schedule as JSON, and a React + TypeScript + Vite page shows it as a read-only week grid. No database, no editing, no check-ins.
+3. Storage and adding items: SQLite, and creating items in the app instead of a week file.
+4. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package.
+5. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask.
 
 ## Open questions and decision log
 
@@ -318,6 +324,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Milestones written down: 1 solver package (done), 2 read-only week view, 3 storage (SQLite) and adding items in the app, 4 recurrence in the app, 5 check-ins and on-miss. Milestone 2 stays small: one endpoint and a read-only grid, no database, editing or check-ins |
 | Nov 14, 2026 | A time_preference takes several ranges ("gym 6-7pm or 9-10pm on weekdays, around 1pm on weekends"). They merge into one windows list when compiled, so the solver is unchanged. Two separate prefer rules were the workaround, but a block in one range was still penalized by the other |
 | Nov 14, 2026 | Rest days built as the soft rest_between Constraint kind, in the preferences tier. Rest is counted per item (an "N times a week" series has one occurrence per week, so this covers gym), and done or locked sessions count so a moved session re-spaces the rest. Sessions from the previous week are not seen yet (see Open questions) |
 | Nov 14, 2026 | Time preferences built as the soft time_preference Constraint kind (prefer or avoid a local time range). Soft constraints get a new score tier between spread and balance, so a written preference beats a light busiest day. Local times compile to UTC windows outside the solver, and constraints target item or series ids so weekly occurrences stay covered |
