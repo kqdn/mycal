@@ -310,10 +310,11 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 **Milestones** (in order; each one is usable before the next starts)
 
 1. Solver package: the data model and solver as a Python package with tests. Feed in this week's items, print the schedule. Done.
-2. Read-only week view: a FastAPI endpoint loads a week file and returns the solved schedule as JSON, and a React + TypeScript + Vite page shows it as a read-only week grid. No database, no editing, no check-ins.
-3. Storage and adding items: SQLite, and creating items in the app instead of a week file.
-4. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package.
-5. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask.
+2. Read-only week view: a FastAPI endpoint loads a week file and returns the solved schedule as JSON, and a React + TypeScript + Vite page shows it as a read-only week grid. No database, no editing, no check-ins. Done.
+3. Storage and adding items: SQLite, and adding and deleting items in the app instead of a week file. Week files are imported once.
+4. Edit items: change an existing item's fields from the page, then re-plan.
+5. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package.
+6. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask.
 
 ## Open questions and decision log
 
@@ -327,6 +328,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | Milestone 3 plan. Storage is SQLite through Python's built-in sqlite3 (no new dependency) in mycal.store, a caller like the API and the demo. Tables mirror the Data model, with UUIDs as text, times as UTC ISO strings and JSON for params; Item.windows is not stored but compiled when solving, and the schema is versioned with PRAGMA user_version. Week files are imported once (mycal-import; series come in as that week's occurrences). Plans are stored, so the stopgap disk cache goes; a week is solved on first view and re-planned after an item is added or deleted. When re-planning a week: its current planned blocks are the current plan (stability keeps them), planned blocks in other weeks and blocks that already started are passed as kept, and new blocks go only after now. The app adds and deletes items; editing becomes Milestone 4, which moves recurrence to 5 and check-ins to 6. The New item dialog is built to an Add item section the user adds to web/DESIGN.md |
 | Nov 14, 2026 | The web UI follows web/DESIGN.md (from the prototype canvas) with colors, fonts and sizes in web/src/tokens.css: light theme only, Inter and Space Grotesk, 12-hour times. A block's text goes by its height in pixels: two lines from 40px (1 hour and longer), one line "Title · 2:00pm" from 20px (30 and 45 min), the title only below that (15 min). The grid first scrolls to the earliest block on any day, weekends included, minus 30 minutes, or the earliest work frame when there are no blocks |
 | Nov 14, 2026 | CP-SAT stopping rule: a gap limit of earliness_slack_min (15) per flexible block, with tier weights rebuilt so each tier outweighs everything below it plus the slack, so only the lowest tier can come out worse. The wall-clock limit is replaced by a deterministic work limit (20). On the real week: 1.4 s, OPTIMAL, earliness 2 slots worse than the true optimum, where before it stopped at 10 s without proof. Smaller gaps (8 slots or less) never closed on that week, because the lower bound stays 14 below the optimum. CLAUDE.md gains the determinism rule |
 | Nov 14, 2026 | Stopgap until Milestone 3: the week page keeps every week it fetched in memory for the session, so going back to a week is instant, and prefetches the previous and next week once the current one loads. Failed fetches are not kept, so a missing week is asked for again. The arrows already update the URL with pushState, without reloading the page |
