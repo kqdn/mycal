@@ -1,14 +1,24 @@
-"""CP-SAT score tests. Each case has one best answer, so exact positions are asserted."""
+"""CP-SAT score tests.
 
-from datetime import date, time, timedelta
+With no earliness slack each case has one best answer, so exact positions are
+asserted. The huge-slack tests check only the higher-tier outcome, since the
+slack lets the lowest tier (earliness) move.
+"""
+
+from datetime import date, datetime, time, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
 from test_solve import LA, assert_valid, at, task, window
 
 from mycal import Block, BlockStatus, Constraint, Item, SolveResult, SolverSettings, Window, WorkFrame, solve
+from mycal.cp_sat import build_model, tier_weights
+from mycal.problem import build_problem, floor_slot
+from ortools.sat.python import cp_model
 
-CP_SAT = SolverSettings(timezone=LA, engine="cp_sat")
+CP_SAT = SolverSettings(timezone=LA, engine="cp_sat", earliness_slack_min=0)
+HUGE_SLACK = SolverSettings(timezone=LA, engine="cp_sat", earliness_slack_min=600)
 MON, TUE, SAT = 0, 1, 5
 MON_TUE = WorkFrame("Mon-Tue", [MON, TUE], time(9), time(17), LA)
 
@@ -18,10 +28,11 @@ def run(
     blocks: list[Block] = [],
     frames: list[WorkFrame] = [MON_TUE],
     constraints: list[Constraint] = [],
+    settings: SolverSettings = CP_SAT,
 ) -> SolveResult:
-    result = solve(items, blocks, frames, constraints, CP_SAT)
+    result = solve(items, blocks, frames, constraints, settings)
     assert result.feasible
-    assert_valid(result, items, blocks, CP_SAT)
+    assert_valid(result, items, blocks, settings)
     return result
 
 
@@ -216,3 +227,107 @@ def test_a_block_in_any_preferred_range_has_no_penalty() -> None:
     result = run([gym_item, lecture], [locked], constraints=[evenings])
     [block] = [b for b in result.blocks if b.item_id == gym_item.id]
     assert (block.start, block.end) == (at(16, 21), at(16, 22))
+
+
+# Slack: only the lowest tier may come out worse. With 600 minutes of slack per
+# block, each higher tier still wins its trade end to end, including against
+# every tier below it. The worst case for the weights is checked at the model
+# level further down.
+
+
+def blocks_of(result: SolveResult, item: Item) -> list[Block]:
+    return [b for b in result.blocks if b.item_id == item.id]
+
+
+def test_slack_keeps_balance_over_earliness() -> None:
+    # Monday 10am is 8 slots earlier in the frame than Tuesday 12pm, but
+    # Monday already has the lab, so balance wants Tuesday.
+    lab = task("Lab", 60, [window(16, 9, 10)])
+    essay = task("Essay", 60, [window(16, 9, 12), window(17, 12, 13)])
+    for settings in (CP_SAT, HUGE_SLACK):
+        [block] = blocks_of(run([lab, essay], settings=settings), essay)
+        assert block.start == at(17, 12)
+
+
+def test_slack_keeps_stability_over_balance() -> None:
+    lab = task("Lab", 60, [window(16, 9, 10)])
+    essay = task("Essay", 60, [window(16, 10, 12), window(17, 11, 13)])
+    current = Block(essay.id, at(16, 10), at(16, 11))
+    assert current in run([lab, essay], [current], settings=HUGE_SLACK).blocks
+
+
+def test_slack_keeps_preference_over_balance() -> None:
+    lab = task("Lab", 60, [window(16, 9, 10)])
+    essay = task("Essay", 60, [window(16, 10, 12), window(17, 11, 13)])
+    result = run([lab, essay], constraints=[preference([window(16, 10, 12)], [essay])], settings=HUGE_SLACK)
+    [block] = blocks_of(result, essay)
+    assert at(16, 10) <= block.start and block.end <= at(16, 12)
+
+
+def test_slack_keeps_spread_over_every_lower_tier() -> None:
+    # Two hours fit on Monday morning, where the preference, balance and
+    # earliness all want them. Spreading puts one on Tuesday at 3pm instead:
+    # outside the preference, on the later day, 24 slots into the frame.
+    pset = task("Problem set", 120, [window(16, 9, 11), window(17, 15, 17)], max_chunk_min=60)
+    monday = preference([window(16, 9, 11)], [pset])
+    result = run([pset], constraints=[monday], settings=HUGE_SLACK)
+    assert sorted(b.start.astimezone(ZoneInfo(LA)).day for b in blocks_of(result, pset)) == [16, 17]
+
+
+@pytest.mark.parametrize("slack", [0, 4, 100])
+@pytest.mark.parametrize("max_totals", [[10, 3, 7, 2, 5], [0, 0, 0, 0, 0], [96, 1000, 2400, 8, 8]])
+def test_each_tier_outweighs_everything_below_it_plus_slack(max_totals: list[int], slack: int) -> None:
+    weights = tier_weights(max_totals, slack)
+    assert weights[0] == 1
+    for k in range(1, len(weights)):
+        lower = sum(w * m for w, m in zip(weights[:k], max_totals[:k]))
+        assert weights[k] >= lower + slack + 1
+
+
+def test_same_input_gives_the_same_plan() -> None:
+    items = [gym(range(16, 21)), task("Read", 120, [window(16, 9, 17), window(17, 9, 17)], max_chunk_min=60)]
+    first, second = (run(items, frames=[EVERY_DAY], settings=s) for s in (HUGE_SLACK, HUGE_SLACK))
+    assert [(b.item_id, b.start, b.end) for b in first.blocks] == [(b.item_id, b.start, b.end) for b in second.blocks]
+    assert first.status == second.status
+
+
+# The gap limit at the model level. The tests above would pass even with wrong
+# weights: on weeks this small CP-SAT proves the exact optimum before the gap
+# limit matters, and ordinary trades gain far less below than the weights
+# allow for. This one is the worst case the weights must survive: being worse
+# by the smallest possible step in balance (1 unit) while gaining the largest
+# possible amount in earliness (the item's whole offset range).
+
+
+def optimum(model: cp_model.CpModel) -> float:
+    solver = cp_model.CpSolver()
+    solver.parameters.num_workers = 1
+    assert solver.solve(model) == cp_model.OPTIMAL
+    return solver.objective_value
+
+
+def forced_penalty(
+    items: list[Item], forced: tuple[Item, datetime], frames: list[WorkFrame]
+) -> tuple[float, int]:
+    """How much worse the best plan with `forced`'s start scores than the best plan, and the slack."""
+    problem = build_problem(items, [], [], HUGE_SLACK, frames)
+    built = build_model(problem)
+    assert built is not None
+    best = optimum(built.model)
+    model = built.model.clone()
+    item, start = forced
+    i = next(i for i, c in enumerate(problem.chunks) if c.item_id == item.id)
+    model.add(model.get_int_var_from_proto_index(built.starts[i].index) == floor_slot(start, HUGE_SLACK.slot_min))
+    return optimum(model) - best, built.slack
+
+
+def test_one_unit_worse_balance_stays_outside_the_gap_even_with_all_earliness_gained() -> None:
+    # Monday's frame is 7h45m and Tuesday's 8h, so 15 minutes fills Monday to
+    # 33 thousandths and Tuesday to 32: one unit apart. Monday 9:00 is the
+    # earliest start (offset 0), Tuesday 16:45 the latest (offset 31, the max).
+    monday = WorkFrame("Mon", [MON], time(9), time(16, 45), LA)
+    tuesday = WorkFrame("Tue", [TUE], time(9), time(17), LA)
+    essay = task("Essay", 15, [window(16, 9, 9.25), window(17, 16.75, 17)])
+    penalty, slack = forced_penalty([essay], (essay, at(16, 9)), [monday, tuesday])
+    assert slack == 600 // 15
+    assert penalty == slack + 1  # just outside the gap limit

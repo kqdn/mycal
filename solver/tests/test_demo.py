@@ -1,5 +1,6 @@
 import tomllib
 from datetime import UTC, date, datetime
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -182,3 +183,23 @@ ranges = [
     assert len(week.constraints[0].params["ranges"]) == 2
     _, result = plan_week(week)
     assert result.feasible
+
+
+def test_work_limit_stop_gives_the_same_plan_every_time() -> None:
+    # A limit this low stops the sample week mid-search; the plan must still repeat.
+    week = load_week(EXAMPLE)
+    week.settings = replace(week.settings, work_limit=0.75, earliness_slack_min=0)
+    plans = []
+    for _ in range(2):
+        items, result = plan_week(week)
+        titles = {i.id: i.title for i in items}
+        plans.append([(titles[b.item_id], b.start, b.end) for b in result.blocks])
+        assert result.status in ("FEASIBLE", "OPTIMAL")
+    assert plans[0] == plans[1]
+
+
+def test_too_small_a_work_limit_raises() -> None:
+    week = load_week(EXAMPLE)
+    week.settings = replace(week.settings, work_limit=0.001)
+    with pytest.raises(RuntimeError, match="work_limit"):
+        plan_week(week)

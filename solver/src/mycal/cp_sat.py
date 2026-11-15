@@ -13,9 +13,10 @@ is true (OnlyEnforceIf). The day variables express one_block_per_day as "at
 most one per item per day" and daily limits as "minutes on this day at most
 the limit", and make the score below linear.
 
-Score, minimized, in strict priority order (each tier's weight is larger
-than the most the tiers below it can ever add up to, so a higher priority
-always wins):
+Score, minimized, in strict priority order. Each tier's weight is at least
+the most all lower tiers can add up to, plus the slack, plus one, so a plan
+that is worse in any higher tier always scores more than `slack` above the
+best plan:
     1. stability: blocks moved away from their current start
     2. spread: extra blocks of the same item on one local day
     3. preferences: weighted soft constraints (time_preference: a block's
@@ -25,12 +26,21 @@ always wins):
        blocks included (a day with no work frame is left out)
     5. earlier in the frame: slots from the start of the work-frame
        occurrence (else the item window) holding each block's start
+
+Stopping is deterministic: one worker, a fixed seed, no wall-clock limit.
+CP-SAT stops when it proves its plan is within `slack` of the best (the gap
+limit), where slack is earliness_slack_min per flexible block, in slots.
+Because of the weights above, only tier 5 can come out worse, and by at most
+`slack` slots summed over the week. Proving the exact tier-5 optimum can take
+minutes, since many arrangements tie in the tiers above. A deterministic
+work limit is the backstop. Same input and same OR-Tools version, same plan.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, timedelta
 from functools import cache
 from uuid import UUID
@@ -56,12 +66,56 @@ from mycal.windows import day_capacity_min, work_frame_windows
 Interval = tuple[int, int]
 
 
+@dataclass(slots=True)
+class BuiltModel:
+    """The CP-SAT model for a problem: one start variable per chunk, and the slack in slots."""
+
+    model: cp_model.CpModel
+    starts: list[cp_model.IntVar]
+    slack: int
+
+
 def search(problem: Problem) -> SearchResult:
     """Return new blocks for every chunk, or no blocks if CP-SAT proves no arrangement fits.
 
-    Raises RuntimeError if the time limit runs out before any arrangement is
+    Raises RuntimeError if the work limit runs out before any arrangement is
     found, since that is not a proof of infeasibility.
     """
+    built = build_model(problem)
+    if built is None:
+        return SearchResult(None, "INFEASIBLE")
+    settings = problem.settings
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_deterministic_time = settings.work_limit
+    solver.parameters.absolute_gap_limit = built.slack
+    solver.parameters.num_workers = 1  # deterministic: same week, same schedule
+    solver.parameters.random_seed = 0
+    status = solver.solve(built.model)
+
+    if status == cp_model.INFEASIBLE:
+        return SearchResult(None, "INFEASIBLE")
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise RuntimeError(
+            f"CP-SAT found no arrangement within work_limit {settings.work_limit} "
+            f"(status {solver.status_name(status)})"
+        )
+
+    slot_min = settings.slot_min
+    blocks = [
+        Block(
+            item_id=chunk.item_id,
+            start=slot_start(solver.value(built.starts[i]), slot_min),
+            end=slot_start(solver.value(built.starts[i]) + chunk.size, slot_min),
+            id=chunk.block_id,
+        )
+        for i, chunk in enumerate(problem.chunks)
+    ]
+    return SearchResult(blocks, solver.status_name(status))
+
+
+def build_model(problem: Problem) -> BuiltModel | None:
+    """Variables, hard constraints and score for a problem, or None if a chunk has nowhere to go."""
     chunks = problem.chunks
     items = problem.items
     settings = problem.settings
@@ -107,7 +161,7 @@ def search(problem: Problem) -> SearchResult:
     for i, chunk in enumerate(chunks):
         values = [s for s in chunk.candidates if allowed(chunk, s)]
         if not values:
-            return SearchResult(None, "INFEASIBLE")
+            return None
         start = model.new_int_var_from_domain(cp_model.Domain.from_values(values), f"start_{i}")
         starts.append(start)
         intervals.append(model.new_fixed_size_interval_var(start, chunk.size, f"block_{i}"))
@@ -155,32 +209,8 @@ def search(problem: Problem) -> SearchResult:
             placed = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
             model.add(slot_min * placed <= max(0, limit - kept_min[day]))
 
-    _add_score(model, problem, starts, day_vars, chunks_of, busy, local_day)
-
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = settings.time_limit_s
-    solver.parameters.num_workers = 1  # deterministic: same week, same schedule
-    solver.parameters.random_seed = 0
-    status = solver.solve(model)
-
-    if status == cp_model.INFEASIBLE:
-        return SearchResult(None, "INFEASIBLE")
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise RuntimeError(
-            f"CP-SAT found no arrangement within {settings.time_limit_s}s "
-            f"(status {solver.status_name(status)})"
-        )
-
-    blocks = [
-        Block(
-            item_id=chunk.item_id,
-            start=slot_start(solver.value(starts[i]), slot_min),
-            end=slot_start(solver.value(starts[i]) + chunk.size, slot_min),
-            id=chunk.block_id,
-        )
-        for i, chunk in enumerate(chunks)
-    ]
-    return SearchResult(blocks, solver.status_name(status))
+    slack = _add_score(model, problem, starts, day_vars, chunks_of, busy, local_day)
+    return BuiltModel(model, starts, slack)
 
 
 def _add_score(
@@ -191,8 +221,8 @@ def _add_score(
     chunks_of: dict[UUID, list[int]],
     busy: list[Interval],
     local_day: Callable[[int], date],
-) -> None:
-    """Add the five score terms and minimize them in priority order."""
+) -> int:
+    """Add the five score terms, minimize them in priority order, and return the slack in slots."""
     chunks = problem.chunks
     slot_min = problem.settings.slot_min
     zone = ZoneInfo(problem.settings.timezone)
@@ -273,12 +303,12 @@ def _add_score(
         model.add_allowed_assignments([starts[i], offset], pairs)
         offsets.append(offset)
 
-    # Tier weights: each exceeds the largest possible total of all tiers below it.
-    w_offset = 1
-    w_balance = w_offset * (max_offset_total + 1)
-    w_preferences = w_balance * (max_fullest + 1)
-    w_spread = w_preferences * (max_preferences + 1)
-    w_stability = w_spread * (len(chunks) + 1)
+    # Only blocks with a choice of start can come out later than optimal.
+    flexible = sum(1 for chunk in chunks if len(chunk.candidates) > 1)
+    slack = flexible * problem.settings.earliness_slack_min // slot_min
+    w_offset, w_balance, w_preferences, w_spread, w_stability = tier_weights(
+        [max_offset_total, max_fullest, max_preferences, len(chunks), len(moved)], slack
+    )
     model.minimize(
         w_stability * sum(moved)
         + w_spread * sum(extras)
@@ -286,6 +316,24 @@ def _add_score(
         + w_balance * fullest
         + w_offset * sum(offsets)
     )
+    return slack
+
+
+def tier_weights(max_totals: list[int], slack: int) -> list[int]:
+    """Weights for score tiers given lowest first, with each tier's largest possible total.
+
+    The lowest tier gets weight 1. Every other tier's weight is the most all
+    lower tiers can add up to, plus `slack`, plus one. So being 1 worse in a
+    tier costs more than any gain below it plus the slack, and a plan within
+    `slack` of the best can only differ in the lowest tier.
+    """
+    weights: list[int] = []
+    lower_total = 0
+    for max_total in max_totals:
+        weight = lower_total + slack + 1 if weights else 1
+        weights.append(weight)
+        lower_total += weight * max_total
+    return weights
 
 
 def _time_preference_penalties(

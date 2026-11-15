@@ -161,6 +161,8 @@ Scheduling is a constraint problem solved with Google OR-Tools CP-SAT; the hard 
 4. Balance: the fullest local day, measured as scheduled minutes divided by that day's work-frame minutes, kept blocks included. A short weekend frame gets proportionally less work. Days with no work-frame time are left out
 5. Earlier in the frame: how far into its work-frame occurrence each block starts, counting the whole occurrence even when it began before the planning week. A block outside every frame counts from the start of its item window
 
+Each tier's weight is at least the most all lower tiers can add up to, plus the slack, plus one. The slack is earliness_slack_min (default 15) per flexible block, in slots, and CP-SAT stops once it proves its plan is within the slack of the best. So tiers 1 to 4 are always exact, and only tier 5 can come out worse, by at most the slack summed over the week. Proving the exact tier-5 optimum can take minutes on a real week, because many arrangements tie in the tiers above
+
 Buffers come later as Constraint kinds. The backtracking engine does not score; it returns the first valid arrangement.
 
 **Objective.** Minimize the weighted sum of soft penalties, subject to all hard constraints. No feasible solution means a deadline is at risk, which triggers the feasibility warning.
@@ -174,6 +176,7 @@ Buffers come later as Constraint kinds. The backtracking engine does not score; 
 - Stability: chunk i reuses the id of the item's i-th current block and tries its old start first.
 - Window edges off the slot grid are rounded inward. Slots are counted from the Unix epoch in UTC.
 - My home timezone is a required solver setting, used only to find a block's local day for one_block_per_day.
+- Stopping is deterministic: one worker, a fixed seed, the gap limit above, and a deterministic work limit (CP-SAT's max_deterministic_time, setting work_limit, default 20) as the backstop. There is no wall-clock limit, so the same input and OR-Tools version give the same plan on any machine. The status says how it ended: OPTIMAL (within the slack), FEASIBLE (stopped by the work limit) or INFEASIBLE.
 - Soft constraints only change the CP-SAT score, in the preferences tier. Their weight is scaled by 100 and rounded, since CP-SAT takes integer coefficients. A hard Constraint of a kind the solver does not support is an error rather than silently ignored.
 
 **Constraint kinds**
@@ -324,6 +327,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | CP-SAT stopping rule: a gap limit of earliness_slack_min (15) per flexible block, with tier weights rebuilt so each tier outweighs everything below it plus the slack, so only the lowest tier can come out worse. The wall-clock limit is replaced by a deterministic work limit (20). On the real week: 1.4 s, OPTIMAL, earliness 2 slots worse than the true optimum, where before it stopped at 10 s without proof. Smaller gaps (8 slots or less) never closed on that week, because the lower bound stays 14 below the optimum. CLAUDE.md gains the determinism rule |
 | Nov 14, 2026 | Stopgap until Milestone 3: the week page keeps every week it fetched in memory for the session, so going back to a week is instant, and prefetches the previous and next week once the current one loads. Failed fetches are not kept, so a missing week is asked for again. The arrows already update the URL with pushState, without reloading the page |
 | Nov 14, 2026 | Stopgap until Milestone 3: the API caches solved weeks on disk (solver/cache/, gitignored), keyed on week_start, the week file's bytes and a solver version. The version hashes every .py file in the package plus the OR-Tools version, since the parser and response models shape the cached JSON too, so nothing needs a manual bump. A cache file that fails to load or validate is a miss, and errors are not cached. Cause of the 10 s loads: on the real week CP-SAT finds the optimum quickly but cannot prove it with one worker, so it stops at the time limit (FEASIBLE, a gap of 14 in the lowest tier). solve() now reports that status. A stopping rule comes next |
 | Nov 14, 2026 | Read-only week page in web/: the week comes from ?week= (default this week's Monday), with previous and next arrows. Times show in the week's own timezone, not the browser's, using Intl with no date library. A block that crosses midnight is split into one piece per day. Work frames are shaded, fixed events and placed work look different, and the grid shows all 24 hours, scrolled to the earliest block. Vite forwards /api to the local API in development, so no CORS setup |

@@ -19,6 +19,12 @@ def task(minutes: int | None, max_chunk_min: int | None = None, windows: list[Wi
     return Item("Task", FlexPreset.CUSTOM, windows=windows, estimate_min=minutes, max_chunk_min=max_chunk_min)
 
 
+@pytest.mark.parametrize("fields", [{"earliness_slack_min": -1}, {"work_limit": 0}, {"slot_min": 0}])
+def test_bad_settings_rejected(fields: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        SolverSettings(timezone=LA, **fields)
+
+
 def test_settings_need_a_timezone() -> None:
     with pytest.raises(TypeError):
         SolverSettings()  # type: ignore[call-arg]

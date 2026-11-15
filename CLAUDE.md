@@ -56,6 +56,7 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 6. Flexibility presets compile to `windows[]`. The solver reads only windows, never the preset.
 7. Locked blocks (placed by hand) are treated as pinned by the solver.
 8. Blocks keep completion history (`completed_at`, `actual_min`) from day one.
+9. The solver is deterministic: same input and same OR-Tools version (pinned in `uv.lock`) give the same plan. CP-SAT runs with one worker and a fixed seed and stops on a gap limit or a deterministic work limit, never on wall-clock time.
 
 ## Code style
 
