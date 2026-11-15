@@ -103,6 +103,12 @@ export function weekTitle(weekStart: DateString): string {
   return `${month(weekStart)} ${day(weekStart)} to ${endText}`
 }
 
+/** "Wed, Nov 18" */
+export function dayName(date: DateString): string {
+  const month = new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' })
+  return `${weekdayShort(date)}, ${month} ${Number(date.slice(8, 10))}`
+}
+
 /** Short weekday for a date: "Mon". */
 export function weekdayShort(date: DateString): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short' })

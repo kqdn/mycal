@@ -11,6 +11,11 @@ export interface Block {
   start: string
   end: string
   fixed: boolean // an exact event, not work the solver placed
+  // The item's sessions in every week, in start order: "Session 2 of 4".
+  session: number
+  sessions: number
+  placed_min: number // the item's minutes placed so far, in every week
+  estimate_min: number | null // null for an exact-time item
 }
 
 export interface Week {
@@ -20,7 +25,7 @@ export interface Week {
   blocks: Block[]
   frames: { start: string; end: string }[]
   // `reason` is set when the item waits on a week that can't be planned.
-  unscheduled: { id: string; title: string; estimate_min: number | null; reason: string | null }[]
+  unscheduled: { id: string; title: string; estimate_min: number | null; reason: string | null; sessions: number }[]
 }
 
 /** Why a week could not be shown: nothing imported yet (404), or data the API could not use. */
@@ -106,3 +111,15 @@ function rememberOnly(week: Week): void {
   pending.set(week.week_start, Promise.resolve(week))
 }
 
+/**
+ * Delete an item. The server re-plans and returns `week`. Other weeks may have
+ * changed too, so the cache keeps only the returned week. A 404 (already gone)
+ * throws WeekError with kind 'missing'; other failures carry the server's message.
+ */
+export async function deleteItem(itemId: string, week: DateString): Promise<Week> {
+  const response = await fetch(`/api/items/${itemId}?week=${week}`, { method: 'DELETE' })
+  if (!response.ok) throw await failure(response)
+  const returned: Week = await response.json()
+  rememberOnly(returned)
+  return returned
+}

@@ -6,7 +6,7 @@ import { hourLabel, range12, time12, toLocal, weekdayShort } from './time'
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
 
 /** A read-only week, styled per web/DESIGN.md: 7 local days, 24 hours, work frames as paper. */
-export function WeekGrid({ week }: { week: Week }) {
+export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, opener: HTMLElement) => void }) {
   const { week_start: weekStart, timezone } = week
   const scroller = useRef<HTMLDivElement>(null)
   const dates = weekDates(weekStart)
@@ -40,7 +40,7 @@ export function WeekGrid({ week }: { week: Week }) {
             })}
           </div>
 
-          <div className="week-body" ref={scroller}>
+          <div className="week-body" ref={scroller} tabIndex={-1}>
             <div className="week-canvas" style={{ height: minutesToPx(24 * 60) }}>
               <div className="gutter">
                 {HOURS.slice(1).map((h) => (
@@ -62,7 +62,13 @@ export function WeekGrid({ week }: { week: Week }) {
                   {blocks
                     .filter(({ piece }) => piece.day === day)
                     .map(({ block, piece }) => (
-                      <BlockView key={`${block.id}-${piece.day}`} block={block} piece={piece} timezone={timezone} />
+                      <BlockView
+                        key={`${block.id}-${piece.day}`}
+                        block={block}
+                        piece={piece}
+                        timezone={timezone}
+                        onOpen={onOpen}
+                      />
                     ))}
                   {date === now.date && (
                     <div className="now-line" style={{ top: minutesToPx(now.minutes) }} aria-hidden="true" />
@@ -92,7 +98,15 @@ export function WeekGrid({ week }: { week: Week }) {
   )
 }
 
-function BlockView({ block, piece, timezone }: { block: Block; piece: Piece; timezone: string }) {
+interface BlockViewProps {
+  block: Block
+  piece: Piece
+  timezone: string
+  onOpen: (block: Block, opener: HTMLElement) => void
+}
+
+/** A block is a button: clicking it, or Enter or Space, opens its details popover. */
+function BlockView({ block, piece, timezone, onOpen }: BlockViewProps) {
   const start = toLocal(block.start, timezone)
   const end = toLocal(block.end, timezone)
   const style = place(piece)
@@ -103,7 +117,14 @@ function BlockView({ block, piece, timezone }: { block: Block; piece: Piece; tim
   const label = `${block.title}, ${weekdayShort(start.date)} ${range12(start.minutes, end.minutes)}`
 
   return (
-    <div className={classes.join(' ')} style={style} role="group" aria-label={label}>
+    <button
+      type="button"
+      className={classes.join(' ')}
+      style={style}
+      aria-label={label}
+      aria-haspopup="dialog"
+      onClick={(event) => onOpen(block, event.currentTarget)}
+    >
       {mode === 'two-line' && (
         <>
           <span className="block-title">{block.title}</span>
@@ -116,7 +137,7 @@ function BlockView({ block, piece, timezone }: { block: Block; piece: Piece; tim
         </span>
       )}
       {mode === 'title-only' && <span className="block-title">{block.title}</span>}
-    </div>
+    </button>
   )
 }
 

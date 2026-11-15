@@ -42,7 +42,17 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
     week_start: WEEK,
     timezone: LA,
     feasible: true,
-    blocks: blocks.map(([start, end], i) => ({ id: `b${i}`, item_id: `i${i}`, title: 'Block', fixed: false, ...span([start, end]) })),
+    blocks: blocks.map(([start, end], i) => ({
+      id: `b${i}`,
+      item_id: `i${i}`,
+      title: 'Block',
+      fixed: false,
+      session: 1,
+      sessions: 1,
+      placed_min: 60,
+      estimate_min: 60,
+      ...span([start, end]),
+    })),
     frames: frames.map(span),
     unscheduled: [],
   }

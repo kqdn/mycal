@@ -3,7 +3,7 @@
 // The dialog (NewItemDialog.tsx) only renders this. See web/DESIGN.md,
 // "Add item dialog".
 
-import { addDays, range12, time12, toLocal, weekTitle, weekdayShort, type DateString } from './time'
+import { addDays, dayName, range12, time12, toLocal, weekTitle, type DateString } from './time'
 
 export type Preset = 'exact' | 'day' | 'day_range' | 'days' | 'before_deadline'
 
@@ -189,10 +189,4 @@ export function summary(form: ItemForm, weekStart: DateString): string {
       return `Due ${dayName(form.dueDate)} at ${time12(minutes(form.dueTime))}`
     }
   }
-}
-
-/** "Wed, Nov 18" */
-function dayName(date: DateString): string {
-  const month = new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' })
-  return `${weekdayShort(date)}, ${month} ${Number(date.slice(8, 10))}`
 }

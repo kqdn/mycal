@@ -105,6 +105,10 @@ ul {
 /* Attention banner */
 
 .banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
   background: var(--attention-bg);
   border: 1px solid var(--attention-border);
   border-radius: 12px;
@@ -258,6 +262,11 @@ ul {
   right: 4px;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
+  /* Blocks are buttons: drop the browser's button look. */
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   padding: 4px 8px;
   border: 1px solid;
   border-radius: var(--radius-block);
@@ -395,9 +404,29 @@ ul {
 .list-row {
   min-height: 56px;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+}
+
+.row-text {
+  display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 8px 14px;
+  min-width: 0;
+}
+
+.more-button {
+  flex-shrink: 0;
+  width: var(--tap);
+  height: var(--tap);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  cursor: pointer;
 }
 
 .list-row + .list-row {
@@ -725,3 +754,92 @@ ul {
 .switch[aria-checked='true'] .switch-knob {
   transform: translateX(20px);
 }
+
+.banner-close {
+  flex-shrink: 0;
+  width: var(--tap);
+  height: var(--tap);
+  margin: -12px -12px -12px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--attention-text);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.secondary-button {
+  min-height: var(--tap);
+  padding: 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-button.danger {
+  border-color: var(--attention-strong);
+  color: var(--attention-strong);
+}
+
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Item details popover (DESIGN.md, Item details popover) */
+
+.item-popover {
+  position: fixed;
+  inset: auto; /* the browser centers popovers; App places it next to its block */
+  margin: 0;
+  width: min(300px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.item-popover:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.popover-title {
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.popover-when {
+  font-size: 13px;
+}
+
+.popover-kind,
+.confirm-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.popover-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.confirm-question {
+  font-size: 13px;
+  font-weight: 600;
+}
+
