@@ -73,7 +73,7 @@ These come from the PRD's "get right now" list. If a change would break one, sto
 - For anything bigger than a small fix, show a short plan first and wait for my OK.
 - When we make a decision, record it in the same commit as the code. A rule every session must follow goes in CLAUDE.md. Anything about how the app works goes in docs/PRD.md, plus a row at the top of its decision log.
 - Keep changes small: one logical change per commit, with a short imperative commit message.
-- Before staging, run `git status` and ask me about any file you didn't create or change in this session, before it goes into a commit. Then stage with `git add -A` so changes outside the current folder aren't missed.
+- Before every commit, run `git status --short` on its own and show me the list. Ask me about any untracked file, and any file you didn't create or change in this session, before it goes into a commit. Then stage only that commit's files, by name. Never use `git add -A` or `git add .`.
 - I use Windows and sometimes a Mac. When I need to run something myself, give commands for the machine this session is running on (it's in the session's environment info): PowerShell on Windows, zsh (the default shell in the macOS Terminal) on a Mac.
 - Commit only when I ask. Never push, force-push or rewrite git history without asking.
 - The repo will be public. Keep my email out of project files (pyproject.toml, package.json and the like); my name is fine. Keep my real schedule out too: real week files go in `solver/weeks/` (gitignored), and examples and tests use made-up data.
