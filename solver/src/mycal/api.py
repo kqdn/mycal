@@ -44,6 +44,7 @@ from mycal.planner import (
     remaining_min,
     span_for_item,
     PlannerTimeout,
+    placed_min,
     span_for_view,
     waiting_on_broken_weeks,
     week_horizon,
@@ -78,6 +79,11 @@ class BlockOut(BaseModel):
     start: datetime
     end: datetime
     fixed: bool  # an exact event, not work the solver placed
+    # The item's sessions in every week, in start order, for "Session 2 of 4".
+    session: int
+    sessions: int
+    placed_min: int  # minutes of the item's work placed so far, in every week
+    estimate_min: int | None  # None for an exact-time item
 
 
 class SpanOut(BaseModel):
@@ -90,6 +96,7 @@ class ItemRef(BaseModel):
     title: str
     estimate_min: int | None  # None when the item has no estimate
     reason: str | None = None  # why it isn't scheduled, when it is waiting on a week that can't be planned
+    sessions: int = 0  # how many blocks it has in every week
 
 
 class WeekOut(BaseModel):
@@ -350,6 +357,12 @@ def week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: dat
     items = {item.id: item for item in store.list_items(conn)}
     blocks = store.list_blocks(conn, week.start, week.end) if feasible else []
     waiting = waiting_on_broken_weeks(conn, settings.timezone, week_start)
+    # Sessions are counted across every week, so look at all blocks, in start order.
+    every_block = store.list_blocks(conn)
+    sessions: dict[UUID, list[UUID]] = {}
+    for b in every_block:
+        sessions.setdefault(b.item_id, []).append(b.id)
+    placed = {item_id: placed_min(items[item_id], every_block) for item_id in sessions}
     return WeekOut(
         week_start=week_start,
         timezone=settings.timezone,
@@ -362,6 +375,10 @@ def week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: dat
                 start=b.start,
                 end=b.end,
                 fixed=items[b.item_id].flex_preset is FlexPreset.EXACT,
+                session=sessions[b.item_id].index(b.id) + 1,
+                sessions=len(sessions[b.item_id]),
+                placed_min=placed[b.item_id],
+                estimate_min=items[b.item_id].estimate_min,
             )
             for b in blocks
         ],
@@ -372,7 +389,13 @@ def week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: dat
         # Items that can't be placed: a custom preset with no windows painted yet, and
         # items whose work waits on a week that can't be planned (with the reason).
         unscheduled=[
-            ItemRef(id=i.id, title=i.title, estimate_min=i.estimate_min, reason=waiting.get(i.id))
+            ItemRef(
+                id=i.id,
+                title=i.title,
+                estimate_min=i.estimate_min,
+                reason=waiting.get(i.id),
+                sessions=len(sessions.get(i.id, [])),
+            )
             for i in items.values()
             if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
         ],

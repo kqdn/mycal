@@ -198,15 +198,21 @@ def span_for_item(item: Item, timezone: str, now: datetime) -> tuple[date, date]
 # Remaining work and waiting
 
 
+def placed_min(item: Item, blocks: list[Block]) -> int:
+    """Minutes of the item's work its blocks cover, in every week: planned blocks count their
+    length, finished ones what they covered (covered_min)."""
+    return sum(
+        (b.end - b.start) // timedelta(minutes=1) if b.status is BlockStatus.PLANNED else covered_min(b)
+        for b in blocks
+        if b.item_id == item.id
+    )
+
+
 def remaining_min(item: Item, blocks: list[Block]) -> int:
     """Minutes of the item's work not covered by its blocks. An item without an estimate needs one block."""
-    mine = [b for b in blocks if b.item_id == item.id]
     if item.estimate_min is None:
-        return 0 if mine else 1
-    covered = sum(
-        (b.end - b.start) // timedelta(minutes=1) if b.status is BlockStatus.PLANNED else covered_min(b) for b in mine
-    )
-    return max(0, item.estimate_min - covered)
+        return 0 if any(b.item_id == item.id for b in blocks) else 1
+    return max(0, item.estimate_min - placed_min(item, blocks))
 
 
 def due_week(item: Item, timezone: str) -> date | None:

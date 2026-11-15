@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from mycal import FlexPreset, Item, api, store
+from mycal import Block, FlexPreset, Item, api, store
 from mycal.importer import import_week
 from mycal.solve import solve
 
@@ -69,7 +69,7 @@ def test_a_week_is_planned_and_returned_in_utc(client: TestClient) -> None:
     )
     assert blocks["Chemistry lab"]["fixed"] is False
     assert week["frames"][0] == {"start": "2026-11-16T17:00:00Z", "end": "2026-11-17T02:00:00Z"}  # Mon 9 to 6
-    assert week["unscheduled"] == [{"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None}]
+    assert week["unscheduled"] == [{"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0}]
 
 
 def test_a_stored_plan_is_served_without_solving_again(client: TestClient, solves: list[int]) -> None:
@@ -467,3 +467,92 @@ def test_a_timeout_while_deleting_still_deletes(slow: Path, client: TestClient) 
     response = client.delete(f"/api/items/{lab.id}", params={"week": WEEK})
     assert response.status_code == 200
     assert store.get_item(store.connect(slow), lab.id) is None
+
+
+# Session details on each block
+
+
+def test_sessions_are_counted_across_weeks(db: Path, client: TestClient) -> None:
+    # One session placed by hand in week 2 (locked), one placed by the solver in week 1.
+    conn = store.connect(db)
+    report = Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=120, max_chunk_min=60, deadline=pacific(27, 17, month=11))
+    store.put_item(conn, report)
+    store.put_blocks(conn, [Block(report.id, pacific(24, 9, month=11), pacific(24, 10, month=11), locked=True)])
+    store.clear_plans(conn)
+
+    [first] = blocks_titled(get(client), "Report")
+    [second] = blocks_titled(get(client, WEEK_2), "Report")
+
+    assert (first["session"], second["session"], first["sessions"], second["sessions"]) == (1, 2, 2, 2)
+    assert (second["placed_min"], second["estimate_min"]) == (120, 120)
+
+
+def test_waiting_work_shows_less_placed_than_estimated(db: Path, client: TestClient) -> None:
+    # Work due in a broken week, after an hour of it was placed by hand in week 2.
+    break_week_3(db)
+    conn = store.connect(db)
+    report = Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=55 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
+    store.put_item(conn, report)
+    store.put_blocks(conn, [Block(report.id, pacific(24, 9, month=11), pacific(24, 10, month=11), locked=True)])
+    store.clear_plans(conn)
+
+    [block] = blocks_titled(get(client, WEEK_2), "Report")
+    assert (block["sessions"], block["placed_min"], block["estimate_min"]) == (1, 60, 55 * 60)
+
+
+def test_an_exact_item_has_no_estimate_and_one_session(client: TestClient) -> None:
+    lecture = blocks_titled(get(client), "Algorithms lecture")[0]
+    assert (lecture["estimate_min"], lecture["sessions"], lecture["session"]) == (None, 1, 1)
+
+
+def test_two_overlapping_requests_run_one_at_a_time(db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time as clock
+
+    from mycal import planner
+
+    get(client)
+    conn = store.connect(db)
+    lab = next(i for i in store.list_items(conn) if i.title == "Chemistry lab")
+    call = next(i for i in store.list_items(conn) if i.title == "Call home")
+
+    inside, most_inside = 0, 0
+    counting = threading.Lock()
+    real_plan_weeks = planner.plan_weeks
+
+    def watched_plan_weeks(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal inside, most_inside
+        with counting:
+            inside += 1
+            most_inside = max(most_inside, inside)
+        clock.sleep(0.2)  # widen the window two requests could overlap in
+        try:
+            return real_plan_weeks(*args, **kwargs)
+        finally:
+            with counting:
+                inside -= 1
+
+    monkeypatch.setattr(api, "plan_weeks", watched_plan_weeks)
+    start = threading.Barrier(2)
+    codes: list[int] = []
+
+    def delete(item_id: UUID) -> None:
+        start.wait()
+        codes.append(TestClient(app=api.app).delete(f"/api/items/{item_id}", params={"week": WEEK}).status_code)
+
+    threads = [threading.Thread(target=delete, args=(i.id,)) for i in (lab, call)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert codes == [200, 200]
+    assert most_inside == 1  # never two plans at once
+    conn = store.connect(db)
+    items = {i.id for i in store.list_items(conn)}
+    assert lab.id not in items and call.id not in items
+    blocks = sorted(store.list_blocks(conn), key=lambda b: b.start)
+    assert all(b.item_id in items for b in blocks)
+    assert all(a.end <= b.start for a, b in zip(blocks, blocks[1:]))
+    assert store.plan_status(conn, date.fromisoformat(WEEK)) is True
+
