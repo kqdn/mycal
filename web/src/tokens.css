@@ -7,10 +7,11 @@
   /* Surfaces */
   --bg: #F6F5F1;             /* page background, warm off-white */
   --surface: #FFFFFF;        /* cards, top bar, inside work frames */
-  --surface-sunken: #F8F7F3; /* outside work frames, expanded panels */
+  --surface-sunken: #F8F7F3; /* expanded panels, like a dialog's preset fields */
   --border: #E3E1DA;         /* card and control borders, column lines */
   --divider: #EFEDE6;        /* rows inside a card */
   --grid-line: #EDEBE4;      /* hour lines in the week grid */
+  --scrim: rgba(29, 31, 35, 0.4); /* behind dialogs: --text at 40% */
 
   /* Text */
   --text: #1D1F23;

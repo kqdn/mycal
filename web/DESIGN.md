@@ -85,6 +85,71 @@ Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted
 - **Unscheduled list:** a card (`--surface`, 1px `--border`, radius `--radius-card`) under the grid, headed "Unscheduled" as a section label. Each row is at least 56px tall with 14px side padding and a 1px `--divider` between rows. It shows the title (15px / 600) and the estimate under it (12px, `--text-muted`), for example "15m".
 - **Attention banner** (infeasible week, missing week file): `--attention-bg` background, 1px `--attention-border`, radius 12px, 12px 16px padding. The title is 14px / 600 in `--text`. The body is 13px in `--attention-text`. Example: "This week can't be planned" / "6h of work doesn't fit before Wed 11:59pm."
 
+## Add item dialog (Milestone 3)
+
+This is the prototype's Add item screen, adapted from a phone sheet to a desktop dialog. `add-item-preview.png` shows it with "Any of these days" selected.
+
+It adds one token to `tokens.css`: `--scrim`, the backdrop behind dialogs (`--text` at 40%).
+
+### Container
+
+- **Element:** a native `<dialog>` opened with `showModal()`. That keeps focus inside the dialog and makes Esc cancel, with no extra code.
+- **Backdrop:** `--scrim`.
+- **Box:** 480px wide (full width minus 32px on narrow screens), at most the window height minus 64px. `--bg` background (the off-white, as in the prototype), radius `--radius-card`, no border, no shadow.
+- **Header:** stays put while the body scrolls. Padding is 20px 24px 12px. It has three parts in a row:
+  - "Cancel" on the left: a text button, 15px / 500, `--text-muted`, 44px tall, no background.
+  - "New item" in the middle, centered: Space Grotesk 18px / 600.
+  - "Add" on the right: a primary button.
+- **Body:** 0 24px 24px padding, a 16px gap between field groups, and it scrolls when the dialog is taller than the window.
+- **On open:** focus goes to the Title field.
+
+### Fields, in this order
+
+Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" hides the estimate fields, and hiding things below the control you just clicked doesn't make the page jump under your cursor.
+
+1. **Title:** a text input. Required.
+
+2. **Flexibility:** a label, then a radio group inside a card (`--surface`, 1px `--border`, radius `--radius-input`, overflow hidden).
+   - **Rows:** one 44px row per preset, 15px text, 14px side padding, and a 1px `--divider` between rows. The presets are Exact time, Any time on a day, Time range on a day, Any of these days, and Before a deadline. Custom stays out until painted windows exist.
+   - **The selected row:** `--accent-tint` background, 600 weight, and an 18px `--accent` check on the right.
+   - **Its fields panel:** directly under the selected row, with an `--surface-sunken` background, 12px 14px padding, a 10px gap, and a 1px `--divider` below. Only the selected preset's panel is shown.
+
+   | Preset | Panel fields |
+   | --- | --- |
+   | Exact time | Date, then start time "to" end time |
+   | Any time on a day | Date |
+   | Time range on a day | Date, then start "to" end |
+   | Any of these days | Weekday picker, then an optional "Only between" start "to" end |
+   | Before a deadline | Due date and due time |
+
+   - **Time pairs:** on one row, as `[start] to [end]`. The inputs are 44px tall, radius `--radius-control`, with centered text. "to" is 14px in `--text-muted`.
+   - **Overnight times:** an end time earlier than the start time means the next day. The summary line says so.
+   - **Weekday picker:** seven segmented buttons (Mon to Sun) with a 6px gap, sharing one row. Each is 44px tall, 13px / 600. At least one day is required.
+   - **Optional fields:** labels inside a panel use the normal label style (13px / 600), and optional ones end with "(optional)" in `--text-muted` 400, as in "Only between (optional)".
+   - **Dates and times:** use native `<input type="date">` and `<input type="time">`, styled like the text inputs. No date library.
+   - **Summary line:** every panel ends with one line saying what the solver will get, in 12px `--text-muted`. It updates as you type. This comes straight from the prototype. Examples:
+     - "The solver sees: Mon, Wed, Fri, 4:00 to 9:00pm"
+     - "Due Wed, Nov 18 at 11:59pm"
+     - "Thu, Nov 19, 11:00pm to 1:00am (ends the next day)"
+
+3. **Estimate and Longest session:** two inputs side by side with a 12px gap. Both are hidden when Exact time is selected, since the start and end set the length.
+   - **Estimate** (required): a text input with the placeholder "1h 30m". It accepts "45m", "2h", "1h 30m", or a plain number of minutes.
+   - **Longest session** (optional): the same format, with the placeholder "No limit". Under the pair, a 12px `--text-muted` hint: "Longer work is split into sessions up to this length."
+
+4. **One session per day:** a switch row inside a card, styled like the prototype's "Check in when it ends" row.
+   - **Text:** the title "One session per day" (15px / 600), with "Puts each session on a different day." under it (12px, `--text-muted`).
+   - **When it shows:** only when Longest session is set and shorter than Estimate, because otherwise there's only one session.
+
+### States
+
+- **Add button:** disabled until the required fields are valid. While saving, it reads "Adding..." and the whole form is disabled. Saving re-plans the week, which takes about a second.
+- **Field errors:** shown under the field in 12px `--attention-strong`, with the field's border in `--attention-strong`. Messages say how to fix the problem:
+  - "Use a length like 45m or 1h 30m."
+  - "Pick at least one day."
+  - "That deadline has already passed."
+- **Server errors** (a 422 or anything else): an attention banner at the top of the body shows the server's message. Everything you typed stays in the form.
+- **Success:** the dialog closes and the grid shows the re-planned week.
+
 ## Controls
 
 - **Primary button:** `--accent` background, `--accent-contrast` text, no border, radius `--radius-control`, min-height `--tap`, 0 18px padding, 15px / 600.
