@@ -30,6 +30,7 @@ Run from `solver/`. Keep this section up to date when commands are added or chan
 - Add a dependency (after I approve): `uv add <package>`; dev-only: `uv add --dev <package>`
 - Demo schedule (sample week): `uv run mycal-demo examples/week.toml`
 - Demo schedule (my real week, gitignored): `uv run mycal-demo weeks/<week-start>.toml`
+- Week API on http://127.0.0.1:8000 (serves `weeks/<week-start>.toml`, reloads on code changes): `uv run mycal-api`. Another weeks folder: `$env:MYCAL_WEEKS_DIR = "<folder>"; uv run mycal-api`
 
 ## Rules that must not break
 
