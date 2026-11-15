@@ -3,6 +3,7 @@
 #
 # Local dates, times and datetimes are in `timezone`. Weekdays: 0 = Monday.
 # Presets: exact, day, day_range, days, before_deadline, custom.
+# A days item belongs to this file's week (week_start); `week` can override it.
 
 timezone = "America/Los_Angeles"
 week_start = 2026-11-16  # a Monday

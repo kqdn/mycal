@@ -62,7 +62,7 @@ def test_day_range() -> None:
 
 
 def test_days_uses_work_frames_on_chosen_weekdays() -> None:
-    windows = compile_item(FlexPreset.DAYS, {"weekdays": [MON, WED, FRI]})
+    windows = compile_item(FlexPreset.DAYS, {"week": date(2026, 11, 16), "weekdays": [MON, WED, FRI]})
     assert windows == [
         Window(utc(2026, 11, 16, 17), utc(2026, 11, 17, 2)),
         Window(utc(2026, 11, 18, 17), utc(2026, 11, 19, 2)),
@@ -71,12 +71,43 @@ def test_days_uses_work_frames_on_chosen_weekdays() -> None:
 
 
 def test_days_with_time_range() -> None:
-    params = {"weekdays": [MON, WED], "start_time": time(6), "end_time": time(8)}
+    params = {"week": date(2026, 11, 16), "weekdays": [MON, WED], "start_time": time(6), "end_time": time(8)}
     windows = compile_item(FlexPreset.DAYS, params)
     assert windows == [
         Window(utc(2026, 11, 16, 14), utc(2026, 11, 16, 16)),
         Window(utc(2026, 11, 18, 14), utc(2026, 11, 18, 16)),
     ]
+
+
+def test_days_only_count_in_their_week() -> None:
+    # A two-week horizon, but the item belongs to the second week only.
+    params = {"week": date(2026, 11, 23), "weekdays": [MON]}
+    item = Item("Test", FlexPreset.DAYS, preset_params=params)
+    two_weeks = compile_windows(item, [WEEKDAYS], LA, WEEK_START, WEEK_END + (WEEK_END - WEEK_START))
+    assert two_weeks == [Window(utc(2026, 11, 23, 17), utc(2026, 11, 24, 2))]
+    # Planning the first week gives it nothing.
+    assert compile_item(FlexPreset.DAYS, params) == []
+
+
+def test_days_overnight_frame_belongs_to_the_day_it_starts() -> None:
+    # Sun 9pm to 1am: the item's week includes that Sunday's frame, tail and all.
+    late = WorkFrame("Late", [SUN], time(21), time(1), LA)
+    params = {"week": date(2026, 11, 16), "weekdays": [SUN]}
+    item = Item("Test", FlexPreset.DAYS, preset_params=params)
+    windows = compile_windows(item, [late], LA, WEEK_START, WEEK_END + (WEEK_END - WEEK_START))
+    assert windows == [Window(utc(2026, 11, 23, 5), utc(2026, 11, 23, 9))]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"weekdays": [MON]},  # no week
+        {"week": date(2026, 11, 17), "weekdays": [MON]},  # a Tuesday
+    ],
+)
+def test_days_needs_a_monday_week(params: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="week"):
+        compile_item(FlexPreset.DAYS, params)
 
 
 def test_before_deadline_clips_to_now_and_deadline() -> None:

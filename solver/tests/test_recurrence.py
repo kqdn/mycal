@@ -123,6 +123,7 @@ def test_weekly_gym_occurrence_compiles_and_solves() -> None:
     )
     frame = WorkFrame("Weekdays", [MON, TUE, WED, THU, FRI], time(9), time(18), LA)
     [item] = expand_series(series(Rule("weekly", weekdays=[MON]), gym), [], NOV(16), NOV(22))
+    assert item.preset_params["week"] == NOV(16)
     start, end = utc(2026, 11, 16, 8), utc(2026, 11, 23, 8)
     item.windows = compile_windows(item, [frame], LA, start, end)
 
@@ -141,6 +142,7 @@ def test_weekly_gym_occurrence_compiles_and_solves() -> None:
         (FlexPreset.CUSTOM, {"windows": []}, {}),
         (FlexPreset.DAY_RANGE, {"start_time": time(9)}, {}),
         (FlexPreset.DAYS, {"weekdays": [MON], "day": NOV(16)}, {}),
+        (FlexPreset.DAYS, {"weekdays": [MON], "week": NOV(16)}, {}),  # dates come from the occurrence
         (FlexPreset.DAY, {"day": NOV(16)}, {}),
         (FlexPreset.BEFORE_DEADLINE, {}, {}),
     ],

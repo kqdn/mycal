@@ -70,6 +70,8 @@ def _occurrence(series: Series, day: date) -> Item:
         params = {"start": at(day, start_time), "end": at(end_day, end_time)}
     elif template.flex_preset in (FlexPreset.DAY, FlexPreset.DAY_RANGE):
         params["day"] = day
+    elif template.flex_preset is FlexPreset.DAYS:
+        params["week"] = _monday(day)  # the occurrence's week
 
     return Item(
         title=series.title,

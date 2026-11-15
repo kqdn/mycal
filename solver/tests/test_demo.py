@@ -203,3 +203,18 @@ def test_too_small_a_work_limit_raises() -> None:
     week.settings = replace(week.settings, work_limit=0.001)
     with pytest.raises(RuntimeError, match="work_limit"):
         plan_week(week)
+
+
+def test_days_items_belong_to_the_files_week() -> None:
+    week = load_week(EXAMPLE)
+    gym_series = next(s for s in week.series if s.title == "Gym")
+    assert gym_series.template.preset_params.get("week") is None  # templates hold no dates
+    items, _ = plan_week(week)
+    gym = next(i for i in items if i.title == "Gym")
+    assert gym.preset_params["week"] == week.start
+
+
+def test_a_plain_days_item_gets_the_files_week() -> None:
+    text = TINY + '\n[[items]]\ntitle = "Read"\npreset = "days"\nweekdays = [0, 2]\nestimate_min = 60\n'
+    read = week_from(text).items[-1]
+    assert read.preset_params["week"] == date(2026, 11, 16)

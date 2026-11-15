@@ -8,8 +8,11 @@ Expected `preset_params` per preset (local dates and times are in the
     EXACT            start, end: UTC datetimes
     DAY              day: local date
     DAY_RANGE        day: local date; start_time, end_time: local times
-    DAYS             weekdays: list of ints (0 = Monday);
-                     optional start_time and end_time (both or neither)
+    DAYS             week: local date of the week's Monday;
+                     weekdays: list of ints (0 = Monday);
+                     optional start_time and end_time (both or neither).
+                     Only that week's chosen days count, so a days item
+                     never repeats into other weeks.
     BEFORE_DEADLINE  none; uses item.deadline
     CUSTOM           windows: list of Window
 """
@@ -59,6 +62,9 @@ def compile_windows(
         frame = _range_frame(params, [day.weekday()], timezone)
         windows = work_frame_windows(frame, day, day)
     elif preset is FlexPreset.DAYS:
+        week = _param(params, "week", date)
+        if week.weekday() != 0:
+            raise ValueError(f"preset_params['week'] must be a Monday, got {week}")
         weekdays = _param(params, "weekdays", list)
         if "start_time" in params or "end_time" in params:
             frames = [_range_frame(params, weekdays, timezone)]
@@ -66,7 +72,8 @@ def compile_windows(
             frames = [
                 replace(f, weekdays=[d for d in f.weekdays if d in weekdays]) for f in work_frames
             ]
-        windows = _horizon_windows(frames, timezone, horizon_start, horizon_end)
+        # Frames that start on that week's days, like a frame's weekdays name the day it starts.
+        windows = [w for f in frames for w in work_frame_windows(f, week, week + timedelta(days=6))]
     elif preset is FlexPreset.BEFORE_DEADLINE:
         if item.deadline is None:
             raise ValueError("BEFORE_DEADLINE needs item.deadline")

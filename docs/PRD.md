@@ -68,7 +68,7 @@ Everything is an **Item** (the what); every appearance on the calendar is a **Bl
 | Exact time | start, end (UTC) | Never cut short; dropped only if entirely outside the horizon |
 | Any time on a day | day (local date) | Every work frame that starts on that day |
 | Time range on a day | day, start_time, end_time (local) | End before start crosses midnight |
-| Any of these days | weekdays[], optional start_time and end_time | Uses the time range if given, else the work frames on those weekdays |
+| Any of these days | week (local date of its Monday), weekdays[], optional start_time and end_time | Only that week: the time range if given, else the work frames that start on those weekdays of that week. Week files fill week from week_start, and the New item dialog from the week being viewed |
 | Any time before a deadline | none | Uses the item's deadline; also clipped to it |
 | Custom | windows[] (UTC) | Clipped to the horizon |
 
@@ -256,7 +256,7 @@ Built after Milestone 1 (model and expansion in the solver package; the solver i
 | Exact time | start_time, end_time | start and end on the occurrence date, in UTC (end before start crosses midnight) |
 | Any time on a day | none | day = occurrence date |
 | Time range on a day | start_time, end_time | the same, plus day = occurrence date |
-| Any of these days | weekdays[], optional start_time and end_time | unchanged |
+| Any of these days | weekdays[], optional start_time and end_time | week = the Monday of the occurrence date |
 | Any time before a deadline | none; deadline_time required | deadline = occurrence date at deadline_time |
 | Custom | not allowed | Painted windows are fixed dates; a weekday-pattern version can come later if needed |
 
@@ -328,6 +328,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 | Date | Decision |
 | --- | --- |
+| Nov 14, 2026 | The "Any of these days" preset takes a week param (the local Monday) and compiles only inside that week. With items stored in a database instead of one week file, a days item had no week and would be planned in every week forever. Week files fill it from week_start, series expansion from the occurrence's Monday, and the New item dialog from the week being viewed; templates still hold no dates. A missing week or one that is not a Monday is an error |
 | Nov 14, 2026 | Week file import built (mycal-import). Until recurrence and a calendar import exist, a new week file is imported every week, so each import adds to the database. Items and constraints record their source (the file's name; NULL for things added in the app) in a source column, added by schema migration 2. Importing a file already in the database is refused unless --replace is given, and then only that file's items and constraints are replaced, with their blocks; other files' items and items added in the app are never touched. Saving an item or constraint again keeps its source. Settings and work frames describe me, not a week, so each import replaces them and the latest file wins. Series come in as that week's occurrences, and no blocks are imported. The whole import is one transaction, and the file is parsed fully before the database is touched |
 | Nov 14, 2026 | SQLite store built (mycal.store): tables settings, items, item_deps (ordered), blocks, work_frames and constraints, with foreign keys on, so deleting an item takes its blocks, subtasks and dependency links. Moments are UTC ISO text with one fixed +00:00 suffix, so text order is time order and blocks can be listed by time range. preset_params and constraint params are JSON with tagged values for datetimes, dates, times, UUIDs and windows, so they load back exactly. Series are not stored yet (Milestone 5); imported occurrences keep series_id and occurrence_date, which stay unique as a pair. The database lives in solver/data/ (gitignored) |
 | Nov 14, 2026 | Milestone 3 plan. Storage is SQLite through Python's built-in sqlite3 (no new dependency) in mycal.store, a caller like the API and the demo. Tables mirror the Data model, with UUIDs as text, times as UTC ISO strings and JSON for params; Item.windows is not stored but compiled when solving, and the schema is versioned with PRAGMA user_version. Week files are imported once (mycal-import; series come in as that week's occurrences). Plans are stored, so the stopgap disk cache goes; a week is solved on first view and re-planned after an item is added or deleted. When re-planning a week: its current planned blocks are the current plan (stability keeps them), planned blocks in other weeks and blocks that already started are passed as kept, and new blocks go only after now. The app adds and deletes items; editing becomes Milestone 4, which moves recurrence to 5 and check-ins to 6. The New item dialog is built to an Add item section the user adds to web/DESIGN.md |

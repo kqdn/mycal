@@ -34,7 +34,7 @@ PARAM_KEYS = {
     FlexPreset.EXACT: {"start", "end"},
     FlexPreset.DAY: {"day"},
     FlexPreset.DAY_RANGE: {"day", "start_time", "end_time"},
-    FlexPreset.DAYS: {"weekdays", "start_time", "end_time"},
+    FlexPreset.DAYS: {"week", "weekdays", "start_time", "end_time"},
     FlexPreset.BEFORE_DEADLINE: set(),
     FlexPreset.CUSTOM: {"windows"},
 }
@@ -83,7 +83,7 @@ def parse_week(data: dict[str, Any]) -> Week:
     items = []
     for raw in raw_items:
         try:
-            items.append(_parse_item(raw, ids, zone))
+            items.append(_parse_item(raw, ids, zone, data["week_start"]))
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Item {raw['title']!r}: {error}") from error
 
@@ -147,13 +147,15 @@ def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
     )
 
 
-def _parse_item(raw: dict[str, Any], ids: dict[str, UUID], zone: ZoneInfo) -> Item:
+def _parse_item(raw: dict[str, Any], ids: dict[str, UUID], zone: ZoneInfo, week_start: date) -> Item:
     preset = FlexPreset(raw["preset"])
     params = {key: value for key, value in raw.items() if key not in ITEM_FIELDS}
     unknown = set(params) - PARAM_KEYS[preset]
     if unknown:
         raise ValueError(f"unknown keys for preset {preset.value!r}: {sorted(unknown)}")
 
+    if preset is FlexPreset.DAYS:
+        params.setdefault("week", week_start)  # a days item belongs to the file's week
     for key in ("start", "end"):
         if key in params:
             params[key] = _to_utc(params[key], zone)

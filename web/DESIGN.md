@@ -128,7 +128,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
    - **Optional fields:** labels inside a panel use the normal label style (13px / 600), and optional ones end with "(optional)" in `--text-muted` 400, as in "Only between (optional)".
    - **Dates and times:** use native `<input type="date">` and `<input type="time">`, styled like the text inputs. No date library.
    - **Summary line:** every panel ends with one line saying what the solver will get, in 12px `--text-muted`. It updates as you type. This comes straight from the prototype. Examples:
-     - "The solver sees: Mon, Wed, Fri, 4:00 to 9:00pm"
+     - "The solver sees: Mon, Wed, Fri this week (Nov 16 to 22), 4:00 to 9:00pm". An "Any of these days" item belongs to the week being viewed, so its summary always names that week. (`add-item-preview.png` predates this and shows the line without the week.)
      - "Due Wed, Nov 18 at 11:59pm"
      - "Thu, Nov 19, 11:00pm to 1:00am (ends the next day)"
 
