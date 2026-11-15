@@ -2,14 +2,17 @@
 
 Not part of the solver: a caller, like api.py, demo.py and store.py.
 
-Week files are imported once. The file's settings, work frames, items and
-constraints go in; series come in as that week's occurrence items, since
-series are not stored until Milestone 5. No blocks are imported: the API
-plans a week the first time it is viewed.
+Each week file adds to the database. Its items and constraints are stored
+with the file's name as their source; series come in as that week's
+occurrence items, since series are not stored until Milestone 5. Settings and
+work frames describe me, not a week, so each import replaces them: the latest
+file wins. No blocks are imported: the API plans a week the first time it is
+viewed.
 
-If the database already has items, the import refuses unless --replace is
-given, and then it replaces everything in the database, blocks included.
-Either way the whole import is one transaction: it all goes in or nothing does.
+Importing a file whose name is already in the database is refused unless
+--replace is given. Then only that file's items and constraints are replaced
+(their blocks go with them); other files' items and items added in the app
+stay. The whole import is one transaction: it all goes in or nothing does.
 """
 
 from __future__ import annotations
@@ -35,30 +38,34 @@ def week_items(week: Week) -> list[Item]:
 def import_week(path: Path, db: Path, replace: bool = False) -> str:
     """Import the week file at `path` into the database at `db` and return a summary line.
 
-    Raises FileExistsError if the database has items and `replace` is false.
+    The file's name is its source. Raises FileExistsError if that source was
+    imported before and `replace` is false.
     """
     week = load_week(path)  # parse fully before touching the database
     items = week_items(week)
+    source = path.name
     conn = store.connect(db)
     try:
-        if store.has_items(conn) and not replace:
+        if store.has_source(conn, source) and not replace:
             raise FileExistsError(
-                f"{db} already has items. Use --replace to replace everything in it with {path.name}."
+                f"{source} was already imported into {db}. "
+                f"Use --replace to replace the items and constraints that came from it."
             )
-        store.replace_all(conn, week.settings, week.work_frames, items, week.constraints)
+        replaced = store.import_source(conn, source, week.settings, week.work_frames, items, week.constraints)
     finally:
         conn.close()
-    return (
-        f"Imported {len(items)} items, {len(week.work_frames)} work frames and "
-        f"{len(week.constraints)} constraints from {path.name} into {db}."
+    summary = (
+        f"Imported {len(items)} items and {len(week.constraints)} constraints from {source} into {db}, "
+        f"and set {len(week.work_frames)} work frames."
     )
+    return summary + (f" Replaced {replaced} items from the earlier import." if replace else "")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mycal-import", description="Import a TOML week file into the database.")
     parser.add_argument("week", type=Path, help="the week file, for example weeks/2026-11-16.toml")
     parser.add_argument("--db", type=Path, default=None, help=f"database file (default: ${store.DB_ENV} or data/mycal.db)")
-    parser.add_argument("--replace", action="store_true", help="replace everything in a database that already has items")
+    parser.add_argument("--replace", action="store_true", help="replace the items and constraints from an earlier import of this file")
     args = parser.parse_args(argv)
     try:
         print(import_week(args.week, args.db or store.db_path(), args.replace))

@@ -215,3 +215,33 @@ def test_a_newer_database_is_refused(tmp_path: Path) -> None:
     store.connect(path).execute(f"PRAGMA user_version = {store.SCHEMA_VERSION + 1}")
     with pytest.raises(RuntimeError, match="newer"):
         store.connect(path)
+
+
+def test_saving_again_keeps_the_source(conn: sqlite3.Connection) -> None:
+    imported = item("From a week file")
+    store.put_item(conn, imported, source="2026-11-16.toml")
+    imported.title = "Edited in the app"
+    store.put_item(conn, imported)  # an edit passes no source
+    row = conn.execute("SELECT source FROM items WHERE id = ?", (str(imported.id),)).fetchone()
+    assert row["source"] == "2026-11-16.toml"
+    assert store.has_source(conn, "2026-11-16.toml")
+    assert not store.has_source(conn, "2026-11-23.toml")
+
+
+def test_a_version_1_database_upgrades_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(f"BEGIN; {store.MIGRATIONS[0]} PRAGMA user_version = 1; COMMIT;")
+    old.execute(
+        "INSERT INTO items (id, title, flex_preset, preset_params, checkable, one_block_per_day, on_miss) "
+        "VALUES (?, 'Old item', 'day', ?, 0, 0, 'reschedule')",
+        (str(uuid4()), store.dump_json({"day": date(2026, 11, 16)})),
+    )
+    old.commit()
+    old.close()
+
+    conn = store.connect(path)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION
+    [row] = conn.execute("SELECT title, source FROM items").fetchall()
+    assert (row["title"], row["source"]) == ("Old item", None)  # existing rows count as added in the app

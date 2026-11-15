@@ -11,6 +11,10 @@ Storage rules:
     - Item.windows is not stored: it is compiled from the preset whenever we
       solve (rule 6). Loaded items come back with no windows.
     - Blocks keep completed_at and actual_min (rule 8).
+    - Items and constraints remember their `source`: the week file they were
+      imported from, or None if added in the app. Saving one again keeps its
+      source, so re-importing that file still finds it. Source lives only in
+      the database, not on the model classes.
     - preset_params and constraint params are JSON. Values JSON has no type
       for (datetimes, dates, times, UUIDs, windows) are tagged, for example
       {"$type": "date", "value": "2026-11-16"}, so they load back exactly.
@@ -89,6 +93,13 @@ MIGRATIONS = [
         hard INTEGER NOT NULL
     );
     """,
+    # 2: where items and constraints came from. The week file's name, or NULL
+    # for things added in the app.
+    """
+    ALTER TABLE items ADD COLUMN source TEXT;
+    ALTER TABLE constraints ADD COLUMN source TEXT;
+    CREATE INDEX items_by_source ON items (source);
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -129,37 +140,47 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(f"BEGIN; {MIGRATIONS[version]} PRAGMA user_version = {version + 1}; COMMIT;")
 
 
-# Whole contents
+# Imports
 
 
-def has_items(conn: sqlite3.Connection) -> bool:
-    return conn.execute("SELECT 1 FROM items LIMIT 1").fetchone() is not None
+def has_source(conn: sqlite3.Connection, source: str) -> bool:
+    """Whether anything was imported from `source` (a week file's name)."""
+    query = "SELECT 1 FROM items WHERE source = ? UNION ALL SELECT 1 FROM constraints WHERE source = ? LIMIT 1"
+    return conn.execute(query, (source, source)).fetchone() is not None
 
 
-def replace_all(
+def import_source(
     conn: sqlite3.Connection,
+    source: str,
     settings: SolverSettings,
     frames: list[WorkFrame],
     items: list[Item],
     constraints: list[Constraint],
-) -> None:
-    """Replace everything (blocks included) with the given contents, in one transaction.
+) -> int:
+    """Import one week file's contents in one transaction, and return how many earlier items it replaced.
 
-    If anything fails, nothing changes. Item rows go in before dependency links,
-    and parents before their subtasks, since foreign keys are checked right away.
+    Items and constraints from an earlier import of the same `source` are
+    replaced (their blocks go with them). Everything else stays: other files'
+    items and items added in the app. Settings and work frames describe me, not
+    a week, so the imported ones replace the current ones. If anything fails,
+    nothing changes.
     """
     with conn:
-        for table in ("blocks", "item_deps", "items", "work_frames", "constraints", "settings"):
-            conn.execute(f"DELETE FROM {table}")
+        replaced = conn.execute("DELETE FROM items WHERE source = ?", (source,)).rowcount
+        conn.execute("DELETE FROM constraints WHERE source = ?", (source,))
+        conn.execute("DELETE FROM work_frames")
         _write_settings(conn, settings)
         for frame in frames:
             _write_work_frame(conn, frame)
+        # Item rows before dependency links, and parents before their subtasks,
+        # since foreign keys are checked right away.
         for item in _parents_first(items):
-            _write_item(conn, item)
+            _write_item(conn, item, source)
         for item in items:
             _write_deps(conn, item)
         for constraint in constraints:
-            _write_constraint(conn, constraint)
+            _write_constraint(conn, constraint, source)
+    return replaced
 
 
 def _parents_first(items: list[Item]) -> list[Item]:
@@ -214,20 +235,23 @@ def load_settings(conn: sqlite3.Connection) -> SolverSettings | None:
 # Items
 
 
-def put_item(conn: sqlite3.Connection, item: Item) -> None:
-    """Insert or replace an item and its dependencies. Its windows are not stored."""
+def put_item(conn: sqlite3.Connection, item: Item, source: str | None = None) -> None:
+    """Insert or update an item and its dependencies. Its windows are not stored.
+
+    `source` is recorded when the item is new; an update keeps the item's source.
+    """
     with conn:
-        _write_item(conn, item)
+        _write_item(conn, item, source)
         _write_deps(conn, item)
 
 
-def _write_item(conn: sqlite3.Connection, item: Item) -> None:
+def _write_item(conn: sqlite3.Connection, item: Item, source: str | None) -> None:
     conn.execute(
         """
         INSERT INTO items (id, title, flex_preset, preset_params, checkable, estimate_min, deadline,
                            parent_id, max_chunk_min, one_block_per_day, on_miss, catch_up_of,
-                           series_id, occurrence_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           series_id, occurrence_date, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
             title = excluded.title, flex_preset = excluded.flex_preset,
             preset_params = excluded.preset_params, checkable = excluded.checkable,
@@ -252,6 +276,7 @@ def _write_item(conn: sqlite3.Connection, item: Item) -> None:
             _id(item.catch_up_of),
             _id(item.series_id),
             item.occurrence_date.isoformat() if item.occurrence_date else None,
+            source,
         ),
     )
 
@@ -405,15 +430,20 @@ def delete_work_frame(conn: sqlite3.Connection, frame_id: UUID) -> None:
 # Constraints
 
 
-def put_constraint(conn: sqlite3.Connection, constraint: Constraint) -> None:
+def put_constraint(conn: sqlite3.Connection, constraint: Constraint, source: str | None = None) -> None:
+    """Insert or update a constraint. Like items, an update keeps its source."""
     with conn:
-        _write_constraint(conn, constraint)
+        _write_constraint(conn, constraint, source)
 
 
-def _write_constraint(conn: sqlite3.Connection, constraint: Constraint) -> None:
+def _write_constraint(conn: sqlite3.Connection, constraint: Constraint, source: str | None) -> None:
     conn.execute(
-        "INSERT OR REPLACE INTO constraints (id, kind, params, weight, hard) VALUES (?, ?, ?, ?, ?)",
-        (str(constraint.id), constraint.kind, dump_json(constraint.params), constraint.weight, int(constraint.hard)),
+        """
+        INSERT INTO constraints (id, kind, params, weight, hard, source) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            kind = excluded.kind, params = excluded.params, weight = excluded.weight, hard = excluded.hard
+        """,
+        (str(constraint.id), constraint.kind, dump_json(constraint.params), constraint.weight, int(constraint.hard), source),
     )
 
 
