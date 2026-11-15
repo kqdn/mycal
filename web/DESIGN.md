@@ -9,7 +9,7 @@ This is how the app looks. It comes from the Smart Scheduler Prototype canvas on
 - **Light theme only** for now: a warm off-white page, white cards and one green accent. No dark theme until it's asked for.
 - **Three kinds of blocks, told apart at a glance:** fixed events are dark slate, work the solver placed is light green, and finished work is grey and struck through.
 - **Orange means "needs you":** deadlines, check-ins, changes and infeasible weeks. Nothing else uses it.
-- **Everything clickable is at least 44px tall** (`--tap`).
+- **Everything clickable is at least 44px tall** (`--tap`). Blocks in the grid are the one exception (see Item details popover).
 - **Times are 12-hour.** A single time is "2:00pm". A range is "2:00 to 3:30pm", dropping the first am/pm when both match ("11:00am to 12:30pm" keeps both). Hour labels are "8am", "12pm". Never put a dash between times.
 - **Plain CSS** with no framework or component library, as decided in Milestone 2.
 
@@ -149,6 +149,55 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
   - "That deadline has already passed."
 - **Server errors** (a 422 or anything else): an attention banner at the top of the body shows the server's message. Everything you typed stays in the form.
 - **Success:** the dialog closes and the grid shows the re-planned week.
+
+## Item details popover (Milestone 3)
+
+The popover is where an item's details and actions live. Milestone 3 has one action, Delete. Milestone 4 adds Edit next to it, so the layout already has room for a second action.
+
+### Opening and closing
+
+- **From a block:** clicking a block, or pressing Enter or Space on it, opens the popover for that block. Blocks are buttons, so the keyboard reaches each one.
+- **From an Unscheduled row:** a "More" icon button at the right end of the row opens the same popover, anchored to the row. The icon is three horizontal dots, 18px, stroke `--text-muted`, inside a 44px square transparent button.
+- **Closing:** Escape, clicking anywhere outside it, or opening another block's popover closes it. Use the native `popover="auto"` attribute, which does all three with no extra code. Focus then returns to the block or button that opened it.
+- **Only one at a time.**
+
+### Box
+
+- **Position:** next to what opened it, 8px away. To the right of a block when there is room, otherwise to its left. Its top lines up with the block's top, moved up or down as needed so it stays inside the window with 16px to spare. Under an Unscheduled row's button, right-aligned with it.
+- **Look:** 300px wide (full width minus 32px on narrow screens), `--surface` background, 1px `--border`, radius `--radius-card`, 16px padding, a 12px gap between parts. No shadow; the border and the white card on the off-white page are enough.
+
+### Content, top to bottom
+
+1. **Title:** the item's title, 15px / 600, `--text`. It wraps instead of being cut off.
+2. **When:** the block's day and time range, 13px, `--text`, for example "Tue, Nov 17, 2:00 to 2:30pm". A block that crosses midnight gives its full range: "Fri, Nov 20, 5:00pm to 2:00am (ends the next day)".
+3. **Kind and sessions:** one line in 12px `--text-muted`.
+   - "Fixed" or "Placed by the solver".
+   - If the item has more than one session, add where this one fits and the total, for example "Placed by the solver Â· Session 2 of 4 Â· 2h in all". Sessions are counted across every week, in time order.
+   - If the block has already started: "Already started", because the solver no longer moves it.
+   - For an Unscheduled row instead of a block: "Not scheduled: it has no times to go in yet", then its estimate, for example "Â· 15m".
+4. **Actions:** a row of buttons at the bottom, right-aligned, with an 8px gap.
+   - Milestone 3: "Delete item", a secondary button.
+   - Milestone 4: "Edit" goes to the left of it, also secondary. Nothing else in the popover moves.
+
+### Deleting
+
+- **What it deletes:** the whole item, with every session in every week, past sessions included. The button says "Delete item" for that reason. Deleting a single session isn't offered: the solver would just place that work again.
+- **Confirming:** pressing "Delete item" swaps the actions row, in place, for a confirm row. Nothing else opens.
+  - The question, 13px / 600 `--text`: "Delete this item?", then a 12px `--text-muted` line saying what goes: "All 4 sessions go, in every week." or "Its one session goes." or "It has no sessions yet."
+  - Two buttons, right-aligned: "Cancel" (secondary) and "Delete" (secondary, with `--attention-strong` text and border). Focus moves to "Cancel".
+  - Cancel brings the actions row back. Escape still closes the whole popover.
+- **While deleting:** the solver re-plans the weeks the item was in, which takes about a second. "Delete" reads "Deleting..." and both buttons are disabled. The popover stays open and the grid behind it stays as it was, so nothing jumps around. Clicking outside or pressing Escape doesn't close it until the delete finishes.
+- **When it's done:** the popover closes and the grid shows the re-planned week. Focus goes to the grid's scroll area, since the block it came from is gone.
+- **If it fails:** the confirm row stays, and a line under it in 12px `--attention-strong` says what went wrong, using the server's message, for example "Couldn't delete it: Can't reach the planner." The buttons are enabled again so it can be retried.
+- **If the item was already gone** (a 404, say it was deleted from another tab): the popover closes and the week reloads, without an error.
+
+### Past blocks
+
+Blocks that already started can be opened and their item deleted like any other, with the "Already started" line as the reminder. In Milestone 3 a past block is only a planned slot, not completion history. Once check-ins exist (Milestone 6), an item with finished blocks should be archived instead of deleted, to keep that history (see the "get right now" rules in the PRD). The popover will need a different action then.
+
+### Exception to the 44px rule
+
+Blocks are clickable, but a block's height comes from its length (a 15 min block is 13px tall), so it can't always be 44px. This is the one exception to "everything clickable is at least 44px". Every block is still reachable with the keyboard, and the Unscheduled "More" button is a full 44px.
 
 ## Controls
 
