@@ -51,7 +51,7 @@ Use Inter for everything and Space Grotesk only for page titles. Load both in `i
   - **Today:** the circle is filled `--accent` with white text, and the weekday turns `--accent`.
   - **Later:** a deadline pill goes under the date (`--attention-bg` background, `--attention-text` text, 12px / 600, radius `--radius-pill`, padding 2px 8px), for example "HW 10 due".
 - **Hours:** each hour is `--hour-height` (52px) tall, with a 1px `--grid-line` line at each hour. Hour labels are right-aligned 8px from the gutter's edge and centered on their line.
-- **Work frames:** time inside a work frame is `--surface` (white). Time outside every frame is `--surface-sunken`. The prototype had no frames, so this is an adaptation: working hours read as the "paper."
+- **Work frames:** time inside a work frame is `--surface` (white). Time outside every frame is `--bg`, the same warm off-white as the page, so the two read clearly apart. The prototype had no frames, so this is an adaptation: working hours read as the "paper," and the legend explains it.
 - **Now line:** only on today's column. A 2px `--accent` line across the column, with a 10px `--accent` dot centered on its left end.
 - **Initial scroll** (fixes weekend mornings being hidden): on load, scroll so the earliest block start across all 7 days, minus 30 minutes, is at the top. Weekend days count the same as weekdays. If the week has no blocks, use the earliest work frame start instead.
 
@@ -78,7 +78,7 @@ Each block also gets an accessible name with the full details, for example `aria
 
 ### Legend
 
-Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver". Add "Done" and "Locked by you" when those exist.
+Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver", then "Work hours" (an `--surface` swatch with a 1px `--border`, for the white time inside work frames). Add "Done" and "Locked by you" when those exist.
 
 ## Other pieces
 

@@ -209,7 +209,7 @@ ul {
 
 .day-column {
   position: relative;
-  background: var(--surface-sunken);
+  background: var(--bg); /* outside work hours; frames paint --surface on top */
   border-left: 1px solid var(--border);
 }
 
@@ -368,6 +368,11 @@ ul {
 .swatch.placed {
   background: var(--block-flex-bg);
   border-color: var(--block-flex-border);
+}
+
+.swatch.work-hours {
+  background: var(--surface);
+  border-color: var(--border);
 }
 
 /* Unscheduled */

@@ -83,6 +83,10 @@ export function WeekGrid({ week }: { week: Week }) {
           <span className="swatch placed" aria-hidden="true" />
           Placed by the solver
         </span>
+        <span className="legend-item">
+          <span className="swatch work-hours" aria-hidden="true" />
+          Work hours
+        </span>
       </div>
     </section>
   )
