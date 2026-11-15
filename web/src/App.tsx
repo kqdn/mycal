@@ -1,122 +1,84 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from 'react'
+import { fetchWeek, WeekError, type Week } from './api'
+import { addDays, dayLabel, mondayOf, today, type DateString } from './time'
+import { WeekGrid } from './WeekGrid'
 
-function App() {
-  const [count, setCount] = useState(0)
+type Result = { status: 'error'; message: string } | { status: 'ready'; week: Week }
+type State = { status: 'loading' } | Result
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+/** The week in the URL (?week=2026-11-16), or this week's Monday. */
+function weekFromUrl(): DateString {
+  const param = new URLSearchParams(window.location.search).get('week')
+  return param && /^\d{4}-\d{2}-\d{2}$/.test(param) ? mondayOf(param) : mondayOf(today())
 }
 
-export default App
+export default function App() {
+  const [weekStart, setWeekStart] = useState(weekFromUrl)
+  // Each result remembers which week it is for; a newer week shows as loading.
+  const [result, setResult] = useState<{ for: DateString } & Result>()
+  const state: State = result && result.for === weekStart ? result : { status: 'loading' }
+
+  useEffect(() => {
+    const onPop = () => setWeekStart(weekFromUrl())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  useEffect(() => {
+    let current = true
+    fetchWeek(weekStart)
+      .then((week) => current && setResult({ for: weekStart, status: 'ready', week }))
+      .catch((error: unknown) => {
+        const message =
+          error instanceof WeekError ? error.message : 'Could not reach the API. Is `uv run mycal-api` running?'
+        if (current) setResult({ for: weekStart, status: 'error', message })
+      })
+    return () => {
+      current = false
+    }
+  }, [weekStart])
+
+  function go(days: number) {
+    const next = addDays(weekStart, days)
+    window.history.pushState(null, '', `?week=${next}`)
+    setWeekStart(next)
+  }
+
+  return (
+    <main>
+      <header>
+        <button type="button" onClick={() => go(-7)} aria-label="Previous week">
+          &larr;
+        </button>
+        <h1>Week of {dayLabel(weekStart)}</h1>
+        <button type="button" onClick={() => go(7)} aria-label="Next week">
+          &rarr;
+        </button>
+      </header>
+
+      {state.status === 'loading' && <p className="note">Loading...</p>}
+      {state.status === 'error' && <p className="note">{state.message}</p>}
+      {state.status === 'ready' && !state.week.feasible && (
+        <p className="note warn">
+          No arrangement fits this week: some deadline, window or dependency can't be met.
+        </p>
+      )}
+      {state.status === 'ready' && state.week.feasible && (
+        <>
+          <WeekGrid week={state.week} />
+          {state.week.unscheduled.length > 0 && (
+            <section className="unscheduled">
+              <h2>Unscheduled</h2>
+              <ul>
+                {state.week.unscheduled.map((item) => (
+                  <li key={item.id}>{item.title}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <p className="note small">Times in {state.week.timezone}</p>
+        </>
+      )}
+    </main>
+  )
+}

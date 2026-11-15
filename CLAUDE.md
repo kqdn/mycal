@@ -22,7 +22,9 @@ Python dependencies are managed with uv. Ask me before adding any new dependency
 
 ## Commands
 
-Run from `solver/`. Keep this section up to date when commands are added or change.
+Run Python commands from `solver/` and web commands from `web/`. Keep this section up to date when commands are added or change.
+
+**Solver and API** (`solver/`)
 
 - One-time setup (installs uv): `winget install --id=astral-sh.uv -e`
 - Install dependencies (also downloads Python 3.12 if needed): `uv sync`
@@ -31,6 +33,15 @@ Run from `solver/`. Keep this section up to date when commands are added or chan
 - Demo schedule (sample week): `uv run mycal-demo examples/week.toml`
 - Demo schedule (my real week, gitignored): `uv run mycal-demo weeks/<week-start>.toml`
 - Week API on http://127.0.0.1:8000 (serves `weeks/<week-start>.toml`, reloads on code changes): `uv run mycal-api`. Another weeks folder: `$env:MYCAL_WEEKS_DIR = "<folder>"; uv run mycal-api`
+
+**Web** (`web/`)
+
+- Install dependencies (needs Node.js): `npm install`
+- Week page (start the API first): `npm run dev`, then open http://localhost:5173/?week=<week-start>. Without `?week=` it shows this week
+- Run tests: `npm test`
+- Type-check and build: `npm run build`
+- Lint: `npm run lint`
+- Add a package (after I approve): `npm install <package>`; dev-only: `npm install --save-dev <package>`
 
 ## Rules that must not break
 

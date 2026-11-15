@@ -1,32 +1,11 @@
-# React + TypeScript + Vite
+# mycal web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The read-only week page (Milestone 2). React + TypeScript + Vite.
 
-Currently, two official plugins are available:
+Start the week API first (`uv run mycal-api` in `solver/`), then run `npm run dev` here and open
+http://localhost:5173/?week=2026-11-16. Other commands are in the repo's CLAUDE.md.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- `src/api.ts`: types for the week JSON and the fetch
+- `src/time.ts`: UTC to wall-clock time in the week's timezone, and date helpers
+- `src/layout.ts`: splits blocks and frames into per-day pieces for the grid
+- `src/WeekGrid.tsx`: the grid itself
