@@ -33,6 +33,7 @@ Run Python commands from `solver/` and web commands from `web/`. Keep this secti
 - Demo schedule (sample week): `uv run mycal-demo examples/week.toml`
 - Demo schedule (my real week, gitignored): `uv run mycal-demo weeks/<week-start>.toml`
 - Week API on http://127.0.0.1:8000 (serves `weeks/<week-start>.toml`, reloads on code changes): `uv run mycal-api`. Another weeks folder: `$env:MYCAL_WEEKS_DIR = "<folder>"; uv run mycal-api`
+- Solved weeks are cached in `cache/` (gitignored; another folder: `MYCAL_CACHE_DIR`). Editing a week file or any code in `src/mycal` re-solves automatically; to force fresh solves anyway: `Remove-Item -Recurse cache`
 
 **Web** (`web/`)
 

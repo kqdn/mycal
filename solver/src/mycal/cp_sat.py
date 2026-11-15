@@ -42,6 +42,7 @@ from mycal.model import Block, Window
 from mycal.problem import (
     Chunk,
     Problem,
+    SearchResult,
     TimePreference,
     ceil_slot,
     covered_min,
@@ -55,8 +56,8 @@ from mycal.windows import day_capacity_min, work_frame_windows
 Interval = tuple[int, int]
 
 
-def search(problem: Problem) -> list[Block] | None:
-    """Return new blocks for every chunk, or None if CP-SAT proves no arrangement fits.
+def search(problem: Problem) -> SearchResult:
+    """Return new blocks for every chunk, or no blocks if CP-SAT proves no arrangement fits.
 
     Raises RuntimeError if the time limit runs out before any arrangement is
     found, since that is not a proof of infeasibility.
@@ -106,7 +107,7 @@ def search(problem: Problem) -> list[Block] | None:
     for i, chunk in enumerate(chunks):
         values = [s for s in chunk.candidates if allowed(chunk, s)]
         if not values:
-            return None
+            return SearchResult(None, "INFEASIBLE")
         start = model.new_int_var_from_domain(cp_model.Domain.from_values(values), f"start_{i}")
         starts.append(start)
         intervals.append(model.new_fixed_size_interval_var(start, chunk.size, f"block_{i}"))
@@ -163,14 +164,14 @@ def search(problem: Problem) -> list[Block] | None:
     status = solver.solve(model)
 
     if status == cp_model.INFEASIBLE:
-        return None
+        return SearchResult(None, "INFEASIBLE")
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise RuntimeError(
             f"CP-SAT found no arrangement within {settings.time_limit_s}s "
             f"(status {solver.status_name(status)})"
         )
 
-    return [
+    blocks = [
         Block(
             item_id=chunk.item_id,
             start=slot_start(solver.value(starts[i]), slot_min),
@@ -179,6 +180,7 @@ def search(problem: Problem) -> list[Block] | None:
         )
         for i, chunk in enumerate(chunks)
     ]
+    return SearchResult(blocks, solver.status_name(status))
 
 
 def _add_score(

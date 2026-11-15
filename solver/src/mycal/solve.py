@@ -7,10 +7,10 @@ from dataclasses import dataclass, field, replace
 
 from mycal import backtracking, cp_sat
 from mycal.model import Block, Constraint, Item, WorkFrame
-from mycal.problem import Problem, build_problem
+from mycal.problem import Problem, SearchResult, build_problem
 from mycal.settings import Engine, SolverSettings
 
-ENGINES: dict[Engine, Callable[[Problem], list[Block] | None]] = {
+ENGINES: dict[Engine, Callable[[Problem], SearchResult]] = {
     "backtracking": backtracking.search,
     "cp_sat": cp_sat.search,
 }
@@ -18,10 +18,16 @@ ENGINES: dict[Engine, Callable[[Problem], list[Block] | None]] = {
 
 @dataclass(slots=True)
 class SolveResult:
-    """`blocks` is the full arrangement: kept blocks unchanged plus placed ones, by start."""
+    """`blocks` is the full arrangement: kept blocks unchanged plus placed ones, by start.
+
+    `status` says how the search ended: OPTIMAL, FEASIBLE (CP-SAT stopped at its
+    time limit with a valid but unproven arrangement) or INFEASIBLE, and FOUND
+    for backtracking, which does not score.
+    """
 
     feasible: bool
     blocks: list[Block] = field(default_factory=list)
+    status: str = ""
 
 
 def solve(
@@ -74,8 +80,8 @@ def solve(
         hold (a deadline is at risk).
     """
     problem = build_problem(items, blocks, constraints, settings, work_frames)
-    placed = ENGINES[settings.engine](problem)
-    if placed is None:
-        return SolveResult(feasible=False)
-    arrangement = [replace(b) for b in problem.kept] + placed
-    return SolveResult(feasible=True, blocks=sorted(arrangement, key=lambda b: b.start))
+    found = ENGINES[settings.engine](problem)
+    if found.blocks is None:
+        return SolveResult(feasible=False, status=found.status)
+    arrangement = [replace(b) for b in problem.kept] + found.blocks
+    return SolveResult(feasible=True, blocks=sorted(arrangement, key=lambda b: b.start), status=found.status)

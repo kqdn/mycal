@@ -131,7 +131,8 @@ def test_dependency_places_later_item_after() -> None:
 def test_unmeetable_dependency_is_infeasible() -> None:
     first = task("Outline", 60, [window(16, 9, 11)])
     second = task("Draft", 60, [window(16, 9, 10)], depends_on=[first.id])
-    assert run([first, second]) == SolveResult(feasible=False)
+    result = run([first, second])
+    assert (result.feasible, result.blocks, result.status) == (False, [], "INFEASIBLE")
 
 
 def test_deadline_cuts_a_window_short() -> None:
@@ -176,7 +177,8 @@ def test_same_local_day_even_when_utc_dates_differ() -> None:
 
 def test_not_enough_time_is_infeasible() -> None:
     item = task("Essay", 180, [window(16, 9, 11)])
-    assert run([item]) == SolveResult(feasible=False, blocks=[])
+    result = run([item])
+    assert (result.feasible, result.blocks, result.status) == (False, [], "INFEASIBLE")
 
 
 def test_done_work_is_kept_and_reduces_what_is_placed() -> None:
@@ -203,7 +205,8 @@ def test_item_without_estimate_fills_its_window() -> None:
 
 
 def test_item_without_windows_is_skipped() -> None:
-    assert run([task("Email advisor", 15, [])]) == SolveResult(feasible=True, blocks=[])
+    result = run([task("Email advisor", 15, [])])
+    assert (result.feasible, result.blocks) == (True, [])
 
 
 def test_unmoved_block_keeps_its_spot_and_id() -> None:
@@ -275,3 +278,8 @@ def test_inputs_are_not_mutated() -> None:
     before = copy.deepcopy(([item], blocks))
     run([item], blocks)
     assert ([item], blocks) == before
+
+
+def test_status_says_how_the_search_ended() -> None:
+    result = run([task("Gym", 60, [window(16, 9, 12)])])
+    assert result.status == ("OPTIMAL" if _engine == "cp_sat" else "FOUND")

@@ -33,6 +33,18 @@ class Chunk:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchResult:
+    """What an engine returns: new blocks for every chunk (None if none fit) and how the search ended.
+
+    `status` is CP-SAT's status name (OPTIMAL, FEASIBLE when stopped at the time
+    limit, INFEASIBLE), or FOUND / INFEASIBLE for backtracking.
+    """
+
+    blocks: list[Block] | None
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
 class DailyLimit:
     """Hard cap on scheduled minutes on matching local days (a daily_limit Constraint).
 

@@ -1,11 +1,14 @@
-"""The week API, run against a temporary weeks folder with made-up weeks."""
+"""The week API and its plan cache, run against temporary folders with made-up weeks."""
 
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from mycal.api import WEEKS_DIR_ENV, app
+import mycal.demo
+from mycal import api
+from mycal.api import CACHE_DIR_ENV, WEEKS_DIR_ENV, app
+from mycal.solve import solve
 
 WEEK = """
 timezone = "America/Los_Angeles"
@@ -40,6 +43,7 @@ estimate_min = 15
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv(WEEKS_DIR_ENV, str(tmp_path))
+    monkeypatch.setenv(CACHE_DIR_ENV, str(tmp_path / "cache"))
     (tmp_path / "2026-11-16.toml").write_text(WEEK, encoding="utf-8")
     return TestClient(app)
 
@@ -87,3 +91,86 @@ def test_infeasible_week_is_200_with_no_blocks(client: TestClient, tmp_path: Pat
     (tmp_path / "2026-11-23.toml").write_text(too_much, encoding="utf-8")
     week = client.get("/api/weeks/2026-11-23").json()
     assert (week["feasible"], week["blocks"]) == (False, [])
+
+
+# Plan cache
+
+
+@pytest.fixture
+def solves(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Counts calls to solve() made through plan_week()."""
+    calls: list[int] = []
+
+    def counting_solve(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        return solve(*args, **kwargs)
+
+    monkeypatch.setattr(mycal.demo, "solve", counting_solve)
+    return calls
+
+
+def cache_files(tmp_path: Path) -> list[Path]:
+    return sorted((tmp_path / "cache").glob("*.json"))
+
+
+def test_unchanged_file_returns_the_cached_plan_without_solving(client: TestClient, solves: list[int]) -> None:
+    first = client.get("/api/weeks/2026-11-16").json()
+    second = client.get("/api/weeks/2026-11-16").json()
+    assert len(solves) == 1
+    assert second == first  # same ids too
+
+
+def test_changed_file_solves_again_and_replaces_the_old_plan(
+    client: TestClient, solves: list[int], tmp_path: Path
+) -> None:
+    client.get("/api/weeks/2026-11-16")
+    [old] = cache_files(tmp_path)
+    (tmp_path / "2026-11-16.toml").write_text(WEEK.replace("estimate_min = 60", "estimate_min = 30"), encoding="utf-8")
+    week = client.get("/api/weeks/2026-11-16").json()
+    assert len(solves) == 2
+    gym = next(b for b in week["blocks"] if b["title"] == "Gym")
+    assert (gym["start"], gym["end"]) == ("2026-11-16T17:00:00Z", "2026-11-16T17:30:00Z")
+    [new] = cache_files(tmp_path)
+    assert new != old
+
+
+def test_cache_survives_a_restart(client: TestClient, solves: list[int]) -> None:
+    first = client.get("/api/weeks/2026-11-16").json()
+    assert TestClient(app).get("/api/weeks/2026-11-16").json() == first
+    assert len(solves) == 1
+
+
+def test_new_solver_version_solves_again(
+    client: TestClient, solves: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client.get("/api/weeks/2026-11-16")
+    monkeypatch.setattr(api, "SOLVER_VERSION", "something-else")
+    client.get("/api/weeks/2026-11-16")
+    assert len(solves) == 2
+
+
+@pytest.mark.parametrize("contents", ["", "not json", '{"week_start": "2026-11-16"}'])
+def test_unreadable_cache_file_is_a_miss(
+    client: TestClient, solves: list[int], tmp_path: Path, contents: str
+) -> None:
+    first = client.get("/api/weeks/2026-11-16").json()
+    [cached] = cache_files(tmp_path)
+    cached.write_text(contents, encoding="utf-8")
+    response = client.get("/api/weeks/2026-11-16")
+    assert response.status_code == 200
+    assert len(solves) == 2
+    assert [b["title"] for b in response.json()["blocks"]] == [b["title"] for b in first["blocks"]]
+    assert api.WeekOut.model_validate_json(cached.read_bytes())  # rewritten with a good plan
+
+
+def test_errors_are_not_cached(client: TestClient, tmp_path: Path) -> None:
+    (tmp_path / "2026-11-23.toml").write_text('timezone = "America/Los_Angeles"\n', encoding="utf-8")
+    assert client.get("/api/weeks/2026-11-23").status_code == 400
+    assert client.get("/api/weeks/2026-11-30").status_code == 404
+    assert cache_files(tmp_path) == []
+
+
+def test_solver_version_is_stable_and_follows_ortools(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert api._solver_version() == api.SOLVER_VERSION  # same code, same version
+    monkeypatch.setattr(api, "version", lambda package: "99.0")
+    assert api._solver_version() != api.SOLVER_VERSION

@@ -20,6 +20,7 @@ from mycal.model import Block
 from mycal.problem import (
     Chunk,
     Problem,
+    SearchResult,
     ceil_slot,
     covered_min,
     day_limit_min,
@@ -31,8 +32,8 @@ from mycal.problem import (
 Interval = tuple[int, int]
 
 
-def search(problem: Problem) -> list[Block] | None:
-    """Return new blocks for every chunk, or None if no arrangement fits."""
+def search(problem: Problem) -> SearchResult:
+    """Return new blocks for every chunk (FOUND), or no blocks if no arrangement fits (INFEASIBLE)."""
     chunks = problem.chunks
     items = problem.items
     slot_min = problem.settings.slot_min
@@ -129,9 +130,9 @@ def search(problem: Problem) -> list[Block] | None:
         return False
 
     if not assign(0):
-        return None
+        return SearchResult(None, "INFEASIBLE")
 
-    return [
+    blocks = [
         Block(
             item_id=chunks[i].item_id,
             start=slot_start(s, slot_min),
@@ -140,6 +141,7 @@ def search(problem: Problem) -> list[Block] | None:
         )
         for i, s in placed.items()
     ]
+    return SearchResult(blocks, "FOUND")
 
 
 def _value_order(chunk: Chunk) -> Iterator[int]:
