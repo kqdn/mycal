@@ -59,7 +59,7 @@ def plan_again(db: Path, when: datetime, monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_a_week_is_planned_and_returned_in_utc(client: TestClient) -> None:
     week = get(client)
-    assert (week["week_start"], week["timezone"], week["feasible"]) == (WEEK, "America/Los_Angeles", True)
+    assert (week["week_start"], week["timezone"], week["slot_min"], week["feasible"]) == (WEEK, "America/Los_Angeles", 15, True)
     blocks = {b["title"]: b for b in reversed(week["blocks"])}  # the first block of each title wins
     lecture = blocks["Algorithms lecture"]
     assert (lecture["start"], lecture["end"], lecture["fixed"]) == (

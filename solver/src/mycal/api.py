@@ -104,6 +104,7 @@ class ItemRef(BaseModel):
 class WeekOut(BaseModel):
     week_start: date
     timezone: str
+    slot_min: int  # so the page can show planned lengths without hardcoding 15
     feasible: bool
     blocks: list[BlockOut]
     frames: list[SpanOut]  # work-frame time inside the week, merged
@@ -407,6 +408,7 @@ def week_out(
     return WeekOut(
         week_start=week_start,
         timezone=settings.timezone,
+        slot_min=settings.slot_min,
         feasible=feasible,
         blocks=[
             BlockOut(
