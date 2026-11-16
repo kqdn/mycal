@@ -10,6 +10,7 @@ export interface UnscheduledItem {
   estimate_min: number | null
   reason: string | null
   sessions: number
+  editable: boolean
 }
 
 /** "Tue, Nov 17, 2:00 to 2:30pm", or "... (ends the next day)" for a block that runs past midnight. */

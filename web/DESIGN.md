@@ -93,6 +93,7 @@ It adds one token to `tokens.css`: `--scrim`, the backdrop behind dialogs (`--te
 
 ### Container
 
+- **Editing:** the same dialog edits an item (see Item details popover, Editing).
 - **Element:** a native `<dialog>` opened with `showModal()`. That keeps focus inside the dialog and makes Esc cancel, with no extra code.
 - **Backdrop:** `--scrim`.
 - **Box:** 480px wide (full width minus 32px on narrow screens), at most the window height minus 64px (minus 32px on narrow screens, where the header and body side padding drop to 16px). `--bg` background (the off-white, as in the prototype), radius `--radius-card`, no border, no shadow.
@@ -185,8 +186,8 @@ The popover is where an item's details and actions live. Milestone 3 has one act
    - If the block has already started: "Already started", because the solver no longer moves it.
    - For an Unscheduled row instead of a block: its reason, the same text as the row ("Waiting on Nov 30 to Dec 6, which can't be planned."), or "Not scheduled: it has no times to go in yet" if it has none. Then its estimate, for example "· 15m".
 4. **Actions:** a row of buttons at the bottom, right-aligned, with an 8px gap.
-   - Milestone 3: "Delete item", a secondary button.
-   - Milestone 4: "Edit" goes to the left of it, also secondary. Nothing else in the popover moves.
+   - "Edit", a secondary button, left of "Delete item", also secondary. Edit opens the item in the edit dialog (see Editing). While the item loads it reads "Opening..." and both buttons are disabled. If loading fails, a 12px `--attention-strong` line under the actions says "Couldn't open it:" and the server's message.
+   - For a Custom item, Edit is disabled, and a 12px `--text-muted` line under the actions says "Change Custom items in their week file."
 
 ### Deleting
 
@@ -201,6 +202,15 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 - **If the planner runs out of time:** the item is still deleted, and the weeks it was in re-plan when next viewed. The popover closes as when it's done.
 - **If it fails:** if the popover is still open, the confirm row stays, and a line under it in 12px `--attention-strong` says what went wrong, using the server's message, for example "Couldn't delete it: Can't reach the planner." The buttons are enabled again so it can be retried. If the popover was already closed, the page's attention banner shows the same message instead.
 - **If the item was already gone** (a 404, say it was deleted from another tab): the popover closes and the week reloads, without an error.
+
+### Editing (Milestone 4)
+
+- **Opening:** Edit closes the popover and opens the Add item dialog in edit mode, filled in with the item as stored. Lengths show as typed, so a 20m estimate shows "20m" with "Planned as 30m" under it. If the item is already gone (a 404), the popover closes and the week reloads, as for a delete.
+- **Header:** "Edit item", and the primary button reads "Save" ("Saving..." while saving). Everything else matches adding: the same fields, errors at their field, and server errors in the banner (titled "Couldn't save it").
+- **Imported items:** an item from a week file shows a 12px `--text-muted` line at the top of the body: "From 2026-11-16.toml. Importing that file again with --replace undoes this edit."
+- **Past items:** a title or length can always be changed. When the item is (its day, times, days or deadline) only has to lie ahead if it changes, so a past item doesn't show "already passed" errors until its time is changed.
+- **What carries over:** sessions that already started or are done stay and count toward the work, and the rest is re-planned. A change that doesn't fit is refused with the reason, and nothing changes.
+- **Done:** the dialog closes, the grid shows the re-planned week, and focus goes to the grid's scroll area, since the block may have moved.
 
 ### Past blocks
 

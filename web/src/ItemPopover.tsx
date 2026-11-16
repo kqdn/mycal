@@ -12,6 +12,9 @@ interface Props {
   timezone: string
   deleting: boolean
   error: string | null
+  opening: boolean // Edit is loading the item
+  openError: string | null
+  onEdit: () => void
   onDelete: () => void
   onClose: () => void
 }
@@ -23,7 +26,7 @@ interface Props {
  * after the popover closes. Mount it with a key per target so the confirm step
  * starts fresh.
  */
-export function ItemPopover({ target, timezone, deleting, error, onDelete, onClose }: Props) {
+export function ItemPopover({ target, timezone, deleting, error, opening, openError, onEdit, onDelete, onClose }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   const [confirming, setConfirming] = useState(false)
@@ -42,7 +45,7 @@ export function ItemPopover({ target, timezone, deleting, error, onDelete, onClo
     )
     element.style.left = `${left}px`
     element.style.top = `${top}px`
-  }, [target, confirming, error, deleting])
+  }, [target, confirming, error, deleting, opening, openError])
 
   // When the browser closes it (Escape, a click outside), tell App and hand focus back.
   useEffect(() => {
@@ -62,6 +65,7 @@ export function ItemPopover({ target, timezone, deleting, error, onDelete, onClo
   }, [confirming])
 
   const sessions = target.kind === 'block' ? target.block.sessions : target.item.sessions
+  const editable = target.kind === 'block' ? target.block.editable : target.item.editable
 
   return (
     <div ref={box} popover="auto" className="item-popover" role="dialog" aria-label={target.title}>
@@ -72,11 +76,18 @@ export function ItemPopover({ target, timezone, deleting, error, onDelete, onClo
       </p>
 
       {!confirming ? (
-        <div className="popover-actions">
-          <button type="button" className="secondary-button" onClick={() => setConfirming(true)}>
-            Delete item
-          </button>
-        </div>
+        <>
+          <div className="popover-actions">
+            <button type="button" className="secondary-button" disabled={!editable || opening} onClick={onEdit}>
+              {opening ? 'Opening...' : 'Edit'}
+            </button>
+            <button type="button" className="secondary-button" disabled={opening} onClick={() => setConfirming(true)}>
+              Delete item
+            </button>
+          </div>
+          {!editable && <p className="hint">Change Custom items in their week file.</p>}
+          {openError && <p className="field-error">Couldn't open it: {openError}</p>}
+        </>
       ) : (
         <div className="popover-confirm">
           <div>

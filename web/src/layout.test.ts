@@ -52,6 +52,7 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
       sessions: 1,
       placed_min: 60,
       estimate_min: 60,
+      editable: true,
       ...span([start, end]),
     })),
     frames: frames.map(span),

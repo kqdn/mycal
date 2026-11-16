@@ -1,7 +1,7 @@
 // Types matching GET /api/weeks/{week_start} in solver/src/mycal/api.py.
 // All times are UTC ISO strings.
 
-import type { ItemRequest } from './itemForm'
+import type { ItemRequest, Preset } from './itemForm'
 import type { DateString } from './time'
 
 export interface Block {
@@ -16,6 +16,7 @@ export interface Block {
   sessions: number
   placed_min: number // the item's minutes placed so far, in every week
   estimate_min: number | null // null for an exact-time item
+  editable: boolean // whether the edit dialog can change the item (not Custom)
 }
 
 export interface Week {
@@ -26,7 +27,34 @@ export interface Week {
   blocks: Block[]
   frames: { start: string; end: string }[]
   // `reason` is set when the item waits on a week that can't be planned.
-  unscheduled: { id: string; title: string; estimate_min: number | null; reason: string | null; sessions: number }[]
+  unscheduled: {
+    id: string
+    title: string
+    estimate_min: number | null
+    reason: string | null
+    sessions: number
+    editable: boolean
+  }[]
+}
+
+/** GET /api/items/{id}: a stored item in the dialog's terms. Lengths are as typed; times are "HH:MM:SS". */
+export interface ItemFormOut {
+  id: string
+  source: string | null // the week file it was imported from, or null if added in the app
+  editable: boolean
+  week_start: DateString // the item's own week for days and every-day items
+  title: string
+  preset: Preset | 'custom'
+  day: DateString | null
+  start_time: string | null
+  end_time: string | null
+  weekdays: number[] | null
+  deadline_date: DateString | null
+  deadline_time: string | null
+  estimate_min: number | null
+  max_chunk_min: number | null
+  one_block_per_day: boolean
+  session_min: number | null
 }
 
 /** Why a week could not be shown: nothing imported yet (404), or data the API could not use. */
@@ -117,6 +145,30 @@ function rememberOnly(week: Week): void {
  * changed too, so the cache keeps only the returned week. A 404 (already gone)
  * throws WeekError with kind 'missing'; other failures carry the server's message.
  */
+/** An item as the edit dialog shows it. A 404 (already gone) throws WeekError with kind 'missing'. */
+export async function getItem(itemId: string): Promise<ItemFormOut> {
+  const response = await fetch(`/api/items/${itemId}`)
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/**
+ * Change an item. The server re-plans and returns `week`; like adding, other
+ * weeks may have changed, so the cache keeps only the returned week. Throws
+ * WeekError with the server's message on a 422, and kind 'missing' on a 404.
+ */
+export async function updateItem(itemId: string, request: ItemRequest, week: DateString): Promise<Week> {
+  const response = await fetch(`/api/items/${itemId}?week=${week}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) throw await failure(response)
+  const returned: Week = await response.json()
+  rememberOnly(returned)
+  return returned
+}
+
 export async function deleteItem(itemId: string, week: DateString): Promise<Week> {
   const response = await fetch(`/api/items/${itemId}?week=${week}`, { method: 'DELETE' })
   if (!response.ok) throw await failure(response)

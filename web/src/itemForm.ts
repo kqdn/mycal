@@ -3,6 +3,7 @@
 // The dialog (NewItemDialog.tsx) only renders this. See web/DESIGN.md,
 // "Add item dialog".
 
+import type { ItemFormOut } from './api'
 import { addDays, dayName, estimateLabel, range12, time12, toLocal, weekTitle, type DateString } from './time'
 
 export type Preset = 'exact' | 'day' | 'day_range' | 'days' | 'every_day' | 'before_deadline'
@@ -89,6 +90,44 @@ export interface ItemRequest {
   session_min?: number
 }
 
+/**
+ * The form for a stored item (GET /api/items/{id}), the inverse of toRequest. Lengths go back
+ * to text as typed ("1h 30m"), and times drop their seconds. Fields the item doesn't use keep
+ * the fresh-form defaults for its week, so switching presets while editing starts sensibly.
+ */
+export function formFrom(item: ItemFormOut, today: DateString): ItemForm {
+  const length = (minutes: number | null) => (minutes === null ? '' : estimateLabel(minutes))
+  const clock = (time: string | null) => (time === null ? '' : time.slice(0, 5))
+  const fresh = emptyForm(item.week_start, today)
+  return {
+    ...fresh,
+    title: item.title,
+    preset: item.preset === 'custom' ? fresh.preset : item.preset,
+    day: item.day ?? fresh.day,
+    startTime: clock(item.start_time),
+    endTime: clock(item.end_time),
+    weekdays: item.weekdays ?? [],
+    dueDate: item.deadline_date ?? fresh.dueDate,
+    dueTime: item.deadline_time === null ? fresh.dueTime : clock(item.deadline_time),
+    estimate: length(item.estimate_min),
+    longestSession: length(item.max_chunk_min),
+    oneSessionPerDay: item.one_block_per_day,
+    eachDay: length(item.session_min),
+  }
+}
+
+/** What says when an item can go, as one comparable string; the same fields as the server's _when. */
+export function whenKey(form: ItemForm): string {
+  const onDay = form.preset === 'exact' || form.preset === 'day' || form.preset === 'day_range'
+  return JSON.stringify([
+    form.preset,
+    onDay ? form.day : null,
+    usesTimes(form) ? [form.startTime, form.endTime] : null,
+    picksDays(form) ? [...new Set(form.weekdays)].sort((a, b) => a - b) : null,
+    form.preset === 'before_deadline' ? [form.dueDate, form.dueTime] : null,
+  ])
+}
+
 /** A fresh form for the viewed week: dates default to today if it is in that week, else its Monday. */
 export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
   const inWeek = today >= weekStart && today <= addDays(weekStart, 6)
@@ -133,12 +172,15 @@ export function showsOneSessionPerDay(form: ItemForm): boolean {
 }
 
 /** Field errors, worded to say how to fix them. `now` is a UTC ISO time; `timezone` is the week's.
- * With `week` (the viewed week and its frames), an every-day item with no open day left is an error too. */
+ * With `week` (the viewed week and its frames), an every-day item with no open day left is an error too.
+ * With `allowPast` (editing without changing when the item is), a passed deadline or day is allowed,
+ * as the server allows it, so a past item's title can still be fixed. */
 export function validate(
   form: ItemForm,
   now: string,
   timezone: string,
   week?: { weekStart: DateString; frames: DayContext['frames']; slotMin: number },
+  allowPast = false,
 ): Errors {
   const errors: Errors = {}
   if (!form.title.trim()) errors.title = 'Give the item a title.'
@@ -151,7 +193,7 @@ export function validate(
   }
   if (picksDays(form)) {
     if (form.weekdays.length === 0) errors.weekdays = 'Pick at least one day.'
-    else if (form.preset === 'every_day' && week && openDays(form, week.weekStart, { now, timezone, frames: week.frames, slotMin: week.slotMin }).length === 0) {
+    else if (form.preset === 'every_day' && week && !allowPast && openDays(form, week.weekStart, { now, timezone, frames: week.frames, slotMin: week.slotMin }).length === 0) {
       errors.weekdays = 'None of these days has room left this week.'
     }
     if (Boolean(form.startTime) !== Boolean(form.endTime)) errors.times = 'Give both times, or neither.'
@@ -161,7 +203,7 @@ export function validate(
   }
   if (form.preset === 'before_deadline') {
     if (!form.dueDate || !form.dueTime) errors.due = 'Pick a due date and time.'
-    else if (isPast(form.dueDate, form.dueTime, now, timezone)) errors.due = 'That deadline has already passed.'
+    else if (!allowPast && isPast(form.dueDate, form.dueTime, now, timezone)) errors.due = 'That deadline has already passed.'
   }
 
   if (showsEstimate(form) && parseDuration(form.estimate) === null) {

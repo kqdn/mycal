@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import type { ItemFormOut } from './api'
 import {
   emptyForm,
   firstError,
+  formFrom,
   openDays,
   outsideWorkHours,
   parseDuration,
@@ -12,6 +14,7 @@ import {
   summary,
   toRequest,
   validate,
+  whenKey,
   type ItemForm,
 } from './itemForm'
 
@@ -316,5 +319,80 @@ describe('plannedHint', () => {
   it('is never an error: Add stays allowed', () => {
     const form = { ...emptyForm(WEEK, WEEK), title: 'Stretch', preset: 'day' as const, day: WEEK, estimate: '20m', longestSession: '10m' }
     expect(validate(form, SUNDAY_BEFORE, LA)).toEqual({})
+  })
+})
+
+describe('formFrom', () => {
+  // GET /api/items/{id} for each preset, as the server sends it: times with seconds, lengths as typed.
+  const stored = (changes: Partial<ItemFormOut>): ItemFormOut => ({
+    id: 'i1',
+    source: null,
+    editable: true,
+    week_start: WEEK,
+    title: 'Thing',
+    preset: 'day',
+    day: null,
+    start_time: null,
+    end_time: null,
+    weekdays: null,
+    deadline_date: null,
+    deadline_time: null,
+    estimate_min: null,
+    max_chunk_min: null,
+    one_block_per_day: false,
+    session_min: null,
+    ...changes,
+  })
+  const cases: [string, Partial<ItemFormOut>][] = [
+    ['exact, overnight', { preset: 'exact', day: '2026-11-19', start_time: '23:00:00', end_time: '01:00:00' }],
+    ['day, off the grid', { preset: 'day', day: '2026-11-18', estimate_min: 20 }],
+    ['day_range', { preset: 'day_range', day: '2026-11-17', start_time: '17:00:00', end_time: '19:00:00', estimate_min: 30 }],
+    ['days', { preset: 'days', weekdays: [1, 3], estimate_min: 90, max_chunk_min: 45, one_block_per_day: true }],
+    ['every_day', { preset: 'every_day', weekdays: [0, 2], start_time: '18:00:00', end_time: '20:00:00', session_min: 20 }],
+    ['before_deadline', { preset: 'before_deadline', deadline_date: '2026-11-20', deadline_time: '17:00:00', estimate_min: 150 }],
+  ]
+
+  it.each(cases)('sends back what was stored: %s', (_name, changes) => {
+    const item = stored(changes)
+    const request = toRequest(formFrom(item, WEEK), item.week_start)
+    const clock = (time: string | null) => time?.slice(0, 5)
+    const expected = Object.fromEntries(
+      Object.entries({
+        week_start: item.week_start,
+        title: item.title,
+        preset: item.preset,
+        day: item.day,
+        start_time: clock(item.start_time),
+        end_time: clock(item.end_time),
+        weekdays: item.weekdays,
+        deadline_date: item.deadline_date,
+        deadline_time: clock(item.deadline_time),
+        estimate_min: item.estimate_min,
+        max_chunk_min: item.max_chunk_min,
+        one_block_per_day: item.one_block_per_day,
+        session_min: item.session_min,
+      }).filter(([, value]) => value !== null && value !== undefined),
+    )
+    expect(request).toEqual(expected)
+  })
+
+  it('shows lengths as typed, not rounded', () => {
+    const form = formFrom(stored({ preset: 'day', day: '2026-11-18', estimate_min: 90, max_chunk_min: 20 }), WEEK)
+    expect([form.estimate, form.longestSession]).toEqual(['1h 30m', '20m'])
+  })
+})
+
+describe('editing a past item', () => {
+  const due = form({ title: 'Essay', preset: 'before_deadline', dueDate: '2026-11-13', dueTime: '17:00', estimate: '1h' })
+
+  it('allows a passed deadline when when-fields are unchanged, as the server does', () => {
+    expect(validate(due, SUNDAY_BEFORE, LA).due).toBe('That deadline has already passed.')
+    expect(validate(due, SUNDAY_BEFORE, LA, undefined, true)).toEqual({})
+  })
+
+  it('tells a title change from a change to when the item is', () => {
+    expect(whenKey({ ...due, title: 'Essay draft', estimate: '2h' })).toBe(whenKey(due))
+    expect(whenKey({ ...due, dueTime: '18:00' })).not.toBe(whenKey(due))
+    expect(whenKey({ ...due, preset: 'days' })).not.toBe(whenKey(due))
   })
 })

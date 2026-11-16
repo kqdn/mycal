@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clearWeekCache, deleteItem, loadWeek, peekWeek, WeekError, type Week } from './api'
+import { clearWeekCache, deleteItem, getItem, loadWeek, peekWeek, WeekError, type Week } from './api'
 import { weekAfterDelete } from './itemDetails'
+import { formFrom, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
@@ -28,6 +29,10 @@ export default function App() {
   const [pending, setPending] = useState<Set<string>>(new Set())
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
   const [pageProblem, setPageProblem] = useState<Problem | null>(null)
+  // Editing: the item being loaded for the dialog, why that failed, and the dialog's starting point.
+  const [opening, setOpening] = useState<string | null>(null)
+  const [openError, setOpenError] = useState<{ itemId: string; message: string } | null>(null)
+  const [editing, setEditing] = useState<{ id: string; source: string | null; form: ItemForm; weekStart: DateString } | null>(null)
   // What a finishing delete needs to know now, not when it started.
   const viewing = useRef(weekStart)
   const openItem = useRef<string | null>(null)
@@ -109,6 +114,33 @@ export default function App() {
     }
   }
 
+  async function startEdit(target: PopoverTarget) {
+    const { itemId } = target
+    setOpening(itemId)
+    setOpenError(null)
+    try {
+      const item = await getItem(itemId)
+      setOpen(null)
+      setEditing({ id: item.id, source: item.source, form: formFrom(item, today()), weekStart: item.week_start })
+    } catch (error) {
+      if (error instanceof WeekError && error.kind === 'missing') {
+        // Already gone: close and reload, as for a delete.
+        setOpen(null)
+        clearWeekCache()
+        setResult(undefined)
+        setReload((n) => n + 1)
+        return
+      }
+      setOpenError({ itemId, message: error instanceof WeekError ? error.message : "Can't reach the planner." })
+    } finally {
+      setOpening(null)
+    }
+  }
+
+  function showSaved(week: Week) {
+    setResult({ for: weekStart, status: 'ready', week })
+  }
+
   function go(days: number) {
     const next = addDays(weekStart, days)
     window.history.pushState(null, '', `?week=${next}`)
@@ -140,7 +172,24 @@ export default function App() {
           frames={state.week.frames}
           slotMin={state.week.slot_min}
           onClose={() => setAdding(false)}
-          onAdded={(week) => setResult({ for: weekStart, status: 'ready', week })}
+          onSaved={showSaved}
+        />
+      )}
+
+      {editing && state.status === 'ready' && (
+        <NewItemDialog
+          key={editing.id}
+          weekStart={weekStart}
+          timezone={state.week.timezone}
+          frames={state.week.frames}
+          slotMin={state.week.slot_min}
+          editing={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(week) => {
+            showSaved(week)
+            // The block it came from may have moved, so focus goes to the grid.
+            requestAnimationFrame(() => document.querySelector<HTMLElement>('.week-body')?.focus())
+          }}
         />
       )}
 
@@ -220,6 +269,9 @@ export default function App() {
           timezone={state.week.timezone}
           deleting={pending.has(open.itemId)}
           error={deleteErrors[open.itemId] ?? null}
+          opening={opening === open.itemId}
+          openError={openError?.itemId === open.itemId ? openError.message : null}
+          onEdit={() => startEdit(open)}
           onDelete={() => remove(open)}
           onClose={closePopover}
         />

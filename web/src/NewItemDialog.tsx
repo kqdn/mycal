@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { addItem, WeekError, type Week } from './api'
+import { addItem, updateItem, WeekError, type Week } from './api'
 import {
   emptyForm,
   firstError,
@@ -12,6 +12,7 @@ import {
   summary,
   toRequest,
   validate,
+  whenKey,
   WEEKDAYS,
   type DayContext,
   type Errors,
@@ -26,15 +27,22 @@ interface Props {
   timezone: string
   frames: DayContext['frames'] // the week's work-frame time, to tell which picked days are still open
   slotMin: number // the planner's slot size, to show planned lengths
+  // Set to edit an existing item: its id, where it came from, the form as stored, and its own week.
+  editing?: { id: string; source: string | null; form: ItemForm; weekStart: DateString }
   onClose: () => void
-  onAdded: (week: Week) => void
+  onSaved: (week: Week) => void
 }
 
-/** The New item dialog (web/DESIGN.md, "Add item dialog"). Mounted while open. */
-export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, onAdded }: Props) {
+/**
+ * The Add item dialog (web/DESIGN.md, "Add item dialog"), which also edits an item
+ * ("Item details popover", Editing). Mounted while open.
+ */
+export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, onClose, onSaved }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleInput = useRef<HTMLInputElement>(null)
-  const [form, setForm] = useState<ItemForm>(() => emptyForm(weekStart, today()))
+  // A days or every-day item belongs to its own week; the response shows the viewed one.
+  const formWeek = editing?.weekStart ?? weekStart
+  const [form, setForm] = useState<ItemForm>(() => editing?.form ?? emptyForm(weekStart, today()))
   const [touched, setTouched] = useState<Set<Field>>(new Set())
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
@@ -52,7 +60,9 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, o
     titleInput.current?.focus()
   }, [])
 
-  const errors: Errors = validate(form, openedAt, timezone, { weekStart, frames, slotMin })
+  // Editing without changing when the item is: a passed day or deadline is fine, as on the server.
+  const unmoved = editing !== undefined && whenKey(form) === whenKey(editing.form)
+  const errors: Errors = validate(form, openedAt, timezone, { weekStart: formWeek, frames, slotMin }, unmoved)
   const shown = (field: Field) => (touched.has(field) ? errors[field] : undefined)
 
   useEffect(() => {
@@ -88,8 +98,9 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, o
     setSaving(true)
     setServerError(null)
     try {
-      const week = await addItem(toRequest(form, weekStart))
-      onAdded(week)
+      const request = toRequest(form, formWeek)
+      const week = editing ? await updateItem(editing.id, request, weekStart) : await addItem(request)
+      onSaved(week)
       dialog.current?.close()
     } catch (error) {
       setServerError(error instanceof WeekError ? error.message : "Can't reach the planner. Is uv run mycal-api running?")
@@ -111,19 +122,22 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, o
             Cancel
           </button>
           <h2 id="new-item-title" className="dialog-title">
-            New item
+            {editing ? 'Edit item' : 'New item'}
           </h2>
           <button type="submit" className="primary-button" disabled={saving}>
-            {saving ? 'Adding...' : 'Add'}
+            {editing ? (saving ? 'Saving...' : 'Save') : saving ? 'Adding...' : 'Add'}
           </button>
         </header>
 
         {/* The div scrolls, since Chrome won't scroll a fieldset; the fieldset disables the form while saving. */}
         <div className="dialog-body" ref={body}>
           <fieldset className="dialog-fields" disabled={saving}>
+            {editing?.source && (
+              <p className="hint">From {editing.source}. Importing that file again with --replace undoes this edit.</p>
+            )}
             {serverError && (
               <div className="banner" role="alert">
-                <p className="banner-title">Couldn't add it</p>
+                <p className="banner-title">{editing ? "Couldn't save it" : "Couldn't add it"}</p>
                 <p className="banner-body">{serverError}</p>
               </div>
             )}
@@ -165,7 +179,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, o
                       {form.preset === value && <Check />}
                     </label>
                     {form.preset === value && (
-                      <PresetPanel form={form} weekStart={weekStart} context={context} update={update} touch={touch} shown={shown} />
+                      <PresetPanel form={form} weekStart={formWeek} context={context} update={update} touch={touch} shown={shown} />
                     )}
                   </div>
                 ))}

@@ -16,6 +16,7 @@ function block(changes: Partial<Block>): Block {
     sessions: 1,
     placed_min: 30,
     estimate_min: 30,
+    editable: true,
     ...changes,
   }
 }
@@ -67,7 +68,7 @@ describe('kindLine', () => {
 
 describe('unscheduledLine and confirmLine', () => {
   it('gives the reason, or why there are no times, then the estimate', () => {
-    const waiting = { title: 'Report', estimate_min: 720, reason: "Waiting on Nov 30 to Dec 6, which can't be planned.", sessions: 0 }
+    const waiting = { title: 'Report', estimate_min: 720, reason: "Waiting on Nov 30 to Dec 6, which can't be planned.", sessions: 0, editable: true }
     expect(unscheduledLine(waiting)).toBe("Waiting on Nov 30 to Dec 6, which can't be planned. · 12h")
     expect(unscheduledLine({ ...waiting, reason: null, estimate_min: 15 })).toBe('Not scheduled: it has no times to go in yet · 15m')
     expect(unscheduledLine({ ...waiting, reason: null, estimate_min: null })).toBe('Not scheduled: it has no times to go in yet')
