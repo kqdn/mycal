@@ -57,6 +57,15 @@ kind = "rest_between"
 items = ["Gym"]
 min_gap_days = 1
 
+# "avoid": keep reading out of the mornings when it can.
+[[constraints]]
+kind = "time_preference"
+items = ["Read for seminar"]
+mode = "avoid"
+weekdays = [0, 1, 2, 3, 4]
+start_time = 09:00:00
+end_time = 12:00:00
+
 # Series repeat every week. `rrule` is an iCalendar RRULE (FREQ=DAILY or
 # WEEKLY, INTERVAL, BYDAY, UNTIL or COUNT). Template params hold times of day
 # only; each occurrence's date fills in the day. Optional: end_date,
@@ -71,6 +80,15 @@ start_time = 11:00:00
 end_time = 12:30:00
 checkable = true
 on_miss = "catch_up"
+
+[[series]]
+title = "Linear algebra"
+rrule = "FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=20261211"
+start_date = 2026-09-02
+preset = "exact"
+start_time = 13:00:00
+end_time = 14:00:00
+checkable = true
 
 # "3 times a week": one occurrence per week, anchored on Monday, split into
 # three 1h sessions on different days.
@@ -100,6 +118,26 @@ title = "Chemistry lab"
 preset = "day"
 day = 2026-11-18
 estimate_min = 120
+
+[[items]]
+title = "Career fair"
+preset = "exact"
+start = 2026-11-18T14:30:00
+end = 2026-11-18T16:00:00
+
+[[items]]
+title = "Study group"
+preset = "exact"
+start = 2026-11-19T15:00:00
+end = 2026-11-19T16:30:00
+
+# 4h of reading in sessions of at most 1.5h, Monday to Thursday
+[[items]]
+title = "Read for seminar"
+preset = "days"
+weekdays = [0, 1, 2, 3]
+estimate_min = 240
+max_chunk_min = 90
 
 [[items]]
 title = "Call home"

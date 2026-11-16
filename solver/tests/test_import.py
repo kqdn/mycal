@@ -10,6 +10,7 @@ from mycal.demo import load_week
 from mycal.importer import import_week, main
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "week.toml"
+SAMPLE_RULES = len(load_week(EXAMPLE).constraints)  # the next-week copy keeps them all
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def test_import_stores_the_whole_week(db: Path) -> None:
     kinds = lambda cs: [(c.kind, c.weight, c.hard) for c in cs]  # noqa: E731
     assert kinds(store.list_constraints(conn)) == kinds(week.constraints)
     assert store.list_blocks(conn) == []  # planned on first view, not imported
-    assert summary.startswith(f"Imported {len(items)} items and 3 constraints from week.toml")
+    assert summary.startswith(f"Imported {len(items)} items and {len(week.constraints)} constraints from week.toml")
 
 
 def test_dependencies_survive_the_import(db: Path) -> None:
@@ -86,7 +87,7 @@ def test_importing_another_file_adds_to_the_database(db: Path, tmp_path: Path) -
     # Work frames are mine, not a week's: the latest file's frames replace the old ones.
     assert [f.name for f in store.list_work_frames(store.connect(db))] == ["Weekend"]
     sources = [r["source"] for r in store.connect(db).execute("SELECT source FROM constraints")]
-    assert sorted(sources) == ["2026-11-23.toml"] * 3 + ["week.toml"] * 3
+    assert sorted(sources) == ["2026-11-23.toml"] * SAMPLE_RULES + ["week.toml"] * SAMPLE_RULES
 
 
 def test_the_same_file_again_needs_replace(db: Path) -> None:
@@ -119,7 +120,7 @@ def test_replace_swaps_only_that_files_items(db: Path, tmp_path: Path) -> None:
     assert kept == ["Added in the app", "Call grandma"]  # the replaced item's block went with it
     assert f"Replaced {len(before['week.toml'])} items" in summary
     sources = [r["source"] for r in store.connect(db).execute("SELECT source FROM constraints")]
-    assert sorted(sources) == ["2026-11-23.toml"] * 3 + ["week.toml"] * 3  # no duplicates
+    assert sorted(sources) == ["2026-11-23.toml"] * SAMPLE_RULES + ["week.toml"] * SAMPLE_RULES  # no duplicates
 
 
 def block_for(item: Item) -> Block:
