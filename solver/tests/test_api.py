@@ -652,3 +652,168 @@ def test_an_every_day_item_with_no_day_left_is_refused(client: TestClient, monke
     detail = refused(client, title="Piano", preset="every_day", weekdays=[0, 1, 2], start_time="18:00", end_time="20:00", session_min=30)
 
     assert detail == api.NO_DAY_LEFT
+
+
+# Editing items
+
+
+def item_id(db: Path, title: str) -> UUID:
+    [item] = [i for i in store.list_items(store.connect(db)) if i.title == title]
+    return item.id
+
+
+def fetch(client: TestClient, id_: UUID) -> dict:
+    response = client.get(f"/api/items/{id_}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def put(client: TestClient, id_: UUID, form: dict, week: str = WEEK, status: int = 200) -> dict:
+    body = {k: v for k, v in form.items() if k not in ("id", "source", "editable")}
+    response = client.put(f"/api/items/{id_}", params={"week": week}, json=body)
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def item_blocks(db: Path, id_: UUID) -> list[tuple[UUID, datetime, datetime]]:
+    return sorted((b.id, b.start, b.end) for b in store.list_blocks(store.connect(db)) if b.item_id == id_)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"title": "Dentist", "preset": "exact", "day": "2026-11-19", "start_time": "23:00", "end_time": "01:00"},
+        {"title": "Errand", "preset": "day", "day": "2026-11-18", "estimate_min": 20},
+        {"title": "Call", "preset": "day_range", "day": "2026-11-17", "start_time": "17:00", "end_time": "19:00", "estimate_min": 30},
+        {"title": "Read", "preset": "days", "weekdays": [1, 3], "estimate_min": 90, "max_chunk_min": 45, "one_block_per_day": True},
+        {"title": "Piano", "preset": "every_day", "weekdays": [0, 2], "start_time": "18:00", "end_time": "20:00", "session_min": 20},
+        {"title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-20", "deadline_time": "17:00", "estimate_min": 60},
+    ],
+    ids=["exact", "day", "day_range", "days", "every_day", "before_deadline"],
+)
+def test_saving_an_item_unchanged_changes_nothing(db: Path, client: TestClient, fields: dict) -> None:
+    add(client, **fields)
+    id_ = item_id(db, fields["title"])
+    form, before = fetch(client, id_), item_blocks(db, id_)
+
+    as_sent = {k: f"{v}:00" if k.endswith("_time") else v for k, v in fields.items()}  # times come back with seconds
+    assert {k: form[k] for k in fields} == as_sent
+    assert (form["editable"], form["source"]) == (True, None)
+    put(client, id_, form)
+
+    assert item_blocks(db, id_) == before
+    assert fetch(client, id_) == form
+
+
+def test_a_bigger_estimate_re_plans(db: Path, client: TestClient) -> None:
+    id_ = item_id(db, "Chemistry lab")
+    get(client)
+    form = fetch(client, id_)
+
+    week = put(client, id_, form | {"estimate_min": 180, "max_chunk_min": 60})
+
+    lab = blocks_titled(week, "Chemistry lab")
+    assert sum(minutes(b) for b in lab) == 180 and all(minutes(b) == 60 for b in lab)
+    assert all(local(b)[0].startswith("Wed") for b in lab)
+
+
+def test_moving_a_day_item_moves_its_block_and_re_plans_the_old_week(db: Path, client: TestClient) -> None:
+    id_ = item_id(db, "Chemistry lab")
+    get(client)
+
+    put(client, id_, fetch(client, id_) | {"day": "2026-11-24", "week_start": "2026-11-23"})
+
+    assert blocks_titled(get(client), "Chemistry lab") == []
+    [moved] = blocks_titled(get(client, "2026-11-23"), "Chemistry lab")
+    assert local(moved)[0].startswith("Tue")
+
+
+def test_moving_a_days_item_to_another_week(db: Path, client: TestClient) -> None:
+    add(client, title="Read", preset="days", weekdays=[1], estimate_min=60)
+    id_ = item_id(db, "Read")
+
+    put(client, id_, fetch(client, id_) | {"week_start": "2026-11-23"})
+
+    assert blocks_titled(get(client), "Read") == []
+    assert len(blocks_titled(get(client, "2026-11-23"), "Read")) == 1
+
+
+def test_a_change_that_does_not_fit_is_refused_and_changes_nothing(db: Path, client: TestClient) -> None:
+    id_ = item_id(db, "Chemistry lab")
+    get(client)
+    form, before = fetch(client, id_), item_blocks(db, id_)
+
+    detail = put(client, id_, form | {"estimate_min": 20 * 60}, status=422)["detail"]
+
+    assert detail == api.DOES_NOT_FIT
+    assert (fetch(client, id_), item_blocks(db, id_)) == (form, before)
+
+
+def test_a_past_item_can_be_renamed_but_not_moved_into_the_past(
+    db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    id_ = item_id(db, "Chemistry lab")
+    get(client)
+    monkeypatch.setattr(api, "now", lambda: pacific(20, 12, month=11))  # Friday: Wednesday's lab is over
+    form = fetch(client, id_)
+
+    put(client, id_, form | {"title": "Chem lab"})
+    assert fetch(client, id_)["title"] == "Chem lab"
+
+    detail = put(client, id_, form | {"day": "2026-11-19"}, status=422)["detail"]
+    assert detail == "That time has already passed."
+
+
+def test_a_started_fixed_event_can_be_renamed_but_not_moved(
+    db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add(client, title="Dentist", preset="exact", day="2026-11-19", start_time="13:00", end_time="14:00")
+    id_ = item_id(db, "Dentist")
+    monkeypatch.setattr(api, "now", lambda: pacific(19, 13, month=11) + timedelta(minutes=10))
+    form = fetch(client, id_)
+
+    assert put(client, id_, form | {"end_time": "15:00"}, status=422)["detail"] == api.ALREADY_STARTED
+    put(client, id_, form | {"title": "Dentist (cleaning)"})
+    assert fetch(client, id_)["title"] == "Dentist (cleaning)"
+
+
+def test_custom_items_and_missing_items_cannot_be_edited(db: Path, client: TestClient) -> None:
+    id_ = item_id(db, "Email advisor")
+    form = fetch(client, id_)
+    assert (form["preset"], form["editable"]) == ("custom", False)
+
+    body = {"title": "Email", "preset": "day", "day": "2026-11-18", "estimate_min": 15, "week_start": WEEK}
+    assert put(client, id_, body, status=422)["detail"] == api.CUSTOM_NOT_EDITABLE
+    assert put(client, uuid4(), body, status=404)["detail"] == api.ITEM_GONE
+    assert client.get(f"/api/items/{uuid4()}").status_code == 404
+
+
+def test_editing_keeps_the_fields_the_dialog_does_not_show(db: Path, client: TestClient) -> None:
+    id_ = item_id(db, "Project 3: implement")
+    get(client)
+    conn = store.connect(db)
+    before = store.get_item(conn, id_)
+    assert before is not None and before.depends_on and store.item_source(conn, id_) == "week.toml"
+    form = fetch(client, id_)
+    assert form["source"] == "week.toml"
+
+    put(client, id_, form | {"title": "Project 3: build", "estimate_min": 240})
+
+    after = store.get_item(store.connect(db), id_)
+    assert after is not None
+    assert (after.title, after.estimate_min, after.depends_on, after.checkable) == (
+        "Project 3: build", 240, before.depends_on, before.checkable,
+    )
+    assert store.item_source(store.connect(db), id_) == "week.toml"
+
+
+def test_editing_a_lecture_keeps_it_checkable(db: Path, client: TestClient) -> None:
+    get(client)
+    lectures = [i for i in store.list_items(store.connect(db)) if i.title == "Algorithms lecture"]
+    lecture = lectures[0]
+    assert lecture.checkable
+
+    put(client, lecture.id, fetch(client, lecture.id) | {"title": "Algorithms"})
+
+    after = store.get_item(store.connect(db), lecture.id)
+    assert after is not None and (after.title, after.checkable, after.series_id) == ("Algorithms", True, lecture.series_id)

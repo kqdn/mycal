@@ -354,6 +354,12 @@ def get_item(conn: sqlite3.Connection, item_id: UUID) -> Item | None:
     return _item(conn, row) if row else None
 
 
+def item_source(conn: sqlite3.Connection, item_id: UUID) -> str | None:
+    """The week file an item was imported from, or None if it was added in the app (or is gone)."""
+    row = conn.execute("SELECT source FROM items WHERE id = ?", (str(item_id),)).fetchone()
+    return row["source"] if row else None
+
+
 def list_items(conn: sqlite3.Connection) -> list[Item]:
     return [_item(conn, row) for row in conn.execute("SELECT * FROM items ORDER BY rowid")]
 
