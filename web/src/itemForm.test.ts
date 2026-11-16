@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   emptyForm,
+  firstError,
   openDays,
   outsideWorkHours,
   parseDuration,
@@ -268,5 +269,16 @@ describe('outsideWorkHours', () => {
     const late = form({ preset: 'every_day', weekdays, startTime: '18:00', endTime: '20:00', eachDay: '30m' })
     expect(outsideWorkHours(late, WEEK, context)).toBe(true)
     expect(validate(late, SUNDAY_BEFORE, LA, { weekStart: WEEK, frames })).toEqual({})
+  })
+})
+
+describe('firstError', () => {
+  it('is the earliest field in form order', () => {
+    expect(firstError({ estimate: 'Use a length like 45m or 1h 30m.', title: 'Give the item a title.' })).toBe('title')
+    expect(firstError({ eachDay: 'x', weekdays: 'y', times: 'z' })).toBe('weekdays')
+  })
+
+  it('is undefined when there are no errors', () => {
+    expect(firstError({})).toBeUndefined()
   })
 })

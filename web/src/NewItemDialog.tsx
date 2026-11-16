@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { addItem, WeekError, type Week } from './api'
 import {
   emptyForm,
+  firstError,
   outsideWorkHours,
   PRESETS,
   showsEachDay,
@@ -35,6 +36,9 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
   const [touched, setTouched] = useState<Set<Field>>(new Set())
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
+  const body = useRef<HTMLFieldSetElement>(null)
+  // Set when Add is pressed with errors (a new object each time); the effect goes there once it has rendered.
+  const [goTo, setGoTo] = useState<{ field: Field } | null>(null)
   // "Now" for the deadline and open-day checks, taken when the dialog opens. The server checks again on add.
   const [openedAt] = useState(() => new Date().toISOString())
   const context: DayContext = { now: openedAt, timezone, frames }
@@ -47,8 +51,19 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
   }, [])
 
   const errors: Errors = validate(form, openedAt, timezone, { weekStart, frames })
-  const valid = Object.keys(errors).length === 0
   const shown = (field: Field) => (touched.has(field) ? errors[field] : undefined)
+
+  useEffect(() => {
+    if (!goTo) return
+    const element = dialog.current?.querySelector<HTMLElement>(`[data-field="${goTo.field}"]`)
+    element?.focus({ preventScroll: true })
+    element?.scrollIntoView({ block: 'center' })
+  }, [goTo])
+
+  // A server error shows in the banner at the top of the body, so bring it into view.
+  useEffect(() => {
+    if (serverError && body.current) body.current.scrollTop = 0
+  }, [serverError])
 
   function update(changes: Partial<ItemForm>) {
     setForm((current) => ({ ...current, ...changes }))
@@ -60,7 +75,14 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!valid || saving) return
+    if (saving) return
+    const first = firstError(errors)
+    if (first) {
+      // Nothing is sent: show every error at its field and go to the first one.
+      setTouched((current) => new Set([...current, ...(Object.keys(errors) as Field[])]))
+      setGoTo({ field: first })
+      return
+    }
     setSaving(true)
     setServerError(null)
     try {
@@ -89,12 +111,12 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
           <h2 id="new-item-title" className="dialog-title">
             New item
           </h2>
-          <button type="submit" className="primary-button" disabled={!valid || saving}>
+          <button type="submit" className="primary-button" disabled={saving}>
             {saving ? 'Adding...' : 'Add'}
           </button>
         </header>
 
-        <fieldset className="dialog-body" disabled={saving}>
+        <fieldset className="dialog-body" ref={body} disabled={saving}>
           {serverError && (
             <div className="banner" role="alert">
               <p className="banner-title">Couldn't add it</p>
@@ -109,13 +131,14 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
             <input
               id="item-title"
               ref={titleInput}
+              {...fieldProps('title', shown)}
               className={shown('title') ? 'text-input invalid' : 'text-input'}
               value={form.title}
               onChange={(e) => update({ title: e.target.value })}
               onBlur={() => touch('title')}
               autoComplete="off"
             />
-            <FieldError message={shown('title')} />
+            <FieldError field="title" message={shown('title')} />
           </div>
 
           <div className="field">
@@ -154,6 +177,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                   </label>
                   <input
                     id="item-estimate"
+                    {...fieldProps('estimate', shown)}
                     className={shown('estimate') ? 'text-input invalid' : 'text-input'}
                     placeholder="1h 30m"
                     value={form.estimate}
@@ -161,7 +185,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                     onBlur={() => touch('estimate')}
                     autoComplete="off"
                   />
-                  <FieldError message={shown('estimate')} />
+                  <FieldError field="estimate" message={shown('estimate')} />
                 </div>
                 <div className="field">
                   <label htmlFor="item-longest" className="field-label">
@@ -169,6 +193,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                   </label>
                   <input
                     id="item-longest"
+                    {...fieldProps('longestSession', shown)}
                     className={shown('longestSession') ? 'text-input invalid' : 'text-input'}
                     placeholder="No limit"
                     value={form.longestSession}
@@ -176,7 +201,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                     onBlur={() => touch('longestSession')}
                     autoComplete="off"
                   />
-                  <FieldError message={shown('longestSession')} />
+                  <FieldError field="longestSession" message={shown('longestSession')} />
                 </div>
               </div>
               <p className="hint">Longer work is split into sessions up to this length.</p>
@@ -190,6 +215,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
               </label>
               <input
                 id="item-each-day"
+                {...fieldProps('eachDay', shown)}
                 className={shown('eachDay') ? 'text-input invalid' : 'text-input'}
                 placeholder="30m"
                 value={form.eachDay}
@@ -197,7 +223,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                 onBlur={() => touch('eachDay')}
                 autoComplete="off"
               />
-              <FieldError message={shown('eachDay')} />
+              <FieldError field="eachDay" message={shown('eachDay')} />
               <p className="hint">One session this long on every day you picked that hasn't passed.</p>
             </div>
           )}
@@ -251,12 +277,13 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
       <input
         id="item-day"
         type="date"
+        {...fieldProps('day', shown)}
         className={shown('day') ? 'text-input invalid' : 'text-input'}
         value={form.day}
         onChange={(e) => update({ day: e.target.value })}
         onBlur={() => touch('day')}
       />
-      <FieldError message={shown('day')} />
+      <FieldError field="day" message={shown('day')} />
     </div>
   )
   const times = (label: string, optional: boolean) => (
@@ -269,6 +296,7 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
         <input
           type="time"
           aria-label="Start time"
+          {...fieldProps('times', shown)}
           className={shown('times') ? 'time-input invalid' : 'time-input'}
           value={form.startTime}
           onChange={(e) => update({ startTime: e.target.value })}
@@ -278,13 +306,15 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
         <input
           type="time"
           aria-label="End time"
+          aria-invalid={shown('times') ? true : undefined}
+          aria-describedby={shown('times') ? 'times-error' : undefined}
           className={shown('times') ? 'time-input invalid' : 'time-input'}
           value={form.endTime}
           onChange={(e) => update({ endTime: e.target.value })}
           onBlur={() => touch('times')}
         />
       </div>
-      <FieldError message={shown('times')} />
+      <FieldError field="times" message={shown('times')} />
       {outside && <p className="hint">Outside your work hours</p>}
     </div>
   )
@@ -304,6 +334,8 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
                     key={name}
                     type="button"
                     aria-pressed={on}
+                    data-field={day === 0 ? 'weekdays' : undefined}
+                    aria-describedby={shown('weekdays') ? 'weekdays-error' : undefined}
                     className={on ? 'segment selected' : 'segment'}
                     onClick={() => {
                       update({ weekdays: on ? form.weekdays.filter((d) => d !== day) : [...form.weekdays, day] })
@@ -315,7 +347,7 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
                 )
               })}
             </div>
-            <FieldError message={shown('weekdays')} />
+            <FieldError field="weekdays" message={shown('weekdays')} />
           </div>
           {times('Only between', true)}
         </>
@@ -329,6 +361,7 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
             <input
               type="date"
               aria-label="Due date"
+              {...fieldProps('due', shown)}
               className={shown('due') ? 'time-input invalid' : 'time-input'}
               value={form.dueDate}
               onChange={(e) => update({ dueDate: e.target.value })}
@@ -337,13 +370,15 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
             <input
               type="time"
               aria-label="Due time"
+              aria-invalid={shown('due') ? true : undefined}
+              aria-describedby={shown('due') ? 'due-error' : undefined}
               className={shown('due') ? 'time-input invalid' : 'time-input'}
               value={form.dueTime}
               onChange={(e) => update({ dueTime: e.target.value })}
               onBlur={() => touch('due')}
             />
           </div>
-          <FieldError message={shown('due')} />
+          <FieldError field="due" message={shown('due')} />
         </div>
       )}
       {line && <p className="summary">{line}</p>}
@@ -351,8 +386,22 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
   )
 }
 
-function FieldError({ message }: { message?: string }) {
-  return message ? <p className="field-error">{message}</p> : null
+/** Marks the field Add goes to, and ties it to its error for screen readers. */
+function fieldProps(field: Field, shown: (field: Field) => string | undefined) {
+  const message = shown(field)
+  return {
+    'data-field': field,
+    'aria-invalid': message ? true : undefined,
+    'aria-describedby': message ? `${field}-error` : undefined,
+  }
+}
+
+function FieldError({ field, message }: { field: Field; message?: string }) {
+  return message ? (
+    <p className="field-error" id={`${field}-error`}>
+      {message}
+    </p>
+  ) : null
 }
 
 function Check() {

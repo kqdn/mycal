@@ -148,13 +148,13 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
 
 ### States
 
-- **Add button:** disabled until the required fields are valid. While saving, it reads "Adding..." and the whole form is disabled. Saving re-plans the weeks the item touches. That usually takes a second or two, and can take longer on busy weeks, up to the planner's work limit.
-- **Field errors:** shown under the field in 12px `--attention-strong`, with the field's border in `--attention-strong`. Messages say how to fix the problem:
+- **Add button:** enabled except while saving. Pressing it with errors sends nothing: every error shows at its field, and the first one in the form scrolls into view and gets focus. While saving, it reads "Adding..." and the whole form is disabled. Saving re-plans the weeks the item touches. That usually takes a second or two, and can take longer on busy weeks, up to the planner's work limit.
+- **Field errors:** shown under the field in 12px `--attention-strong`, with the field's border in `--attention-strong`, never only in the banner. The field is marked invalid and points at its message, for screen readers. Messages say how to fix the problem:
   - "Use a length like 45m or 1h 30m."
   - "Pick at least one day."
   - "That deadline has already passed."
   - "None of these days has room left this week." (Every one of these days, under the weekday picker)
-- **Server errors** (a 422 or anything else): an attention banner at the top of the body shows the server's message. Everything you typed stays in the form.
+- **Server errors** (a 422 or anything else): errors that aren't about one field, like "doesn't fit", show in an attention banner at the top of the body with the server's message, and the body scrolls to the top so the banner is in view. Everything you typed stays in the form.
 - **Success:** the dialog closes and the grid shows the re-planned week.
 
 ## Item details popover (Milestone 3)

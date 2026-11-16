@@ -36,6 +36,14 @@ export interface ItemForm {
 
 export type Field = 'title' | 'day' | 'times' | 'weekdays' | 'due' | 'estimate' | 'longestSession' | 'eachDay'
 
+/** Fields in the order the form shows them, so pressing Add can go to the first error. */
+export const FIELDS_IN_ORDER: Field[] = ['title', 'day', 'weekdays', 'times', 'due', 'estimate', 'longestSession', 'eachDay']
+
+/** The first field with an error, in form order, or undefined if there is none. */
+export function firstError(errors: Errors): Field | undefined {
+  return FIELDS_IN_ORDER.find((field) => errors[field] !== undefined)
+}
+
 /** What the form needs to know which picked days are still open: now (UTC ISO), the week's timezone and work frames. */
 export interface DayContext {
   now: string
