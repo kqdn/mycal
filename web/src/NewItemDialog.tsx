@@ -38,7 +38,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, o
   const [touched, setTouched] = useState<Set<Field>>(new Set())
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
-  const body = useRef<HTMLFieldSetElement>(null)
+  const body = useRef<HTMLDivElement>(null)
   // Set when Add is pressed with errors (a new object each time); the effect goes there once it has rendered.
   const [goTo, setGoTo] = useState<{ field: Field } | null>(null)
   // "Now" for the deadline and open-day checks, taken when the dialog opens. The server checks again on add.
@@ -118,144 +118,147 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, o
           </button>
         </header>
 
-        <fieldset className="dialog-body" ref={body} disabled={saving}>
-          {serverError && (
-            <div className="banner" role="alert">
-              <p className="banner-title">Couldn't add it</p>
-              <p className="banner-body">{serverError}</p>
-            </div>
-          )}
-
-          <div className="field">
-            <label htmlFor="item-title" className="field-label">
-              Title
-            </label>
-            <input
-              id="item-title"
-              ref={titleInput}
-              {...fieldProps('title', shown)}
-              className={shown('title') ? 'text-input invalid' : 'text-input'}
-              value={form.title}
-              onChange={(e) => update({ title: e.target.value })}
-              onBlur={() => touch('title')}
-              autoComplete="off"
-            />
-            <FieldError field="title" message={shown('title')} />
-          </div>
-
-          <div className="field">
-            <span className="field-label" id="flexibility-label">
-              Flexibility
-            </span>
-            <div className="choice-card" role="radiogroup" aria-labelledby="flexibility-label">
-              {PRESETS.map(({ value, label }) => (
-                <div key={value}>
-                  <label className={form.preset === value ? 'choice-row selected' : 'choice-row'}>
-                    <input
-                      type="radio"
-                      name="preset"
-                      value={value}
-                      checked={form.preset === value}
-                      onChange={() => update({ preset: value as Preset })}
-                      className="visually-hidden"
-                    />
-                    <span>{label}</span>
-                    {form.preset === value && <Check />}
-                  </label>
-                  {form.preset === value && (
-                    <PresetPanel form={form} weekStart={weekStart} context={context} update={update} touch={touch} shown={shown} />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {showsEstimate(form) && (
-            <div className="field">
-              <div className="field-pair">
-                <div className="field">
-                  <label htmlFor="item-estimate" className="field-label">
-                    Estimate
-                  </label>
-                  <input
-                    id="item-estimate"
-                    {...fieldProps('estimate', shown)}
-                    className={shown('estimate') ? 'text-input invalid' : 'text-input'}
-                    placeholder="1h 30m"
-                    value={form.estimate}
-                    onChange={(e) => update({ estimate: e.target.value })}
-                    onBlur={() => touch('estimate')}
-                    autoComplete="off"
-                  />
-                  <FieldError field="estimate" message={shown('estimate')} />
-                  <PlannedAs text={plannedHint(form.estimate, slotMin, 'up')} />
-                </div>
-                <div className="field">
-                  <label htmlFor="item-longest" className="field-label">
-                    Longest session
-                  </label>
-                  <input
-                    id="item-longest"
-                    {...fieldProps('longestSession', shown)}
-                    className={shown('longestSession') ? 'text-input invalid' : 'text-input'}
-                    placeholder="No limit"
-                    value={form.longestSession}
-                    onChange={(e) => update({ longestSession: e.target.value })}
-                    onBlur={() => touch('longestSession')}
-                    autoComplete="off"
-                  />
-                  <FieldError field="longestSession" message={shown('longestSession')} />
-                  <PlannedAs text={plannedHint(form.longestSession, slotMin, 'down')} />
-                </div>
+        {/* The div scrolls, since Chrome won't scroll a fieldset; the fieldset disables the form while saving. */}
+        <div className="dialog-body" ref={body}>
+          <fieldset className="dialog-fields" disabled={saving}>
+            {serverError && (
+              <div className="banner" role="alert">
+                <p className="banner-title">Couldn't add it</p>
+                <p className="banner-body">{serverError}</p>
               </div>
-              <p className="hint">Longer work is split into sessions up to this length.</p>
-            </div>
-          )}
+            )}
 
-          {showsEachDay(form) && (
             <div className="field">
-              <label htmlFor="item-each-day" className="field-label">
-                Each day
+              <label htmlFor="item-title" className="field-label">
+                Title
               </label>
               <input
-                id="item-each-day"
-                {...fieldProps('eachDay', shown)}
-                className={shown('eachDay') ? 'text-input invalid' : 'text-input'}
-                placeholder="30m"
-                value={form.eachDay}
-                onChange={(e) => update({ eachDay: e.target.value })}
-                onBlur={() => touch('eachDay')}
+                id="item-title"
+                ref={titleInput}
+                {...fieldProps('title', shown)}
+                className={shown('title') ? 'text-input invalid' : 'text-input'}
+                value={form.title}
+                onChange={(e) => update({ title: e.target.value })}
+                onBlur={() => touch('title')}
                 autoComplete="off"
               />
-              <FieldError field="eachDay" message={shown('eachDay')} />
-              <PlannedAs text={plannedHint(form.eachDay, slotMin, 'up')} />
-              <p className="hint">One session this long on every day you picked that hasn't passed.</p>
+              <FieldError field="title" message={shown('title')} />
             </div>
-          )}
 
-          {showsOneSessionPerDay(form) && (
-            <div className="switch-card">
-              <div className="switch-text">
-                <span className="row-title" id="one-per-day-label">
-                  One session per day
-                </span>
-                <span className="row-sub">Puts each session on a different day.</span>
+            <div className="field">
+              <span className="field-label" id="flexibility-label">
+                Flexibility
+              </span>
+              <div className="choice-card" role="radiogroup" aria-labelledby="flexibility-label">
+                {PRESETS.map(({ value, label }) => (
+                  <div key={value}>
+                    <label className={form.preset === value ? 'choice-row selected' : 'choice-row'}>
+                      <input
+                        type="radio"
+                        name="preset"
+                        value={value}
+                        checked={form.preset === value}
+                        onChange={() => update({ preset: value as Preset })}
+                        className="visually-hidden"
+                      />
+                      <span>{label}</span>
+                      {form.preset === value && <Check />}
+                    </label>
+                    {form.preset === value && (
+                      <PresetPanel form={form} weekStart={weekStart} context={context} update={update} touch={touch} shown={shown} />
+                    )}
+                  </div>
+                ))}
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={form.oneSessionPerDay}
-                aria-labelledby="one-per-day-label"
-                className="switch"
-                onClick={() => update({ oneSessionPerDay: !form.oneSessionPerDay })}
-              >
-                <span className="switch-track">
-                  <span className="switch-knob" />
-                </span>
-              </button>
             </div>
-          )}
-        </fieldset>
+
+            {showsEstimate(form) && (
+              <div className="field">
+                <div className="field-pair">
+                  <div className="field">
+                    <label htmlFor="item-estimate" className="field-label">
+                      Estimate
+                    </label>
+                    <input
+                      id="item-estimate"
+                      {...fieldProps('estimate', shown)}
+                      className={shown('estimate') ? 'text-input invalid' : 'text-input'}
+                      placeholder="1h 30m"
+                      value={form.estimate}
+                      onChange={(e) => update({ estimate: e.target.value })}
+                      onBlur={() => touch('estimate')}
+                      autoComplete="off"
+                    />
+                    <FieldError field="estimate" message={shown('estimate')} />
+                    <PlannedAs text={plannedHint(form.estimate, slotMin, 'up')} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="item-longest" className="field-label">
+                      Longest session
+                    </label>
+                    <input
+                      id="item-longest"
+                      {...fieldProps('longestSession', shown)}
+                      className={shown('longestSession') ? 'text-input invalid' : 'text-input'}
+                      placeholder="No limit"
+                      value={form.longestSession}
+                      onChange={(e) => update({ longestSession: e.target.value })}
+                      onBlur={() => touch('longestSession')}
+                      autoComplete="off"
+                    />
+                    <FieldError field="longestSession" message={shown('longestSession')} />
+                    <PlannedAs text={plannedHint(form.longestSession, slotMin, 'down')} />
+                  </div>
+                </div>
+                <p className="hint">Longer work is split into sessions up to this length.</p>
+              </div>
+            )}
+
+            {showsEachDay(form) && (
+              <div className="field">
+                <label htmlFor="item-each-day" className="field-label">
+                  Each day
+                </label>
+                <input
+                  id="item-each-day"
+                  {...fieldProps('eachDay', shown)}
+                  className={shown('eachDay') ? 'text-input invalid' : 'text-input'}
+                  placeholder="30m"
+                  value={form.eachDay}
+                  onChange={(e) => update({ eachDay: e.target.value })}
+                  onBlur={() => touch('eachDay')}
+                  autoComplete="off"
+                />
+                <FieldError field="eachDay" message={shown('eachDay')} />
+                <PlannedAs text={plannedHint(form.eachDay, slotMin, 'up')} />
+                <p className="hint">One session this long on every day you picked that hasn't passed.</p>
+              </div>
+            )}
+
+            {showsOneSessionPerDay(form) && (
+              <div className="switch-card">
+                <div className="switch-text">
+                  <span className="row-title" id="one-per-day-label">
+                    One session per day
+                  </span>
+                  <span className="row-sub">Puts each session on a different day.</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.oneSessionPerDay}
+                  aria-labelledby="one-per-day-label"
+                  className="switch"
+                  onClick={() => update({ oneSessionPerDay: !form.oneSessionPerDay })}
+                >
+                  <span className="switch-track">
+                    <span className="switch-knob" />
+                  </span>
+                </button>
+              </div>
+            )}
+          </fieldset>
+        </div>
       </form>
     </dialog>
   )

@@ -510,7 +510,7 @@ ul {
   border-radius: var(--radius-card);
   background: var(--bg);
   color: var(--text);
-  overflow: hidden;
+  overflow: clip; /* unlike hidden, the browser can't scroll a clipped box, so the form never slides up */
   overscroll-behavior: contain;
 }
 
@@ -553,17 +553,23 @@ html:has(.item-dialog[open]) .week-body {
   margin: 0;
 }
 
+/* The scroller is a div: Chrome won't scroll a fieldset. */
 .dialog-body {
+  position: relative; /* so the hidden radios scroll with their rows instead of sticking out of the dialog */
+  min-height: 0; /* a flex child only shrinks below its content, and scrolls, with this */
+  padding: 0 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog-fields {
   display: flex;
   flex-direction: column;
   gap: 16px;
   min-width: 0;
   margin: 0;
-  min-height: 0; /* a flex child only shrinks below its content, and scrolls, with this */
-  padding: 0 24px 24px;
+  padding: 0;
   border: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 @media (max-width: 640px) {
