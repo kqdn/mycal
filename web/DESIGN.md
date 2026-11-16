@@ -95,12 +95,13 @@ It adds one token to `tokens.css`: `--scrim`, the backdrop behind dialogs (`--te
 
 - **Element:** a native `<dialog>` opened with `showModal()`. That keeps focus inside the dialog and makes Esc cancel, with no extra code.
 - **Backdrop:** `--scrim`.
-- **Box:** 480px wide (full width minus 32px on narrow screens), at most the window height minus 64px. `--bg` background (the off-white, as in the prototype), radius `--radius-card`, no border, no shadow.
+- **Box:** 480px wide (full width minus 32px on narrow screens), at most the window height minus 64px (minus 32px on narrow screens, where the header and body side padding drop to 16px). `--bg` background (the off-white, as in the prototype), radius `--radius-card`, no border, no shadow.
 - **Header:** stays put while the body scrolls. Padding is 20px 24px 12px. It has three parts in a row:
   - "Cancel" on the left: a text button, 15px / 500, `--text-muted`, 44px tall, no background.
   - "New item" in the middle, centered: Space Grotesk 18px / 600.
   - "Add" on the right: a primary button.
 - **Body:** 0 24px 24px padding, a 16px gap between field groups, and it scrolls when the dialog is taller than the window.
+- **Page behind:** doesn't scroll while the dialog is open. Wheel and touch scrolling stay inside the body and never reach the week grid.
 - **On open:** focus goes to the Title field.
 
 ### Fields, in this order
