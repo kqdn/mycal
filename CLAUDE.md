@@ -6,7 +6,9 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 ## Current milestone
 
-Milestone 5: recurrence in the app. Series (weekly classes, habits) are stored in the database and created, edited and deleted from the page, instead of only coming from week files as one week's occurrences. The Series model and its expansion are already built in the solver package (`recurrence.py`). No check-ins yet. Done when I can create a repeating item from the page, see it in every week it repeats in, and change or delete the series.
+Milestone 5: work frames and rules in the app. Work frames and constraints (daily_limit, time_preference, rest_between) are viewed, added, edited and deleted from the page, then the affected weeks re-plan, instead of only coming from week files. No recurrence or check-ins yet. Done when I can change my work frames and rules from the page, see the week re-plan, and know what a later import does to those edits.
+
+Next: Milestone 6, recurrence in the app (series stored and created, edited and deleted from the page; the Series model and its expansion are already built in `recurrence.py`), then 7, check-ins.
 
 Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items) and 4 (editing items) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 
