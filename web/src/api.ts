@@ -21,6 +21,7 @@ export interface Block {
 export interface Week {
   week_start: DateString
   timezone: string
+  slot_min: number // the planner's slot size; lengths off it are rounded
   feasible: boolean
   blocks: Block[]
   frames: { start: string; end: string }[]

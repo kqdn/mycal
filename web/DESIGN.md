@@ -142,6 +142,8 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
 
    - **Each day** (Every one of these days only, required): in place of the pair, one text input in the same format, with the placeholder "30m". Under it, a 12px `--text-muted` hint: "One session this long on every day you picked that hasn't passed."
 
+   - **Planned as:** when a length is off the slot grid, a 12px `--text-muted` line under its field gives the length the planner uses, such as "Planned as 30m". Estimate and Each day round up, and Longest session rounds down, never below one slot. The summary line uses the planned length too. It's informational only and never blocks Add.
+
 4. **One session per day:** a switch row inside a card, styled like the prototype's "Check in when it ends" row.
    - **Text:** the title "One session per day" (15px / 600), with "Puts each session on a different day." under it (12px, `--text-muted`).
    - **When it shows:** only when Longest session is set and shorter than Estimate, because otherwise there's only one session.

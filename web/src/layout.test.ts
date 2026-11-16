@@ -41,6 +41,7 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
   return {
     week_start: WEEK,
     timezone: LA,
+    slot_min: 15,
     feasible: true,
     blocks: blocks.map(([start, end], i) => ({
       id: `b${i}`,

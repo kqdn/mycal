@@ -138,6 +138,7 @@ export default function App() {
           weekStart={weekStart}
           timezone={state.week.timezone}
           frames={state.week.frames}
+          slotMin={state.week.slot_min}
           onClose={() => setAdding(false)}
           onAdded={(week) => setResult({ for: weekStart, status: 'ready', week })}
         />

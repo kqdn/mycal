@@ -5,6 +5,7 @@ import { weekAfterDelete } from './itemDetails'
 const WEEK: Week = {
   week_start: '2026-11-16',
   timezone: 'America/Los_Angeles',
+  slot_min: 15,
   feasible: true,
   blocks: [],
   frames: [],

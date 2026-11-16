@@ -5,6 +5,7 @@ import {
   openDays,
   outsideWorkHours,
   parseDuration,
+  plannedHint,
   showsEachDay,
   showsEstimate,
   showsOneSessionPerDay,
@@ -164,7 +165,7 @@ describe('every one of these days', () => {
   const WEDNESDAY_545PM = '2026-11-19T01:45:00Z'
   const piano = (changes: Partial<ItemForm> = {}) =>
     form({ title: 'Piano', preset: 'every_day', weekdays: [0, 1, 2, 3, 4], eachDay: '30m', ...changes })
-  const at = (now: string) => ({ now, timezone: LA, frames })
+  const at = (now: string) => ({ now, timezone: LA, frames, slotMin: 15 })
 
   it('shows an Each day length in place of the estimate', () => {
     expect(showsEachDay(piano())).toBe(true)
@@ -201,15 +202,24 @@ describe('every one of these days', () => {
   it('is an error when no picked day is left, and says nothing then', () => {
     const late = piano({ weekdays: [0, 1, 2], startTime: '18:00', endTime: '20:00' })
     const wednesday745pm = '2026-11-19T03:45:00Z'
-    expect(validate(late, wednesday745pm, LA, { weekStart: WEEK, frames }).weekdays).toBe(
+    expect(validate(late, wednesday745pm, LA, { weekStart: WEEK, frames, slotMin: 15 }).weekdays).toBe(
       'None of these days has room left this week.',
     )
     expect(summary(late, WEEK, at(wednesday745pm))).toBe('')
   })
 
+  it('plans an off-grid length rounded up, in the summary and the open days', () => {
+    expect(summary(piano({ eachDay: '20m' }), WEEK, at(SUNDAY_BEFORE))).toBe(
+      'The solver sees: 30m on each of Mon, Tue, Wed, Thu, Fri this week (Nov 16 to 22), in your work hours',
+    )
+    // 5:45pm: 15 minutes left of Wednesday, too little for a 20m session planned as 30m.
+    expect(openDays(piano({ eachDay: '20m' }), WEEK, at(WEDNESDAY_545PM))).toEqual([3, 4])
+    expect(validate(piano({ eachDay: '20m' }), SUNDAY_BEFORE, LA, { weekStart: WEEK, frames, slotMin: 15 })).toEqual({})
+  })
+
   it('needs a length for each day', () => {
     expect(validate(piano({ eachDay: '' }), SUNDAY_BEFORE, LA).eachDay).toBe('Use a length like 30m or 1h.')
-    expect(validate(piano(), SUNDAY_BEFORE, LA, { weekStart: WEEK, frames })).toEqual({})
+    expect(validate(piano(), SUNDAY_BEFORE, LA, { weekStart: WEEK, frames, slotMin: 15 })).toEqual({})
   })
 
   it('sends the picked days and the length, not an estimate', () => {
@@ -233,7 +243,7 @@ describe('outsideWorkHours', () => {
     start: `2026-11-${day}T17:00:00Z`,
     end: `2026-11-${day + 1}T02:00:00Z`,
   }))
-  const context = { now: SUNDAY_BEFORE, timezone: LA, frames }
+  const context = { now: SUNDAY_BEFORE, timezone: LA, frames, slotMin: 15 }
   const outside = (changes: Partial<ItemForm>) => outsideWorkHours(form(changes), WEEK, context)
   const weekdays = [0, 1, 2, 3, 4]
 
@@ -268,7 +278,7 @@ describe('outsideWorkHours', () => {
   it('never blocks adding', () => {
     const late = form({ preset: 'every_day', weekdays, startTime: '18:00', endTime: '20:00', eachDay: '30m' })
     expect(outsideWorkHours(late, WEEK, context)).toBe(true)
-    expect(validate(late, SUNDAY_BEFORE, LA, { weekStart: WEEK, frames })).toEqual({})
+    expect(validate(late, SUNDAY_BEFORE, LA, { weekStart: WEEK, frames, slotMin: 15 })).toEqual({})
   })
 })
 
@@ -280,5 +290,31 @@ describe('firstError', () => {
 
   it('is undefined when there are no errors', () => {
     expect(firstError({})).toBeUndefined()
+  })
+})
+
+describe('plannedHint', () => {
+  it('says the length the planner uses when it differs from what was typed', () => {
+    expect(plannedHint('20m', 15, 'up')).toBe('Planned as 30m') // an estimate or an every-day session
+    expect(plannedHint('20m', 15, 'down')).toBe('Planned as 15m') // a longest session
+    expect(plannedHint('10m', 15, 'down')).toBe('Planned as 15m') // never below one slot
+    expect(plannedHint('1h 10m', 15, 'up')).toBe('Planned as 1h 15m')
+  })
+
+  it('says nothing for a length on the grid, or one that does not parse', () => {
+    expect(plannedHint('45m', 15, 'up')).toBeUndefined()
+    expect(plannedHint('1h', 15, 'down')).toBeUndefined()
+    expect(plannedHint('soon', 15, 'up')).toBeUndefined()
+    expect(plannedHint('', 15, 'down')).toBeUndefined()
+  })
+
+  it('follows the slot size', () => {
+    expect(plannedHint('25m', 10, 'up')).toBe('Planned as 30m')
+    expect(plannedHint('25m', 10, 'down')).toBe('Planned as 20m')
+  })
+
+  it('is never an error: Add stays allowed', () => {
+    const form = { ...emptyForm(WEEK, WEEK), title: 'Stretch', preset: 'day' as const, day: WEEK, estimate: '20m', longestSession: '10m' }
+    expect(validate(form, SUNDAY_BEFORE, LA)).toEqual({})
   })
 })

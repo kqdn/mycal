@@ -44,11 +44,31 @@ export function firstError(errors: Errors): Field | undefined {
   return FIELDS_IN_ORDER.find((field) => errors[field] !== undefined)
 }
 
-/** What the form needs to know which picked days are still open: now (UTC ISO), the week's timezone and work frames. */
+/** What the form needs to know which picked days are still open and what lengths are planned:
+ * now (UTC ISO), the week's timezone, work frames and slot size. */
 export interface DayContext {
   now: string
   timezone: string
   frames: { start: string; end: string }[] // the week's work-frame time, UTC
+  slotMin: number
+}
+
+/** A length rounded up to the slot grid, as the planner does for estimates and every-day sessions. */
+export function plannedUp(minutes: number, slotMin: number): number {
+  return Math.ceil(minutes / slotMin) * slotMin
+}
+
+/** A longest session rounded down to the slot grid, but never below one slot, as the planner does. */
+export function plannedDown(minutes: number, slotMin: number): number {
+  return Math.max(1, Math.floor(minutes / slotMin)) * slotMin
+}
+
+/** "Planned as 30m" when the planner will use a different length than typed, else undefined. */
+export function plannedHint(typed: string, slotMin: number, round: 'up' | 'down'): string | undefined {
+  const minutes = parseDuration(typed)
+  if (minutes === null) return undefined
+  const planned = round === 'up' ? plannedUp(minutes, slotMin) : plannedDown(minutes, slotMin)
+  return planned === minutes ? undefined : `Planned as ${estimateLabel(planned)}`
 }
 export type Errors = Partial<Record<Field, string>>
 
@@ -118,7 +138,7 @@ export function validate(
   form: ItemForm,
   now: string,
   timezone: string,
-  week?: { weekStart: DateString; frames: DayContext['frames'] },
+  week?: { weekStart: DateString; frames: DayContext['frames']; slotMin: number },
 ): Errors {
   const errors: Errors = {}
   if (!form.title.trim()) errors.title = 'Give the item a title.'
@@ -131,7 +151,7 @@ export function validate(
   }
   if (picksDays(form)) {
     if (form.weekdays.length === 0) errors.weekdays = 'Pick at least one day.'
-    else if (form.preset === 'every_day' && week && openDays(form, week.weekStart, { now, timezone, frames: week.frames }).length === 0) {
+    else if (form.preset === 'every_day' && week && openDays(form, week.weekStart, { now, timezone, frames: week.frames, slotMin: week.slotMin }).length === 0) {
       errors.weekdays = 'None of these days has room left this week.'
     }
     if (Boolean(form.startTime) !== Boolean(form.endTime)) errors.times = 'Give both times, or neither.'
@@ -224,7 +244,8 @@ export function summary(form: ItemForm, weekStart: DateString, context?: DayCont
       const open = openDays(form, weekStart, context)
       if (open.length === 0) return ''
       const days = open.map((d) => WEEKDAYS[d]).join(', ')
-      const session = parseDuration(form.eachDay)
+      const typed = parseDuration(form.eachDay)
+      const session = typed === null ? null : plannedUp(typed, context.slotMin)
       const range = timeRange()
       const when = range ? `, ${range}` : ', in your work hours'
       const each = session === null ? `each of ${days}` : `${estimateLabel(session)} on each of ${days}`
@@ -244,20 +265,26 @@ const DAY_MIN = 24 * 60
  * the same rule as the planner's effective_item. A day's allowed time is the
  * "Only between" range (cut at midnight; an overnight range's tail counts for the
  * next day only if that day is picked too) or else the week's work frames.
+ * The length is the planned one (rounded up to the slot), and times are taken
+ * on the slot grid: now rounds up, and a range's edges round inward.
  * Without a valid length, a day is open if any of its time is left.
  * The server checks again on add, and its answer wins.
  */
 export function openDays(form: ItemForm, weekStart: DateString, context: DayContext): number[] {
-  const session = parseDuration(form.eachDay) ?? 1
+  const slot = context.slotMin
+  const typed = parseDuration(form.eachDay)
+  const session = typed === null ? 1 : plannedUp(typed, slot)
   const current = toLocal(context.now, context.timezone)
   const picked = [...new Set(form.weekdays)].sort((a, b) => a - b)
   const frameTime = form.startTime && form.endTime ? null : localIntervals(context.frames, context.timezone)
   return picked.filter((weekday) => {
     const date = addDays(weekStart, weekday)
     if (date < current.date) return false
-    const from = date === current.date ? current.minutes : 0
+    const from = date === current.date ? plannedUp(current.minutes, slot) : 0
     const intervals = frameTime ? (frameTime.get(date) ?? []) : rangeIntervals(form, weekday, picked)
-    return intervals.some(([start, end]) => end - Math.max(start, from) >= session)
+    return intervals.some(
+      ([start, end]) => Math.floor(end / slot) * slot - plannedUp(Math.max(start, from), slot) >= session,
+    )
   })
 }
 

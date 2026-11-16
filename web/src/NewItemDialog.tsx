@@ -4,6 +4,7 @@ import {
   emptyForm,
   firstError,
   outsideWorkHours,
+  plannedHint,
   PRESETS,
   showsEachDay,
   showsEstimate,
@@ -24,12 +25,13 @@ interface Props {
   weekStart: DateString
   timezone: string
   frames: DayContext['frames'] // the week's work-frame time, to tell which picked days are still open
+  slotMin: number // the planner's slot size, to show planned lengths
   onClose: () => void
   onAdded: (week: Week) => void
 }
 
 /** The New item dialog (web/DESIGN.md, "Add item dialog"). Mounted while open. */
-export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }: Props) {
+export function NewItemDialog({ weekStart, timezone, frames, slotMin, onClose, onAdded }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleInput = useRef<HTMLInputElement>(null)
   const [form, setForm] = useState<ItemForm>(() => emptyForm(weekStart, today()))
@@ -41,7 +43,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
   const [goTo, setGoTo] = useState<{ field: Field } | null>(null)
   // "Now" for the deadline and open-day checks, taken when the dialog opens. The server checks again on add.
   const [openedAt] = useState(() => new Date().toISOString())
-  const context: DayContext = { now: openedAt, timezone, frames }
+  const context: DayContext = { now: openedAt, timezone, frames, slotMin }
 
   // A native modal dialog keeps focus inside and makes Esc cancel.
   useEffect(() => {
@@ -50,7 +52,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
     titleInput.current?.focus()
   }, [])
 
-  const errors: Errors = validate(form, openedAt, timezone, { weekStart, frames })
+  const errors: Errors = validate(form, openedAt, timezone, { weekStart, frames, slotMin })
   const shown = (field: Field) => (touched.has(field) ? errors[field] : undefined)
 
   useEffect(() => {
@@ -186,6 +188,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                     autoComplete="off"
                   />
                   <FieldError field="estimate" message={shown('estimate')} />
+                  <PlannedAs text={plannedHint(form.estimate, slotMin, 'up')} />
                 </div>
                 <div className="field">
                   <label htmlFor="item-longest" className="field-label">
@@ -202,6 +205,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                     autoComplete="off"
                   />
                   <FieldError field="longestSession" message={shown('longestSession')} />
+                  <PlannedAs text={plannedHint(form.longestSession, slotMin, 'down')} />
                 </div>
               </div>
               <p className="hint">Longer work is split into sessions up to this length.</p>
@@ -224,6 +228,7 @@ export function NewItemDialog({ weekStart, timezone, frames, onClose, onAdded }:
                 autoComplete="off"
               />
               <FieldError field="eachDay" message={shown('eachDay')} />
+              <PlannedAs text={plannedHint(form.eachDay, slotMin, 'up')} />
               <p className="hint">One session this long on every day you picked that hasn't passed.</p>
             </div>
           )}
@@ -384,6 +389,11 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
       {line && <p className="summary">{line}</p>}
     </div>
   )
+}
+
+/** The length the planner will use, when it differs from what was typed. Never an error. */
+function PlannedAs({ text }: { text?: string }) {
+  return text ? <p className="hint">{text}</p> : null
 }
 
 /** Marks the field Add goes to, and ties it to its error for screen readers. */
