@@ -209,7 +209,12 @@ def effective_item(
 ) -> Item:
     """The item with the work it still has as of now. Read remaining work through this, never estimate_min.
 
-    Only "every one of these days" items change. Their work is what their kept
+    Lengths are stored as typed and rounded to the slot grid here, so the
+    stored item never changes: estimate_min up, max_chunk_min down (at least
+    one slot), an every-day session up. 20m is planned as 30m, and a 20m
+    longest session as 15m.
+
+    "Every one of these days" items also get their work recomputed: what their kept
     sessions cover (done, partial, locked, or already started, which the
     planner keeps) plus one session for each open day: a chosen day with no
     kept session and room for a whole session after now. So a day that passed
@@ -217,14 +222,15 @@ def effective_item(
     week. max_chunk_min and one_block_per_day are set here too, so k sessions
     over k open days put exactly one on each.
     """
-    if item.flex_preset is not FlexPreset.DAYS:
-        return item
-    session = every_day_session(item.preset_params)
-    if session is None:
-        return item
     slot = settings.slot_min
-    if session % slot:
-        raise ValueError(f"{item.title!r}: session_min {session} is not a multiple of the {slot}-minute slot")
+    session = every_day_session(item.preset_params) if item.flex_preset is FlexPreset.DAYS else None
+    if session is None:
+        return replace(
+            item,
+            estimate_min=None if item.estimate_min is None else planned_up(item.estimate_min, slot),
+            max_chunk_min=None if item.max_chunk_min is None else planned_down(item.max_chunk_min, slot),
+        )
+    session = planned_up(session, slot)
 
     zone = ZoneInfo(settings.timezone)
     open_from = open_from_moment(now, slot)
@@ -241,6 +247,16 @@ def effective_item(
     } - kept_days
     estimate = sum(minutes for _, minutes in covered) + session * len(open_days)
     return replace(item, estimate_min=estimate, max_chunk_min=session, one_block_per_day=True)
+
+
+def planned_up(minutes: int, slot_min: int) -> int:
+    """A length rounded up to the slot grid: 20m is planned as 30m."""
+    return -(-minutes // slot_min) * slot_min
+
+
+def planned_down(minutes: int, slot_min: int) -> int:
+    """A longest session rounded down to the slot grid, but never below one slot."""
+    return max(1, minutes // slot_min) * slot_min
 
 
 def effective_items(

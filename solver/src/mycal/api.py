@@ -292,7 +292,7 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime) -> Item
     if not title:
         raise Invalid("Give the item a title.")
     if request.preset == "every_day":
-        return _every_day_item(request, title, _days_params(request, at, moment), settings.slot_min)
+        return _every_day_item(request, title, _days_params(request, at, moment))
     preset = FlexPreset(request.preset)
     exact = preset is FlexPreset.EXACT
     if exact and (request.estimate_min is not None or request.max_chunk_min is not None):
@@ -355,14 +355,14 @@ def _days_params(request: ItemIn, at: Callable[[date, time], datetime], moment: 
     return params
 
 
-def _every_day_item(request: ItemIn, title: str, params: dict[str, Any], slot_min: int) -> Item:
+def _every_day_item(request: ItemIn, title: str, params: dict[str, Any]) -> Item:
     """One session of session_min on each chosen day. Weekdays are kept as picked; the planner
-    works out which are still open (effective_item)."""
+    works out which are still open and rounds the session to the slot grid (effective_item)."""
     if request.estimate_min is not None or request.max_chunk_min is not None:
         raise Invalid("An every-day item takes its length from Each day, so it has no estimate or longest session.")
     session = _need(request.session_min, "Add a length for each day, like 30m or 1h.")
-    if session <= 0 or session % slot_min:
-        raise Invalid(f"Use a length in steps of {slot_min} minutes, like 30m or 1h.")
+    if session <= 0:
+        raise Invalid("Use a length like 30m or 1h.")
     return Item(
         title=title,
         flex_preset=FlexPreset.DAYS,

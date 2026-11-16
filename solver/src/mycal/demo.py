@@ -83,14 +83,14 @@ def parse_week(data: dict[str, Any]) -> Week:
     items = []
     for raw in raw_items:
         try:
-            items.append(_parse_item(raw, ids, zone, data["week_start"], settings.slot_min))
+            items.append(_parse_item(raw, ids, zone, data["week_start"]))
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Item {raw['title']!r}: {error}") from error
 
     series = []
     for raw in data.get("series", []):
         try:
-            series.append(_parse_series(raw, timezone, settings.slot_min))
+            series.append(_parse_series(raw, timezone))
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError(f"Series {raw.get('title')!r}: {error}") from error
 
@@ -120,7 +120,7 @@ def _parse_constraint(raw: dict[str, Any], ids: dict[str, UUID], series_ids: dic
     )
 
 
-def _parse_series(raw: dict[str, Any], timezone: str, slot_min: int) -> Series:
+def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
     """A [[series]] table: an RRULE plus template fields; other keys are template params."""
     start_date = raw["start_date"]
     rule, rrule_end = series_rule_from_rrule(raw["rrule"], start_date)
@@ -128,7 +128,7 @@ def _parse_series(raw: dict[str, Any], timezone: str, slot_min: int) -> Series:
         raise ValueError("give the end in rrule (UNTIL or COUNT) or end_date, not both")
     preset = FlexPreset(raw["preset"])
     params = {key: value for key, value in raw.items() if key not in SERIES_FIELDS}
-    estimate, max_chunk, one_per_day = _work_fields(raw, preset, params, slot_min)
+    estimate, max_chunk, one_per_day = _work_fields(raw, preset, params)
     template = ItemTemplate(
         flex_preset=preset,
         preset_params=params,
@@ -150,25 +150,22 @@ def _parse_series(raw: dict[str, Any], timezone: str, slot_min: int) -> Series:
     )
 
 
-def _work_fields(
-    raw: dict[str, Any], preset: FlexPreset, params: dict[str, Any], slot_min: int
-) -> tuple[int | None, int | None, bool]:
+def _work_fields(raw: dict[str, Any], preset: FlexPreset, params: dict[str, Any]) -> tuple[int | None, int | None, bool]:
     """estimate_min, max_chunk_min and one_block_per_day, filled in for an every_day item.
 
     every_day with session_min means one session on each chosen day, so the
-    three fields follow from it and may not be given as well.
+    three fields follow from it and may not be given as well. session_min is
+    kept as written; the planner rounds it to the slot grid (effective_item).
     """
     if preset is not FlexPreset.DAYS or (session := every_day_session(params)) is None:
         return raw.get("estimate_min"), raw.get("max_chunk_min"), raw.get("one_block_per_day", False)
     if given := [k for k in ("estimate_min", "max_chunk_min", "one_block_per_day") if k in raw]:
         raise ValueError(f"every_day sets {given} from session_min; leave them out")
-    if session % slot_min:
-        raise ValueError(f"session_min {session} is not a multiple of the {slot_min}-minute slot")
     return session * len(set(params.get("weekdays", []))), session, True
 
 
 def _parse_item(
-    raw: dict[str, Any], ids: dict[str, UUID], zone: ZoneInfo, week_start: date, slot_min: int
+    raw: dict[str, Any], ids: dict[str, UUID], zone: ZoneInfo, week_start: date
 ) -> Item:
     preset = FlexPreset(raw["preset"])
     params = {key: value for key, value in raw.items() if key not in ITEM_FIELDS}
@@ -191,7 +188,7 @@ def _parse_item(
         raise ValueError(f"depends_on names unknown items {missing}")
 
     deadline = raw.get("deadline")
-    estimate, max_chunk, one_per_day = _work_fields(raw, preset, params, slot_min)
+    estimate, max_chunk, one_per_day = _work_fields(raw, preset, params)
     return Item(
         title=raw["title"],
         flex_preset=preset,

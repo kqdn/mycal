@@ -170,9 +170,17 @@ def test_bad_every_day_params_are_rejected(params: dict, message: str) -> None:
         compile_windows(item, [DAYTIME], LA, week.start, week.end)
 
 
-def test_a_session_off_the_slot_grid_is_rejected() -> None:
-    with pytest.raises(ValueError, match="multiple of the 15-minute slot"):
-        effective_item(piano(session=20), [], [DAYTIME], SolverSettings(LA), BEFORE_THE_WEEK)
+@pytest.mark.parametrize("engine", ["cp_sat", "backtracking"])
+def test_a_session_off_the_slot_grid_is_planned_rounded_up(engine: str) -> None:
+    item = piano(session=20)
+    conn, settings = database(DAYTIME, item, engine)
+
+    assert plan_weeks(conn, settings, W1, W1, BEFORE_THE_WEEK) == {W1: True}  # type: ignore[arg-type]
+
+    placed = sessions(conn, item)
+    assert days_of(placed) == Counter({W1 + timedelta(days=d): 1 for d in WEEKDAYS})
+    assert all(minutes(b) == 30 for b in placed)
+    assert store.list_items(conn)[0].preset_params["session_min"] == 20  # type: ignore[arg-type]
 
 
 # Week files
@@ -191,11 +199,14 @@ def test_a_week_file_fills_in_the_work_fields() -> None:
     assert (item.estimate_min, item.max_chunk_min, item.one_block_per_day) == (150, 30, True)
 
 
-@pytest.mark.parametrize(
-    "extra, message",
-    [({"estimate_min": 60}, "leave them out"), ({"session_min": 20}, "multiple of the 15-minute slot")],
-)
-def test_a_week_file_rejects_conflicting_every_day_fields(extra: dict, message: str) -> None:
-    raw = {"title": "Piano", "preset": "days", "weekdays": WEEKDAYS, "every_day": True, "session_min": 30} | extra
-    with pytest.raises(ValueError, match=message):
+def test_a_week_file_rejects_conflicting_every_day_fields() -> None:
+    raw = {"title": "Piano", "preset": "days", "weekdays": WEEKDAYS, "every_day": True, "session_min": 30, "estimate_min": 60}
+    with pytest.raises(ValueError, match="leave them out"):
         parse_week(WEEK_FILE | {"items": [raw]})
+
+
+def test_a_week_file_keeps_a_session_off_the_grid_as_written() -> None:
+    raw = {"title": "Piano", "preset": "days", "weekdays": WEEKDAYS, "every_day": True, "session_min": 20}
+    [item] = parse_week(WEEK_FILE | {"items": [raw]}).items
+
+    assert (item.preset_params["session_min"], item.estimate_min, item.max_chunk_min) == (20, 100, 20)

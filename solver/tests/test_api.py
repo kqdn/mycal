@@ -288,7 +288,6 @@ def test_an_item_that_does_not_fit_is_refused_and_nothing_changes(db: Path, clie
         ({"title": "X", "preset": "day", "day": "2026-11-10", "estimate_min": 30}, "already passed"),
         ({"title": "X", "preset": "day", "estimate_min": 30}, "date"),
         ({"title": "X", "preset": "every_day", "weekdays": [0]}, "length for each day"),
-        ({"title": "X", "preset": "every_day", "weekdays": [0], "session_min": 20}, "steps of 15 minutes"),
         ({"title": "X", "preset": "every_day", "weekdays": [0], "session_min": 30, "estimate_min": 30}, "no estimate"),
         ({"title": "X", "preset": "every_day", "weekdays": [], "session_min": 30}, "at least one day"),
     ],
@@ -620,6 +619,30 @@ def test_add_an_every_day_item_mid_week(db: Path, client: TestClient, monkeypatc
     [item] = [i for i in store.list_items(store.connect(db)) if i.title == "Piano"]
     assert item.preset_params["weekdays"] == [0, 1, 2, 3, 4]
     assert (item.preset_params["every_day"], item.preset_params["session_min"]) == (True, 30)
+
+
+def test_an_every_day_session_off_the_grid_is_stored_as_typed_and_planned_rounded_up(
+    db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    get(client)
+    monkeypatch.setattr(api, "now", lambda: pacific(18, 12, month=11))
+
+    week = add(client, title="Piano", preset="every_day", weekdays=[2, 3, 4], start_time="18:00", end_time="20:00", session_min=20)
+
+    piano = blocks_titled(week, "Piano")
+    assert len(piano) == 3 and all(minutes(b) == 30 for b in piano)
+    assert {(b["placed_min"], b["estimate_min"]) for b in piano} == {(90, 90)}
+    [item] = [i for i in store.list_items(store.connect(db)) if i.title == "Piano"]
+    assert item.preset_params["session_min"] == 20
+
+
+def test_an_estimate_off_the_grid_is_stored_as_typed_and_planned_rounded_up(db: Path, client: TestClient) -> None:
+    week = add(client, title="Stretch", preset="day", day="2026-11-18", estimate_min=20)
+
+    [block] = blocks_titled(week, "Stretch")
+    assert (minutes(block), block["estimate_min"]) == (30, 30)
+    [item] = [i for i in store.list_items(store.connect(db)) if i.title == "Stretch"]
+    assert item.estimate_min == 20
 
 
 def test_an_every_day_item_with_no_day_left_is_refused(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from mycal import FlexPreset, Item, SolverSettings, WorkFrame, store
-from mycal.planner import MAX_SPAN_WEEKS, plan_weeks
+from mycal.planner import MAX_SPAN_WEEKS, effective_item, plan_weeks
 
 LA = "America/Los_Angeles"
 W1, W2, W3, W4 = date(2026, 11, 16), date(2026, 11, 23), date(2026, 11, 30), date(2026, 12, 7)
@@ -87,3 +87,36 @@ def test_a_fixed_event_across_a_span_edge_is_saved_whole() -> None:
 
     assert (first.start, first.end) == (start, end)
     assert (again.id, again.start, again.end) == (first.id, start, end)
+
+
+@pytest.mark.parametrize(
+    "slot, estimate, longest, planned",
+    [
+        (15, 20, 20, (30, 15)),  # estimate up, longest session down
+        (15, 20, 10, (30, 15)),  # a longest session is never below one slot
+        (15, 60, 30, (60, 30)),  # on the grid: unchanged
+        (10, 25, 25, (30, 20)),  # the slot size is a setting
+    ],
+)
+def test_effective_item_rounds_lengths_to_the_slot_grid(slot: int, estimate: int, longest: int, planned: tuple[int, int]) -> None:
+    item = Item("Read", FlexPreset.DAY, preset_params={"day": date(2026, 11, 17)}, estimate_min=estimate, max_chunk_min=longest)
+    settings = SolverSettings(LA, slot_min=slot)
+
+    rounded = effective_item(item, [], [], settings, NOW)
+
+    assert (rounded.estimate_min, rounded.max_chunk_min) == planned
+    assert (item.estimate_min, item.max_chunk_min) == (estimate, longest)  # the stored item never changes
+
+
+def test_a_stored_estimate_off_the_grid_keeps_its_value_after_planning() -> None:
+    conn = store.connect(":memory:")
+    store.save_settings(conn, SolverSettings(LA))
+    store.put_work_frame(conn, WorkFrame("Weekdays", [0, 1, 2, 3, 4], time(9), time(18), LA))
+    item = Item("Read", FlexPreset.DAY, preset_params={"day": date(2026, 11, 17)}, estimate_min=20)
+    store.put_item(conn, item)
+
+    plan_weeks(conn, store.load_settings(conn), W1, W1, NOW)
+
+    [block] = store.list_blocks(conn)
+    assert (block.end - block.start).seconds // 60 == 30
+    assert store.list_items(conn)[0].estimate_min == 20
