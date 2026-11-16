@@ -1,15 +1,17 @@
 # mycal web
 
-The read-only week page (Milestone 2). React + TypeScript + Vite.
+The week page: React + TypeScript + Vite. It shows the planned week, and items are added, edited and deleted from it. To run it, see the [top-level README](../README.md); every command is in the repo's `CLAUDE.md`.
 
-It looks the way `DESIGN.md` says: colors, fonts and sizes come from `src/tokens.css`, and `week-preview.png` shows the target.
+It looks the way [`DESIGN.md`](DESIGN.md) says: colors, fonts and sizes come only from `src/tokens.css`. `week-preview.png` and `add-item-preview.png` are the design mockups, not screenshots.
 
-Start the week API first (`uv run mycal-api` in `solver/`), then run `npm run dev` here and open
-http://localhost:5173/?week=2026-11-16. Other commands are in the repo's CLAUDE.md.
+Logic lives in plain `.ts` files with tests next to them; the `.tsx` components only render it.
 
-- `src/api.ts`: types for the week JSON and the fetch
+- `src/api.ts`: types for the API's JSON, the fetch calls and a cache of loaded weeks
 - `src/time.ts`: UTC to wall-clock time in the week's timezone, 12-hour formatting, date helpers
 - `src/layout.ts`: splits blocks and frames into per-day pieces, the text-by-height rule and the initial scroll
-- `src/WeekGrid.tsx`: the grid itself
-- `src/itemForm.ts`: the New item form as pure logic: lengths, validation, the request and the summary line
-- `src/NewItemDialog.tsx`: the New item dialog
+- `src/itemForm.ts`: the item form: lengths, validation, the request and the summary line
+- `src/itemDetails.ts`: the item details popover: its text lines, where it goes and which week to show after a delete
+- `src/App.tsx`: the page, the week it shows and the week navigation
+- `src/WeekGrid.tsx`: the week grid
+- `src/NewItemDialog.tsx`: the dialog for adding and editing an item
+- `src/ItemPopover.tsx`: the item details popover
