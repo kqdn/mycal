@@ -317,8 +317,8 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 1. Solver package: the data model and solver as a Python package with tests. Feed in this week's items, print the schedule. Done.
 2. Read-only week view: a FastAPI endpoint loads a week file and returns the solved schedule as JSON, and a React + TypeScript + Vite page shows it as a read-only week grid. No database, no editing, no check-ins. Done.
-3. Storage and adding items: SQLite, and adding and deleting items in the app instead of a week file. Week files are imported once.
-4. Edit items: change an existing item's fields from the page, then re-plan.
+3. Storage and adding items: SQLite, and adding and deleting items in the app instead of a week file. Week files are imported once. Done.
+4. Edit items: change an existing item's fields from the page, then re-plan. Done.
 5. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package.
 6. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask.
 

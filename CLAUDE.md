@@ -6,9 +6,9 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 ## Current milestone
 
-Milestone 4: edit items. I can change an existing item's fields from the page, and the solver re-plans. The item details popover already has room for an Edit action next to Delete (`web/DESIGN.md`, "Item details popover"). No recurrence or check-ins yet. Done when I can open an item in my real week, change it, and see the week re-planned.
+Milestone 5: recurrence in the app. Series (weekly classes, habits) are stored in the database and created, edited and deleted from the page, instead of only coming from week files as one week's occurrences. The Series model and its expansion are already built in the solver package (`recurrence.py`). No check-ins yet. Done when I can create a repeating item from the page, see it in every week it repeats in, and change or delete the series.
 
-Milestones 1 (solver package), 2 (read-only week view) and 3 (storage, adding and deleting items) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
+Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items) and 4 (editing items) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 
 ## Stack
 
