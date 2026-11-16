@@ -69,7 +69,9 @@ def test_a_week_is_planned_and_returned_in_utc(client: TestClient) -> None:
     )
     assert blocks["Chemistry lab"]["fixed"] is False
     assert week["frames"][0] == {"start": "2026-11-16T17:00:00Z", "end": "2026-11-17T02:00:00Z"}  # Mon 9 to 6
-    assert week["unscheduled"] == [{"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0}]
+    assert week["unscheduled"] == [
+        {"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0, "editable": False}
+    ]
 
 
 def test_a_stored_plan_is_served_without_solving_again(client: TestClient, solves: list[int]) -> None:
@@ -781,6 +783,9 @@ def test_custom_items_and_missing_items_cannot_be_edited(db: Path, client: TestC
     id_ = item_id(db, "Email advisor")
     form = fetch(client, id_)
     assert (form["preset"], form["editable"]) == ("custom", False)
+    week = get(client)
+    assert [i["editable"] for i in week["unscheduled"] if i["title"] == "Email advisor"] == [False]
+    assert {b["editable"] for b in week["blocks"]} == {True}
 
     body = {"title": "Email", "preset": "day", "day": "2026-11-18", "estimate_min": 15, "week_start": WEEK}
     assert put(client, id_, body, status=422)["detail"] == api.CUSTOM_NOT_EDITABLE

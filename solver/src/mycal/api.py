@@ -92,6 +92,7 @@ class BlockOut(BaseModel):
     sessions: int
     placed_min: int  # minutes of the item's work placed so far, in every week
     estimate_min: int | None  # None for an exact-time item
+    editable: bool  # whether the edit dialog can change the item (not Custom)
 
 
 class SpanOut(BaseModel):
@@ -105,6 +106,7 @@ class ItemRef(BaseModel):
     estimate_min: int | None  # None when the item has no estimate
     reason: str | None = None  # why it isn't scheduled, when it is waiting on a week that can't be planned
     sessions: int = 0  # how many blocks it has in every week
+    editable: bool = False  # whether the edit dialog can change the item (not Custom)
 
 
 class WeekOut(BaseModel):
@@ -294,7 +296,7 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         old = store.get_item(conn, item_id)
         if old is None:
             raise HTTPException(status_code=404, detail=ITEM_GONE)
-        if old.flex_preset is FlexPreset.CUSTOM:
+        if not editable(old):
             raise HTTPException(status_code=422, detail=CUSTOM_NOT_EDITABLE)
         moment = now()
         blocks = [b for b in store.list_blocks(conn) if b.item_id == item_id]
@@ -520,6 +522,15 @@ def _every_day_item(request: ItemIn, title: str, params: dict[str, Any]) -> Item
     )
 
 
+def editable(item: Item) -> bool:
+    """Whether the edit dialog can show and change the item: not Custom, and with the fields its preset needs."""
+    preset = item.flex_preset
+    if preset is FlexPreset.CUSTOM or (preset is FlexPreset.BEFORE_DEADLINE and item.deadline is None):
+        return False
+    every_day = preset is FlexPreset.DAYS and every_day_session(item.preset_params) is not None
+    return preset is FlexPreset.EXACT or every_day or item.estimate_min is not None
+
+
 def from_item(item: Item, source: str | None, settings: SolverSettings) -> ItemFormOut:
     """The item in the dialog's terms: the inverse of to_item. Local dates and times are in my timezone."""
     zone = ZoneInfo(settings.timezone)
@@ -527,7 +538,7 @@ def from_item(item: Item, source: str | None, settings: SolverSettings) -> ItemF
     fields: dict[str, Any] = {
         "id": item.id,
         "source": source,
-        "editable": item.flex_preset is not FlexPreset.CUSTOM,
+        "editable": editable(item),
         "title": item.title,
         "estimate_min": item.estimate_min,
         "max_chunk_min": item.max_chunk_min,
@@ -553,9 +564,7 @@ def from_item(item: Item, source: str | None, settings: SolverSettings) -> ItemF
         fields |= {"preset": "before_deadline", "deadline_date": due.date(), "deadline_time": due.time()}
         fields["week_start"] = monday(due.date())
     else:  # Custom, or a deadline preset with no deadline: not editable in the dialog
-        fields |= {"preset": "custom", "editable": False, "week_start": monday(now().astimezone(zone).date())}
-    if fields["estimate_min"] is None and preset is not FlexPreset.EXACT and fields["preset"] != "every_day":
-        fields["editable"] = False  # the dialog needs an estimate for flexible items
+        fields |= {"preset": "custom", "week_start": monday(now().astimezone(zone).date())}
     return ItemFormOut(**fields)
 
 
@@ -607,6 +616,7 @@ def week_out(
                 sessions=len(sessions[b.item_id]),
                 placed_min=placed[b.item_id],
                 estimate_min=items[b.item_id].estimate_min,
+                editable=editable(items[b.item_id]),
             )
             for b in blocks
         ],
@@ -623,6 +633,7 @@ def week_out(
                 estimate_min=i.estimate_min,
                 reason=waiting.get(i.id),
                 sessions=len(sessions.get(i.id, [])),
+                editable=editable(i),
             )
             for i in items.values()
             if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
