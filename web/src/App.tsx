@@ -294,7 +294,7 @@ export default function App() {
           {state.status === 'ready' && !state.week.feasible && (
             <Banner
               title="This week can't be planned"
-              body="Some deadline, window or dependency can't be met. Check the week file's estimates and windows."
+              body="Some item's sessions don't fit its days, times, deadline or rules. Open it and give it more room or a smaller estimate."
             />
           )}
           {state.status === 'ready' && state.week.feasible && (

@@ -327,6 +327,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 **Open questions**
 
+- [ ] An "N times a week" occurrence ("any of these days" with one_block_per_day) created partway through its week, or re-created by an import --replace that deleted its earlier sessions, can need more days than are left, and then the whole week can't be planned (found Nov 17: Workout, 3 sessions on Mon, Wed, Fri, re-created on Tuesday). Every-day items already count only open days through effective_item. Cut such an item's work to the open days the same way, warn instead of failing the week, or leave it to check-ins (Milestone 7), which record what already happened?
 - [ ] After Milestone 7: retire week file imports (TOML) now that items, rules, frames and series are all made in the app, or replace them with a Google Calendar or .ics import. The RRULE parser and the source and --replace handling would carry over; the TOML format would not. examples/week.toml stays as test data either way
 - [ ] rest_between sees only this week's input, so last Sunday's session does not stop one on Monday. Pass recent done blocks from the previous week, or a rule of its own?
 - [ ] Follow-up: count the span cap from now instead of the current week's Monday, so an add on a weekend still looks two weeks ahead (today a Saturday add's span is that weekend plus one week)
