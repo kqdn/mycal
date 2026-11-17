@@ -134,17 +134,17 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
         <div className="popover-confirm">
           <div>
             <p className="confirm-question">Edit which?</p>
-            <p className="confirm-detail">This one changes only this date. The series changes every date that hasn't started.</p>
+            <p className="confirm-detail">This changes only this date. All changes every date that hasn't started.</p>
           </div>
           <div className="popover-actions">
             <button ref={cancel} type="button" className="secondary-button" disabled={opening} onClick={() => setStep('actions')}>
               Cancel
             </button>
             <button type="button" className="secondary-button" disabled={opening} onClick={() => onEdit('one')}>
-              This one
+              This
             </button>
             <button type="button" className="secondary-button" disabled={opening} onClick={() => onEdit('series')}>
-              {opening ? 'Opening...' : 'The series'}
+              {opening ? 'Opening...' : 'All'}
             </button>
           </div>
           {openError && <p className="field-error">Couldn't open it: {openError}</p>}
@@ -174,7 +174,7 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
           <div>
             <p className="confirm-question">Delete which?</p>
             <p className="confirm-detail">
-              This one skips only this date. The series stops repeating: dates that haven't started go, and past ones stay.
+              This skips only this date. All stops it repeating: dates that haven't started go, and past ones stay.
             </p>
           </div>
           <div className="popover-actions">
@@ -192,7 +192,7 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
                   onDelete(scope)
                 }}
               >
-                {deleting && chosen === scope ? 'Deleting...' : scope === 'one' ? 'This one' : 'The series'}
+                {deleting && chosen === scope ? 'Deleting...' : scope === 'one' ? 'This' : 'All'}
               </button>
             ))}
           </div>
