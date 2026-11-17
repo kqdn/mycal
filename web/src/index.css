@@ -741,6 +741,40 @@ html:has(.item-dialog[open]) .week-body {
   color: var(--accent-contrast);
 }
 
+/* Repeats: a segmented choice, then its fields in a sunken card (DESIGN.md, Repeat) */
+
+.segmented {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+}
+
+.segmented .segment {
+  font-size: 14px;
+}
+
+.repeat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+}
+
+.interval-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.interval-input {
+  width: 72px;
+}
+
 /* One session per day: a switch row in a card */
 
 .switch-card {
@@ -867,6 +901,7 @@ html:has(.item-dialog[open]) .week-body {
 
 .popover-actions {
   display: flex;
+  flex-wrap: wrap; /* a series' "Cancel, This one, The series" is wider than the popover */
   justify-content: flex-end;
   gap: 8px;
 }

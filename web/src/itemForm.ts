@@ -33,12 +33,43 @@ export interface ItemForm {
   longestSession: string // same format; empty means no limit
   oneSessionPerDay: boolean
   eachDay: string // an every-day item's length on each day, same format as estimate
+  // Repeating (repeatForm.ts). Shown when adding, and when editing a series.
+  repeat: 'never' | 'weekly' | 'daily'
+  interval: string // every N weeks or days, as typed
+  repeatDays: number[] // a weekly series' days, 0 = Monday (not used by days items)
+  startDate: DateString
+  endDate: DateString // '' for no end
 }
 
-export type Field = 'title' | 'day' | 'times' | 'weekdays' | 'due' | 'estimate' | 'longestSession' | 'eachDay'
+export type Field =
+  | 'title'
+  | 'day'
+  | 'times'
+  | 'weekdays'
+  | 'due'
+  | 'repeatDays'
+  | 'interval'
+  | 'startDate'
+  | 'endDate'
+  | 'estimate'
+  | 'longestSession'
+  | 'eachDay'
 
 /** Fields in the order the form shows them, so pressing Add can go to the first error. */
-export const FIELDS_IN_ORDER: Field[] = ['title', 'day', 'weekdays', 'times', 'due', 'estimate', 'longestSession', 'eachDay']
+export const FIELDS_IN_ORDER: Field[] = [
+  'title',
+  'day',
+  'weekdays',
+  'times',
+  'due',
+  'repeatDays',
+  'interval',
+  'startDate',
+  'endDate',
+  'estimate',
+  'longestSession',
+  'eachDay',
+]
 
 /** The first field with an error, in form order, or undefined if there is none. */
 export function firstError(errors: Errors): Field | undefined {
@@ -145,6 +176,11 @@ export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
     longestSession: '',
     oneSessionPerDay: false,
     eachDay: '',
+    repeat: 'never',
+    interval: '1',
+    repeatDays: [],
+    startDate: day,
+    endDate: '',
   }
 }
 

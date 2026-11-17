@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clearWeekCache, deleteItem, getItem, loadWeek, peekWeek, WeekError, type Week } from './api'
+import { clearWeekCache, deleteItem, deleteSeries, getItem, getSeries, loadWeek, peekWeek, WeekError, type Week } from './api'
 import { weekAfterDelete } from './itemDetails'
 import { formFrom, type ItemForm } from './itemForm'
-import { ItemPopover, type PopoverTarget } from './ItemPopover'
+import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
+import { formFromSeries } from './repeatForm'
 import { RulesPage } from './RulesPage'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
 import { WeekGrid } from './WeekGrid'
@@ -44,7 +45,13 @@ export default function App() {
   // Editing: the item being loaded for the dialog, why that failed, and the dialog's starting point.
   const [opening, setOpening] = useState<string | null>(null)
   const [openError, setOpenError] = useState<{ itemId: string; message: string } | null>(null)
-  const [editing, setEditing] = useState<{ id: string; source: string | null; form: ItemForm; weekStart: DateString } | null>(null)
+  const [editing, setEditing] = useState<{
+    kind: 'item' | 'series'
+    id: string
+    source: string | null
+    form: ItemForm
+    weekStart: DateString
+  } | null>(null)
   // What a finishing delete needs to know now, not when it started.
   const viewing = useRef(weekStart)
   const openItem = useRef<string | null>(null)
@@ -102,8 +109,9 @@ export default function App() {
     }
   }, [weekStart, reload])
 
-  async function remove(target: PopoverTarget) {
+  async function remove(target: PopoverTarget, scope: Scope) {
     const { itemId, title } = target
+    const seriesId = seriesOf(target)
     setPending((ids) => new Set(ids).add(itemId))
     setDeleteErrors((errors) => {
       const rest = { ...errors }
@@ -111,7 +119,9 @@ export default function App() {
       return rest
     })
     try {
-      const week = await deleteItem(itemId, weekStart)
+      // "This one" on an occurrence deletes the item; the server skips its date so it doesn't come back.
+      const week =
+        scope === 'series' && seriesId ? await deleteSeries(seriesId, weekStart) : await deleteItem(itemId, weekStart)
       if (openItem.current === itemId) setOpen(null)
       // Only replace the displayed week if it's still the one being viewed;
       // other weeks were dropped from the cache and reload when viewed.
@@ -141,14 +151,22 @@ export default function App() {
     }
   }
 
-  async function startEdit(target: PopoverTarget) {
+  async function startEdit(target: PopoverTarget, scope: Scope) {
     const { itemId } = target
+    const seriesId = seriesOf(target)
     setOpening(itemId)
     setOpenError(null)
     try {
+      if (scope === 'series' && seriesId) {
+        const series = await getSeries(seriesId)
+        setOpen(null)
+        const form = formFromSeries(series, today())
+        setEditing({ kind: 'series', id: series.id, source: series.source, form, weekStart })
+        return
+      }
       const item = await getItem(itemId)
       setOpen(null)
-      setEditing({ id: item.id, source: item.source, form: formFrom(item, today()), weekStart: item.week_start })
+      setEditing({ kind: 'item', id: item.id, source: item.source, form: formFrom(item, today()), weekStart: item.week_start })
     } catch (error) {
       if (error instanceof WeekError && error.kind === 'missing') {
         // Already gone: close and reload, as for a delete.
@@ -321,17 +339,23 @@ export default function App() {
           key={open.kind === 'block' ? open.block.id : open.itemId}
           target={open}
           timezone={state.week.timezone}
+          repeat={state.week.series.find((r) => r.id === seriesOf(open)) ?? null}
           deleting={pending.has(open.itemId)}
           error={deleteErrors[open.itemId] ?? null}
           opening={opening === open.itemId}
           openError={openError?.itemId === open.itemId ? openError.message : null}
-          onEdit={() => startEdit(open)}
-          onDelete={() => remove(open)}
+          onEdit={(scope) => startEdit(open, scope)}
+          onDelete={(scope) => remove(open, scope)}
           onClose={closePopover}
         />
       )}
     </>
   )
+}
+
+/** The stored series a popover's item is an occurrence of, if any. */
+function seriesOf(target: PopoverTarget): string | null {
+  return (target.kind === 'block' ? target.block.series_id : target.item.series_id) ?? null
 }
 
 /** What to tell the user when a week can't be shown. */

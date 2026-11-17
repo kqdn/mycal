@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { addItem, updateItem, WeekError, type Week } from './api'
+import { addItem, addSeries, updateItem, updateSeries, WeekError, type Week } from './api'
 import {
   emptyForm,
   firstError,
@@ -11,7 +11,6 @@ import {
   showsOneSessionPerDay,
   summary,
   toRequest,
-  validate,
   whenKey,
   WEEKDAYS,
   type DayContext,
@@ -21,6 +20,16 @@ import {
   type Preset,
 } from './itemForm'
 import { fieldProps } from './fieldProps'
+import {
+  chooseRepeat,
+  fitRepeat,
+  perWeek,
+  repeatChoices,
+  repeats,
+  repeatSummary,
+  toSeriesRequest,
+  validateWithRepeat,
+} from './repeatForm'
 import { Check, FieldError } from './fields'
 import { today, type DateString } from './time'
 
@@ -29,8 +38,9 @@ interface Props {
   timezone: string
   frames: DayContext['frames'] // the week's work-frame time, to tell which picked days are still open
   slotMin: number // the planner's slot size, to show planned lengths
-  // Set to edit an existing item: its id, where it came from, the form as stored, and its own week.
-  editing?: { id: string; source: string | null; form: ItemForm; weekStart: DateString }
+  // Set to edit an existing item or series: its id, where it came from, the form as stored, and its own week.
+  // An item (an occurrence too) is edited without the Repeats field; a series with it.
+  editing?: { kind: 'item' | 'series'; id: string; source: string | null; form: ItemForm; weekStart: DateString }
   onClose: () => void
   onSaved: (week: Week) => void
 }
@@ -64,7 +74,17 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
 
   // Editing without changing when the item is: a passed day or deadline is fine, as on the server.
   const unmoved = editing !== undefined && whenKey(form) === whenKey(editing.form)
-  const errors: Errors = validate(form, openedAt, timezone, { weekStart: formWeek, frames, slotMin }, unmoved)
+  const editingSeries = editing?.kind === 'series'
+  const showsRepeat = editing === undefined || editingSeries
+  const errors: Errors = validateWithRepeat(
+    form,
+    openedAt,
+    timezone,
+    { weekStart: formWeek, frames, slotMin },
+    unmoved,
+    today(),
+    editingSeries && form.startDate === editing.form.startDate,
+  )
   const shown = (field: Field) => (touched.has(field) ? errors[field] : undefined)
 
   useEffect(() => {
@@ -100,8 +120,11 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
     setSaving(true)
     setServerError(null)
     try {
-      const request = toRequest(form, formWeek)
-      const week = editing ? await updateItem(editing.id, request, weekStart) : await addItem(request)
+      let week: Week
+      if (editingSeries) week = await updateSeries(editing.id, toSeriesRequest(form, formWeek), weekStart)
+      else if (editing) week = await updateItem(editing.id, toRequest(form, formWeek), weekStart)
+      else if (repeats(form)) week = await addSeries(toSeriesRequest(form, weekStart))
+      else week = await addItem(toRequest(form, weekStart))
       onSaved(week)
       dialog.current?.close()
     } catch (error) {
@@ -124,7 +147,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
             Cancel
           </button>
           <h2 id="new-item-title" className="dialog-title">
-            {editing ? 'Edit item' : 'New item'}
+            {editingSeries ? 'Edit repeating item' : editing ? 'Edit item' : 'New item'}
           </h2>
           <button type="submit" className="primary-button" disabled={saving}>
             {editing ? (saving ? 'Saving...' : 'Save') : saving ? 'Adding...' : 'Add'}
@@ -174,19 +197,31 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
                         name="preset"
                         value={value}
                         checked={form.preset === value}
-                        onChange={() => update({ preset: value as Preset })}
+                        onChange={() => setForm((current) => fitRepeat({ ...current, preset: value as Preset }))}
                         className="visually-hidden"
                       />
                       <span>{label}</span>
                       {form.preset === value && <Check />}
                     </label>
                     {form.preset === value && (
-                      <PresetPanel form={form} weekStart={formWeek} context={context} update={update} touch={touch} shown={shown} />
+                      <PresetPanel
+                        form={form}
+                        weekStart={formWeek}
+                        context={context}
+                        update={update}
+                        touch={touch}
+                        shown={shown}
+                        repeating={showsRepeat && repeats(form)}
+                      />
                     )}
                   </div>
                 ))}
               </div>
             </div>
+
+            {showsRepeat && (
+              <RepeatField form={form} editingSeries={editingSeries} update={update} touch={touch} shown={shown} />
+            )}
 
             {showsEstimate(form) && (
               <div className="field">
@@ -287,11 +322,12 @@ interface PanelProps {
   update: (changes: Partial<ItemForm>) => void
   touch: (field: Field) => void
   shown: (field: Field) => string | undefined
+  repeating?: boolean // each occurrence's date fills in the date fields, so they are hidden
 }
 
 /** The selected preset's fields, under its row. */
-function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelProps) {
-  const line = summary(form, weekStart, context)
+function PresetPanel({ form, weekStart, context, update, touch, shown, repeating = false }: PanelProps) {
+  const line = repeating ? repeatSummary(form) : summary(form, weekStart, context)
   const outside = outsideWorkHours(form, weekStart, context)
   const date = (
     <div className="field">
@@ -345,7 +381,7 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
 
   return (
     <div className="preset-panel">
-      {(form.preset === 'exact' || form.preset === 'day' || form.preset === 'day_range') && date}
+      {!repeating && (form.preset === 'exact' || form.preset === 'day' || form.preset === 'day_range') && date}
       {(form.preset === 'exact' || form.preset === 'day_range') && times('Time', false)}
       {(form.preset === 'days' || form.preset === 'every_day') && (
         <>
@@ -382,18 +418,21 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
             Due
           </span>
           <div className="time-pair" role="group" aria-labelledby="item-due-label">
-            <input
-              type="date"
-              aria-label="Due date"
-              {...fieldProps('due', shown)}
-              className={shown('due') ? 'time-input invalid' : 'time-input'}
-              value={form.dueDate}
-              onChange={(e) => update({ dueDate: e.target.value })}
-              onBlur={() => touch('due')}
-            />
+            {!repeating && (
+              <input
+                type="date"
+                aria-label="Due date"
+                {...fieldProps('due', shown)}
+                className={shown('due') ? 'time-input invalid' : 'time-input'}
+                value={form.dueDate}
+                onChange={(e) => update({ dueDate: e.target.value })}
+                onBlur={() => touch('due')}
+              />
+            )}
             <input
               type="time"
               aria-label="Due time"
+              data-field={repeating ? 'due' : undefined}
               aria-invalid={shown('due') ? true : undefined}
               aria-describedby={shown('due') ? 'due-error' : undefined}
               className={shown('due') ? 'time-input invalid' : 'time-input'}
@@ -413,4 +452,127 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
 /** The length the planner will use, when it differs from what was typed. Never an error. */
 function PlannedAs({ text }: { text?: string }) {
   return text ? <p className="hint">{text}</p> : null
+}
+
+interface RepeatProps {
+  form: ItemForm
+  editingSeries: boolean
+  update: (changes: Partial<ItemForm>) => void
+  touch: (field: Field) => void
+  shown: (field: Field) => string | undefined
+}
+
+/** The Repeats field (web/DESIGN.md, "Repeat"): how often, on which days, and from when to when. */
+function RepeatField({ form, editingSeries, update, touch, shown }: RepeatProps) {
+  const choices = repeatChoices(form.preset, editingSeries)
+  const unit = form.repeat === 'daily' ? 'days' : 'weeks'
+  return (
+    <div className="field">
+      <span className="field-label" id="repeat-label">
+        Repeats
+      </span>
+      <div className="segmented" role="radiogroup" aria-labelledby="repeat-label">
+        {choices.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={form.repeat === value}
+            className={form.repeat === value ? 'segment selected' : 'segment'}
+            onClick={() => update(chooseRepeat(form, value))}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {repeats(form) && (
+        <div className="repeat-panel">
+          {form.repeat === 'weekly' && !perWeek(form.preset) && (
+            <div className="field">
+              <span className="field-label" id="repeat-days-label">
+                On
+              </span>
+              <div className="weekday-picker" role="group" aria-labelledby="repeat-days-label">
+                {WEEKDAYS.map((name, day) => {
+                  const on = form.repeatDays.includes(day)
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      aria-pressed={on}
+                      data-field={day === 0 ? 'repeatDays' : undefined}
+                      aria-describedby={shown('repeatDays') ? 'repeatDays-error' : undefined}
+                      className={on ? 'segment selected' : 'segment'}
+                      onClick={() => {
+                        update({ repeatDays: on ? form.repeatDays.filter((d) => d !== day) : [...form.repeatDays, day] })
+                        touch('repeatDays')
+                      }}
+                    >
+                      {name}
+                    </button>
+                  )
+                })}
+              </div>
+              <FieldError field="repeatDays" message={shown('repeatDays')} />
+            </div>
+          )}
+
+          <div className="field">
+            <div className="interval-row">
+              <label htmlFor="repeat-interval" className="time-to">
+                Every
+              </label>
+              <input
+                id="repeat-interval"
+                inputMode="numeric"
+                {...fieldProps('interval', shown)}
+                className={shown('interval') ? 'time-input interval-input invalid' : 'time-input interval-input'}
+                value={form.interval}
+                onChange={(e) => update({ interval: e.target.value })}
+                onBlur={() => touch('interval')}
+                autoComplete="off"
+              />
+              <span className="time-to">{unit}</span>
+            </div>
+            <FieldError field="interval" message={shown('interval')} />
+          </div>
+
+          <div className="field-pair">
+            <div className="field">
+              <label htmlFor="repeat-start" className="field-label">
+                Starts
+              </label>
+              <input
+                id="repeat-start"
+                type="date"
+                {...fieldProps('startDate', shown)}
+                className={shown('startDate') ? 'text-input invalid' : 'text-input'}
+                value={form.startDate}
+                onChange={(e) => update({ startDate: e.target.value })}
+                onBlur={() => touch('startDate')}
+              />
+              <FieldError field="startDate" message={shown('startDate')} />
+            </div>
+            <div className="field">
+              <label htmlFor="repeat-end" className="field-label">
+                Ends <span className="optional">(optional)</span>
+              </label>
+              <input
+                id="repeat-end"
+                type="date"
+                {...fieldProps('endDate', shown)}
+                className={shown('endDate') ? 'text-input invalid' : 'text-input'}
+                value={form.endDate}
+                onChange={(e) => update({ endDate: e.target.value })}
+                onBlur={() => touch('endDate')}
+              />
+              <FieldError field="endDate" message={shown('endDate')} />
+            </div>
+          </div>
+          {perWeek(form.preset) && <p className="hint">Repeats as a whole week, starting on the Monday of its start date.</p>}
+        </div>
+      )}
+    </div>
+  )
 }

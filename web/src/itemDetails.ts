@@ -11,6 +11,7 @@ export interface UnscheduledItem {
   reason: string | null
   sessions: number
   editable: boolean
+  series_id?: string | null // set on an occurrence of a stored series
 }
 
 /** "Tue, Nov 17, 2:00 to 2:30pm", or "... (ends the next day)" for a block that runs past midnight. */

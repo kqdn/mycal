@@ -10,6 +10,7 @@ const WEEK: Week = {
   blocks: [],
   frames: [],
   unscheduled: [],
+  series: [],
 }
 
 function respond(status: number, body: unknown): Response {

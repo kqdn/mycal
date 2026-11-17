@@ -53,10 +53,12 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
       placed_min: 60,
       estimate_min: 60,
       editable: true,
+      series_id: null,
       ...span([start, end]),
     })),
     frames: frames.map(span),
     unscheduled: [],
+    series: [],
   }
 }
 

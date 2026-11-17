@@ -17,6 +17,7 @@ function block(changes: Partial<Block>): Block {
     placed_min: 30,
     estimate_min: 30,
     editable: true,
+    series_id: null,
     ...changes,
   }
 }

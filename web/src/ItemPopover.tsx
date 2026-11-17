@@ -1,21 +1,26 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Block } from './api'
+import type { Block, RepeatOut } from './api'
 import { confirmLine, kindLine, popoverPosition, unscheduledLine, whenLine, type UnscheduledItem } from './itemDetails'
+import { repeatLine } from './repeatForm'
 
 /** What the popover is about, and the element that opened it (for placing it and returning focus). */
 export type PopoverTarget =
   | { kind: 'block'; itemId: string; title: string; block: Block; opener: HTMLElement }
   | { kind: 'unscheduled'; itemId: string; title: string; item: UnscheduledItem; opener: HTMLElement }
 
+/** Which an action on an occurrence of a series reaches: this date only, or the series. */
+export type Scope = 'one' | 'series'
+
 interface Props {
   target: PopoverTarget
   timezone: string
+  repeat: RepeatOut | null // set when the item is an occurrence of a stored series
   deleting: boolean
   error: string | null
   opening: boolean // Edit is loading the item
   openError: string | null
-  onEdit: () => void
-  onDelete: () => void
+  onEdit: (scope: Scope) => void
+  onDelete: (scope: Scope) => void
   onClose: () => void
 }
 
@@ -26,10 +31,13 @@ interface Props {
  * after the popover closes. Mount it with a key per target so the confirm step
  * starts fresh.
  */
-export function ItemPopover({ target, timezone, deleting, error, opening, openError, onEdit, onDelete, onClose }: Props) {
+export function ItemPopover({ target, timezone, repeat, deleting, error, opening, openError, onEdit, onDelete, onClose }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
-  const [confirming, setConfirming] = useState(false)
+  // The actions row, or in its place: confirming a delete, or (for a series) picking what Edit changes.
+  const [step, setStep] = useState<'actions' | 'confirm' | 'pickEdit'>('actions')
+  const [chosen, setChosen] = useState<Scope>('one') // which delete is running, for its "Deleting..." label
+  const confirming = step !== 'actions'
   const [openedAt] = useState(() => new Date().toISOString()) // "now" for "Already started"
 
   // Open, then place it next to what opened it. Again when the content changes size.
@@ -45,7 +53,7 @@ export function ItemPopover({ target, timezone, deleting, error, opening, openEr
     )
     element.style.left = `${left}px`
     element.style.top = `${top}px`
-  }, [target, confirming, error, deleting, opening, openError])
+  }, [target, step, error, deleting, opening, openError])
 
   // When the browser closes it (Escape, a click outside), tell App and hand focus back.
   useEffect(() => {
@@ -62,7 +70,7 @@ export function ItemPopover({ target, timezone, deleting, error, opening, openEr
 
   useEffect(() => {
     if (confirming) cancel.current?.focus()
-  }, [confirming])
+  }, [confirming, step])
 
   const sessions = target.kind === 'block' ? target.block.sessions : target.item.sessions
   const editable = target.kind === 'block' ? target.block.editable : target.item.editable
@@ -75,32 +83,93 @@ export function ItemPopover({ target, timezone, deleting, error, opening, openEr
         {target.kind === 'block' ? kindLine(target.block, openedAt) : unscheduledLine(target.item)}
       </p>
 
-      {!confirming ? (
+      {repeat && <p className="popover-kind">{repeatLine(repeat)}</p>}
+
+      {step === 'actions' && (
         <>
           <div className="popover-actions">
-            <button type="button" className="secondary-button" disabled={!editable || opening} onClick={onEdit}>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={!editable || opening}
+              onClick={() => (repeat ? setStep('pickEdit') : onEdit('one'))}
+            >
               {opening ? 'Opening...' : 'Edit'}
             </button>
-            <button type="button" className="secondary-button" disabled={opening} onClick={() => setConfirming(true)}>
+            <button type="button" className="secondary-button" disabled={opening} onClick={() => setStep('confirm')}>
               Delete item
             </button>
           </div>
           {!editable && <p className="hint">Change Custom items in their week file.</p>}
           {openError && <p className="field-error">Couldn't open it: {openError}</p>}
         </>
-      ) : (
+      )}
+
+      {step === 'pickEdit' && (
+        <div className="popover-confirm">
+          <div>
+            <p className="confirm-question">Edit which?</p>
+            <p className="confirm-detail">This one changes only this date. The series changes every date that hasn't started.</p>
+          </div>
+          <div className="popover-actions">
+            <button ref={cancel} type="button" className="secondary-button" disabled={opening} onClick={() => setStep('actions')}>
+              Cancel
+            </button>
+            <button type="button" className="secondary-button" disabled={opening} onClick={() => onEdit('one')}>
+              This one
+            </button>
+            <button type="button" className="secondary-button" disabled={opening} onClick={() => onEdit('series')}>
+              {opening ? 'Opening...' : 'The series'}
+            </button>
+          </div>
+          {openError && <p className="field-error">Couldn't open it: {openError}</p>}
+        </div>
+      )}
+
+      {step === 'confirm' && !repeat && (
         <div className="popover-confirm">
           <div>
             <p className="confirm-question">Delete this item?</p>
             <p className="confirm-detail">{confirmLine(sessions)}</p>
           </div>
           <div className="popover-actions">
-            <button ref={cancel} type="button" className="secondary-button" disabled={deleting} onClick={() => setConfirming(false)}>
+            <button ref={cancel} type="button" className="secondary-button" disabled={deleting} onClick={() => setStep('actions')}>
               Cancel
             </button>
-            <button type="button" className="secondary-button danger" disabled={deleting} onClick={onDelete}>
+            <button type="button" className="secondary-button danger" disabled={deleting} onClick={() => onDelete('one')}>
               {deleting ? 'Deleting...' : 'Delete'}
             </button>
+          </div>
+          {error && <p className="field-error">Couldn't delete it: {error}</p>}
+        </div>
+      )}
+
+      {step === 'confirm' && repeat && (
+        <div className="popover-confirm">
+          <div>
+            <p className="confirm-question">Delete which?</p>
+            <p className="confirm-detail">
+              This one skips only this date. The series stops repeating: dates that haven't started go, and past ones stay.
+            </p>
+          </div>
+          <div className="popover-actions">
+            <button ref={cancel} type="button" className="secondary-button" disabled={deleting} onClick={() => setStep('actions')}>
+              Cancel
+            </button>
+            {(['one', 'series'] as const).map((scope) => (
+              <button
+                key={scope}
+                type="button"
+                className="secondary-button danger"
+                disabled={deleting}
+                onClick={() => {
+                  setChosen(scope)
+                  onDelete(scope)
+                }}
+              >
+                {deleting && chosen === scope ? 'Deleting...' : scope === 'one' ? 'This one' : 'The series'}
+              </button>
+            ))}
           </div>
           {error && <p className="field-error">Couldn't delete it: {error}</p>}
         </div>

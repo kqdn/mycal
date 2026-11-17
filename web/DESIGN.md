@@ -220,6 +220,36 @@ Blocks that already started can be opened and their item deleted like any other,
 
 Blocks are clickable, but a block's height comes from its length (a 15 min block is 13px tall), so it can't always be 44px. This is the one exception to "everything clickable is at least 44px". Every block is still reachable with the keyboard, and the Unscheduled "More" button is a full 44px.
 
+## Repeat (Milestone 6)
+
+Draft by Claude, for Kaden to review. A repeating item is a series: the item's fields plus how it repeats. Each date it repeats on gets its own occurrence, which is a normal item on the grid.
+
+### Repeats field (New item dialog)
+
+- **Where:** right after Flexibility, before Estimate. It changes which date fields Flexibility shows, so it sits next to them.
+- **Choice:** a label "Repeats", then a segmented choice filling the row: "Never", "Weekly", "Daily". Default: Never, so a one-off item is added exactly as before. For "Any of these days" and "Every one of these days" the choice is "Never" and "Every week", since those repeat as a whole week. Switching to one of those presets while Daily is picked switches to Every week.
+- **Its fields:** when it isn't Never, a card under the choice (`--surface-sunken`, 1px `--border`, radius `--radius-input`, 12px 14px padding, a 10px gap, 8px below the choice) holds, in order:
+  - **On** (Weekly only, not for days presets): the weekday picker. Choosing Weekly picks the start date's weekday to begin with. At least one day is required.
+  - **Every N weeks / days:** "Every", a 72px wide numeric input (default 1), then "weeks" or "days", on one row.
+  - **Starts and Ends (optional):** two date inputs side by side, like Estimate and Longest session. Starts defaults to the form's date (today if it is in the viewed week, else its Monday). A days item repeats from the Monday of the week Starts falls in, and a hint under the dates says so: "Repeats as a whole week, starting on the Monday of its start date."
+- **While repeating, the preset's own dates hide:** Exact time, Any time on a day and Time range on a day lose their Date, and Before a deadline keeps only its due time. Each occurrence's date fills them in.
+- **Summary line:** the preset panel's line describes the series instead: "Every Tue and Fri, 8:00 to 9:00am, from Tue, Nov 17", "Each of Mon, Tue, Wed, Thu and Fri, every week, 6:00 to 8:00pm, from Mon, Nov 16", "Due every Wed at 5:00pm, from Tue, Nov 17 until Wed, Dec 16".
+- **Errors**, at their field like the others:
+  - "Pick at least one day to repeat on."
+  - "Use a whole number of 1 or more."
+  - "A repeating item can't start in the past." (A days item may start any day of this week.)
+  - "The end date is before the start date."
+  - "Pick a due time." (Before a deadline)
+- **Adding:** the series re-plans every week from this one on, like a work frame, so it can take a few seconds. A week that would stop fitting refuses it, with the server's message in the banner.
+
+### Details popover
+
+- **Repeats line:** an occurrence of a series adds a line under the kind line, same style (12px `--text-muted`): "Repeats every Tue and Fri", "Repeats every week", "Repeats every 2 weeks on Tue", "Repeats every day", plus " until Fri, Dec 18" when it ends.
+- **Edit:** for an occurrence, Edit swaps the actions row for a choice row, like the delete confirm: "Edit which?" (13px / 600), then "This one changes only this date. The series changes every date that hasn't started." (12px `--text-muted`), and three secondary buttons: "Cancel", "This one", "The series". The row wraps when the buttons don't fit. Focus moves to Cancel.
+  - **This one** opens the normal edit dialog for that date, without the Repeats field. A date edited this way keeps its changes when the series is edited later.
+  - **The series** opens the dialog as "Edit repeating item", with the Repeats field (no Never) and the series' fields. Saving rebuilds every date that hasn't started, except ones edited on their own. Past dates stay as they were. A start date that has passed can stay; only a changed start has to lie ahead.
+- **Delete:** for an occurrence, "Delete item" asks "Delete which?" with "This one skips only this date. The series stops repeating: dates that haven't started go, and past ones stay." The buttons are "Cancel", "This one" and "The series", the last two styled like Delete (`--attention-strong`). The one pressed reads "Deleting..." and all three are disabled while it runs. Everything else (errors, closing while it runs, a 404) works as for deleting an item.
+
 ## Frames and rules (Milestone 5)
 
 A second page, reached from a second top-bar tab, where work frames and rules (constraints) are viewed, added, edited and deleted. Until now they could only be changed in a week file and re-imported. It adds no tokens and no libraries.

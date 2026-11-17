@@ -3,6 +3,7 @@
 
 import type { FrameOut, FrameRequest } from './frameForm'
 import type { ItemRequest, Preset } from './itemForm'
+import type { SeriesRequest } from './repeatForm'
 import type { RuleOut, RuleRequest, TargetOut } from './ruleForm'
 import type { DateString } from './time'
 
@@ -19,6 +20,17 @@ export interface Block {
   placed_min: number // the item's minutes placed so far, in every week
   estimate_min: number | null // null for an exact-time item
   editable: boolean // whether the edit dialog can change the item (not Custom)
+  series_id: string | null // set on an occurrence of a stored series
+}
+
+/** How a series repeats. A days item repeats as a whole week: per_week, with no weekdays. */
+export interface RepeatOut {
+  id: string
+  freq: 'daily' | 'weekly'
+  interval: number
+  weekdays: number[] // 0 = Monday
+  per_week: boolean
+  end_date: DateString | null
 }
 
 export interface Week {
@@ -36,7 +48,30 @@ export interface Week {
     reason: string | null
     sessions: number
     editable: boolean
+    series_id: string | null
   }[]
+  series: RepeatOut[] // how each series with an occurrence in the week repeats
+}
+
+/** GET /api/series/{id}: a stored series in the dialog's terms. Times are "HH:MM:SS". */
+export interface SeriesFormOut {
+  id: string
+  source: string | null
+  title: string
+  preset: Preset
+  start_time: string | null
+  end_time: string | null
+  weekdays: number[] | null
+  deadline_time: string | null
+  estimate_min: number | null
+  max_chunk_min: number | null
+  one_block_per_day: boolean
+  session_min: number | null
+  freq: 'daily' | 'weekly'
+  interval: number
+  repeat_weekdays: number[]
+  start_date: DateString
+  end_date: DateString | null
 }
 
 /** GET /api/items/{id}: a stored item in the dialog's terms. Lengths are as typed; times are "HH:MM:SS". */
@@ -246,4 +281,29 @@ async function sendForWeek(url: string, method: 'POST' | 'PUT' | 'DELETE', body?
   const returned: Week = await response.json()
   rememberOnly(returned)
   return returned
+}
+
+// Series (repeating items). Adding or changing one re-plans every week from
+// this one on, like a work frame, so the cache keeps only the returned week.
+
+/** Add a repeating item. Throws WeekError with the server's message on a 422. */
+export async function addSeries(request: SeriesRequest): Promise<Week> {
+  return sendForWeek('/api/series', 'POST', request)
+}
+
+/** A series as the edit dialog shows it. A 404 (already gone) throws WeekError with kind 'missing'. */
+export async function getSeries(seriesId: string): Promise<SeriesFormOut> {
+  const response = await fetch(`/api/series/${seriesId}`)
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/** Change a series: occurrences that haven't started are rebuilt, except ones edited by hand. */
+export async function updateSeries(seriesId: string, request: SeriesRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'PUT', request)
+}
+
+/** End a series: occurrences that haven't started go, past ones stay. */
+export async function deleteSeries(seriesId: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'DELETE')
 }
