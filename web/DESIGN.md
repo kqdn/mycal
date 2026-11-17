@@ -37,7 +37,7 @@ Use Inter for everything and Space Grotesk only for page titles. Load both in `i
 
 ## Page layout
 
-- **Top bar:** 64px tall, `--surface` background, 1px `--border` bottom border, 32px side padding. Tabs on the left are 64px tall with a 3px bottom border. The active tab has an `--accent` border and text. Inactive tabs have a transparent border and `--text-muted` text. For now only "Week" exists. Add "Today", "Projects" and the "New item" primary button on the right when those features are built.
+- **Top bar:** 64px tall, `--surface` background, 1px `--border` bottom border, 32px side padding. Tabs on the left are 64px tall with a 3px bottom border. The active tab has an `--accent` border and text. Inactive tabs have a transparent border and `--text-muted` text. The tabs are "Week" and "Frames and rules" (see Frames and rules), with the "New item" primary button on the right on the Week page. Add "Today" and "Projects" when those features are built.
 - **Content:** max-width 1280px, centered, 24px top and bottom padding, 32px side padding, 16px gap between sections.
 - **Title row:** the eyebrow and page title stacked on the left (2px gap). On the right, the previous and next week buttons (icon buttons, see Controls) with 4px between them. The two sides are aligned to their bottom edge.
 
@@ -219,6 +219,175 @@ Blocks that already started can be opened and their item deleted like any other,
 ### Exception to the 44px rule
 
 Blocks are clickable, but a block's height comes from its length (a 15 min block is 13px tall), so it can't always be 44px. This is the one exception to "everything clickable is at least 44px". Every block is still reachable with the keyboard, and the Unscheduled "More" button is a full 44px.
+
+## Frames and rules (Milestone 5)
+
+A second page, reached from a second top-bar tab, where work frames and rules (constraints) are viewed, added, edited and deleted. Until now they could only be changed in a week file and re-imported. It adds no tokens and no libraries.
+
+### Tab and page
+
+- **Tab:** "Frames and rules", right of "Week", styled like it (see Page layout). The page is chosen by a `view=rules` URL param next to `week=`, so the browser's back button works and going back to Week returns to the same week. No router library: `App` reads the param and renders one page or the other.
+- **Top bar:** the "New item" button shows only on the Week page.
+- **Coming back to Week:** the Week page fetches its week again every time it is shown, so it always shows the plan made after the last save here.
+- **Title row:** eyebrow "Your planner", page title "Frames and rules" (Space Grotesk 28px / 600). No week arrows: frames and rules apply to every week.
+- **Column:** the two sections stack in one column, at most 720px wide, left-aligned inside the content area, with a 32px gap between them. Wider rows would put the row text far from its chevron.
+- **Loading:** while the page loads, each section shows its header and a card with one 56px row reading "Loading..." in 13px `--text-muted`. If loading fails, the page attention banner shows "Couldn't load frames and rules" with the server's message.
+
+### Section header
+
+Each section starts with a header row: on the left, the section label (13px / 600, `--text-muted`) with a one-line description under it (12px, `--text-muted`, 2px gap). On the right, its add button. The two sides are aligned to their bottom edge, with 10px between the header and the card.
+
+| Section | Label | Description | Add button |
+| --- | --- | --- | --- |
+| 1 | Work frames | Times when flexible work may be placed, every week. | Add frame |
+| 2 | Rules | Limits and wishes the planner follows when it places work. | Add rule |
+
+- **Add buttons:** secondary buttons (44px tall), with an 18px plus icon (stroke `--text`, stroke-width 2, round caps) 6px before the text. Secondary, not primary, so the green "New item" stays the one main action in the app.
+
+### List rows
+
+Each section's rows sit in one card (`--surface`, 1px `--border`, radius `--radius-card`), like the Unscheduled list.
+
+- **Row:** a `<button>` the full width of the card, at least 56px tall, 12px 14px padding, a 1px `--divider` between rows, no background. Text is left-aligned. An 18px chevron pointing right (stroke `--text-muted`) sits at the right end, vertically centered, with 12px before it. Hover gives the row an `--surface-sunken` background. Clicking it, or Enter or Space, opens the edit dialog.
+- **Title line:** 15px / 600, `--text`. It wraps instead of being cut off, since a rule's whole meaning is in it.
+- **Detail line:** 12px, `--text-muted`, 2px under the title. Parts are joined with " · ".
+- **Accessible name:** the row's text plus "Edit", as in `aria-label="Edit work frame Weekdays, Mon to Fri, 9:00am to 6:00pm"`.
+
+**Work frame rows**
+
+- Title: the frame's name, "Weekdays".
+- Detail: its days and times, "Mon to Fri · 9:00am to 6:00pm". An overnight frame adds "(ends the next day)": "Fri · 10:00pm to 1:00am (ends the next day)".
+- Order: by the first weekday, then start time.
+
+**Rule rows**
+
+- Title: the rule as one sentence, the same text as the dialog's summary line (see Summary lines). For example:
+  - "At most 2h on weekends"
+  - "Gym: prefer 4:00 to 6:00pm on weekdays, 12:00 to 2:00pm on weekends"
+  - "Read for seminar: avoid 9:00am to 12:00pm on weekdays"
+  - "Gym: at least 1 day between sessions"
+- Detail: the kind, then how strictly it's kept, then where it came from if imported: "Daily limit · Always kept", "Time preference · A wish", "Rest days · A wish · From 2026-11-16.toml". The file name is the only sign of an import, kept quiet like the Item details popover's.
+- Order: daily limits first, then time preferences, then rest days. Within a kind, in the order they were added.
+
+**Days and times in text**
+
+- A frame row lists days compactly: three or more days in a row read "Mon to Fri", two read "Sat and Sun", and anything else is a list, "Mon, Wed, Fri". All seven read "Every day".
+- A rule sentence uses words where they fit: Mon to Fri is "weekdays", Sat and Sun is "weekends", and all seven is "every day". Other sets use the frame form after "on": "on Mon, Wed, Fri".
+- Times follow the Principles: "4:00 to 6:00pm", "9:00am to 12:00pm".
+- Rule targets: one or two names are listed ("Gym", "Gym, Read for seminar"), three or more read "Gym and 2 more". Every item reads "Every item". A series shows its title once, without dates.
+
+**Empty states**
+
+The card holds one 56px row of 13px `--text-muted` text, not a button:
+
+- Work frames: "No work frames. Items without their own times can't be placed until you add one."
+- Rules: "No rules yet. The planner only uses your work frames and each item's times."
+
+### Dialogs: shared parts
+
+Adding or editing a frame or a rule opens a dialog built exactly like the Add item dialog: the same `<dialog>` with `showModal()`, `--scrim` backdrop, 480px box on `--bg`, the fixed header with "Cancel", a centered title and the primary button, the scrolling body with a 16px gap, the field and label styles, the time pairs, the weekday picker and the summary line. Only what differs is described below.
+
+| | Frame | Rule |
+| --- | --- | --- |
+| Title, adding | New frame | New rule |
+| Title, editing | Edit frame | Edit daily limit / Edit time preference / Edit rest days |
+| Primary button | Add, or Save when editing | Add, or Save when editing |
+| Focus on open | Name | Adding: the selected kind row. Editing: the first field |
+
+- **Imported rules:** editing a rule from a week file shows a 12px `--text-muted` line at the top of the body: "From 2026-11-16.toml. Importing that file again with --replace undoes this edit."
+- **Delete (editing only):** a "Delete frame" or "Delete rule" button at the bottom of the body, left-aligned, separated from the fields above by a 1px `--divider` and 8px of space. It is a secondary button with `--attention-strong` text and border. See Deleting.
+
+### Frame dialog fields, in this order
+
+1. **Name:** a text input, required, with the placeholder "Weekdays".
+2. **Days:** the label "Days", then the weekday picker (seven segmented buttons, Mon to Sun). At least one is required.
+3. **Time:** the label "Time", then the start "to" end pair. An end earlier than the start crosses midnight. Each picked day is the day the frame starts on, so "Fri, 10:00pm to 1:00am" ends early Saturday.
+4. **Summary line:** "The planner sees: Mon to Fri, 9:00am to 6:00pm, 9h each day (45h a week)". Overnight adds "(ends the next day)" after the times. It leaves out the hours until both times are valid.
+
+Overlapping frames are allowed: their times merge, as they do today. Nothing warns about it.
+
+### Rule dialog fields, in this order
+
+1. **Kind** (adding only): a label "Kind", then a radio group in a card, styled like the Flexibility card. Each row is two lines and at least 60px tall: the kind's name (15px / 500, 600 when selected) and a 12px `--text-muted` line under it. The selected row gets `--accent-tint` and the 18px `--accent` check. Unlike Flexibility, the kind's fields go below the card, not in a panel inside it, because they are too tall to nest. Changing kind keeps the targets you picked.
+
+   | Kind | Second line |
+   | --- | --- |
+   | Daily limit | Always kept. Caps scheduled time on chosen days. |
+   | Time preference | A wish. Prefer or avoid times of day. |
+   | Rest days | A wish. Leaves free days between sessions. |
+
+   Default: Time preference, the most common one. When editing, the kind can't change; the dialog title names it instead, and to change kind you delete the rule and add another.
+
+2. **The kind's fields:**
+
+   **Daily limit**
+   - "At most": a text input in the Estimate format ("2h", "1h 30m", "45m"), placeholder "2h", required. The "Planned as" line applies, rounding down.
+   - "On these days": the weekday picker, required.
+   - Hint under the picker, 12px `--text-muted`: "Everything on those days counts, fixed events too." A daily limit has no targets, since it counts the whole day.
+
+   **Time preference**
+   - "Prefer or avoid": a two-button segmented choice, "Prefer" and "Avoid", filling the row. Default Prefer.
+   - "Times": one card per range (`--surface`, 1px `--border`, radius `--radius-input`, 12px 14px padding, a 10px gap inside, 8px between cards). Each card holds the weekday picker, then the start "to" end pair. When there is more than one range, each card's top right has a "Remove" text button (13px / 500, `--text-muted`, 44px tall, no background) on a row with "Range 1", "Range 2" (12px / 600, `--text-muted`) on the left.
+   - "Add another range": a text button under the cards, 15px / 600, `--accent`, 44px tall, with the 18px plus icon in `--accent`. Up to 6 ranges; at 6 it hides.
+   - Hint, 12px `--text-muted`: "Prefer: work is placed in these times when it can. Avoid: kept out of them when it can. A wish, never a promise."
+   - Then **Applies to** (see Target picker).
+
+   **Rest days**
+   - "Free days between sessions": a number input (`type="number"`, `inputmode="numeric"`), 120px wide, min 1, max 6, default 1.
+   - Hint, 12px `--text-muted`: "Same-day sessions count as too close. A wish: the planner breaks it before it misses a deadline."
+   - Then **Applies to**.
+
+3. **Summary line:** the last thing in the body before Delete. "The planner sees:" and then the rule's sentence, the same text the row will show: "The planner sees: Gym: prefer 4:00 to 6:00pm on weekdays, 12:00 to 2:00pm on weekends". It updates as you type and leaves out parts that aren't valid yet.
+
+### Target picker ("Applies to")
+
+- **Label:** "Applies to".
+- **Choice:** a two-button segmented choice, "Every item" and "Chosen items", filling the row. Default for a new rule: Chosen items. "Every item" sends no item or series ids, which the PRD defines as every item. It is a separate choice, not "pick nothing", so an empty list never means everything by accident.
+- **The list** (Chosen items only), under the choice with 8px between:
+  - A filter text input, placeholder "Filter items", 44px tall (a smaller text input, otherwise the same style).
+  - A card (`--surface`, 1px `--border`, radius `--radius-input`) that scrolls inside itself, at most 264px tall (six rows). Wheel scrolling stays inside it.
+  - Each row is a checkbox `<label>`, at least 44px tall, 14px side padding, a 1px `--divider` between rows: a 20px square box (radius 6px, 2px `--checkbox-border`, filled `--accent` with a white check when picked), 12px gap, then the title (15px) with a second line (12px `--text-muted`) saying what it is: "Repeats weekly" for a series, or the item's week, "Nov 16 to 22", for a one-off.
+  - Series come first, then one-off items, each alphabetical. Picked ones stay where they are, so rows don't jump while you pick.
+  - Picking a series covers every one of its weeks. A one-off item is covered only for its own week, and that's what its second line warns about.
+  - The filter matches titles, case-insensitive. No match: one 44px row, "No items match "xyz"." in 13px `--text-muted`.
+  - Above the card, right-aligned, 12px `--text-muted`: "2 picked", or nothing when none are.
+- **Targets that no longer exist:** the server drops deleted items from rules (see the PRD), so the picker never shows a missing one.
+
+### Validation messages
+
+Shown under their field in 12px `--attention-strong`, with the field's border in `--attention-strong`, exactly as in the Add item dialog. Pressing Add or Save with errors sends nothing; the first error scrolls into view and gets focus.
+
+- Name empty: "Give it a name, like Weekdays."
+- No weekday picked: "Pick at least one day."
+- Start equals end: "Start and end can't be the same time."
+- A time missing: "Pick a start and an end time."
+- Daily limit length unreadable: "Use a length like 2h or 1h 30m."
+- Daily limit 0 or less: "Use a length longer than 0m."
+- Daily limit over 24h: "A day only has 24h."
+- Rest days not a whole number from 1 to 6: "Use a whole number of days from 1 to 6."
+- Chosen items with none picked: "Pick at least one item, or choose Every item."
+
+### Saving
+
+- **While saving:** the primary button reads "Adding..." or "Saving...", and the whole form is disabled. Saving re-plans every planned week from this one on, since frames and rules apply to all of them. That usually takes a few seconds, more than adding an item, because several weeks re-plan.
+- **What can be refused:** frames and daily limits are hard, so a change that makes a week stop fitting is refused, all or nothing, and nothing changes. A week that already didn't fit before the change doesn't count against it. Time preferences and rest days are wishes and are never refused for fit.
+- **Refused:** the attention banner at the top of the body, titled "Couldn't save it", with the server's message as the body: "Nothing changed: the week of Nov 16 to 22 wouldn't fit. 6h of work doesn't fit before Wed 11:59pm." The body scrolls to the top so the banner shows. Everything you typed stays, so you can loosen it and try again.
+- **Other server errors:** the same banner, with the server's message.
+- **Done:** the dialog closes and the list shows the change. Focus goes to the saved row (a new row when adding). Nothing else on the page changes. The Week tab shows the new plan when you go back.
+
+### Deleting
+
+- **Confirming:** pressing "Delete frame" or "Delete rule" swaps that button, in place, for a confirm row, as the Item details popover does: the question (13px / 600 `--text`), "Delete this frame?" or "Delete this rule?", a 12px `--text-muted` line saying what follows, then "Cancel" (secondary) and "Delete" (secondary, `--attention-strong` text and border), right-aligned. Focus moves to "Cancel".
+  - Frame: "Items without their own times stop using it, every week."
+  - Rule: "The planner stops following it, every week."
+  - Imported rule: "Importing 2026-11-16.toml again with --replace brings it back."
+- **While deleting:** "Delete" reads "Deleting...", and the confirm row and the header buttons are disabled.
+- **Refused:** deleting a frame can make a week stop fitting (less time to place work in). Then the confirm row stays, and a 12px `--attention-strong` line under it gives the server's message: "Nothing changed: the week of Nov 16 to 22 wouldn't fit. ..." Deleting a rule is never refused for fit.
+- **Done:** the dialog closes, the row is gone, and focus goes to the section's add button.
+
+### Narrow screens
+
+Under 600px: the content's side padding drops to 16px, the section header stacks (the add button goes under the description, full width), and dialogs follow the Add item dialog's narrow rules. The weekday picker's buttons shrink to fit (the 44px height stays).
 
 ## Controls
 
