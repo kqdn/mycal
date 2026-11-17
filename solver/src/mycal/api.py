@@ -15,6 +15,10 @@ fit before.
 A week that already didn't fit keeps its old blocks, and the item's work
 goes to its other weeks.
 
+Work frames and rules apply to every week, so changing one re-plans every
+week from this one on that has a plan, the same all-or-nothing way, and
+clears the plans of earlier weeks so they re-plan when next viewed.
+
 All times in responses are UTC. The page converts them to the week's
 timezone only for display.
 """
@@ -39,12 +43,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from mycal import store
-from mycal.model import BlockStatus, FlexPreset, Item
+from mycal.model import BlockStatus, FlexPreset, Item, WorkFrame
 from mycal.presets import every_day_session
 from mycal.planner import (
     effective_item,
     effective_items,
     frame_spans,
+    local_monday,
+    MAX_SPAN_WEEKS,
     monday,
     open_from_moment,
     plan_weeks,
@@ -58,6 +64,7 @@ from mycal.planner import (
     week_title,
     weeks_of_blocks,
     weeks_touched,
+    WEEK as ONE_WEEK,
 )
 from mycal.settings import SolverSettings
 
@@ -324,6 +331,116 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
             store.put_item(conn, new)  # nothing left to place, say a past item's new title
         log.info("edited %r, re-planned %s", new.title, f"{min(weeks)} to {max(weeks)}" if weeks else "nothing")
         return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+# Work frames
+
+
+class FrameIn(BaseModel):
+    """A work frame as the Frame dialog collects it: local times in my timezone.
+
+    An end before the start crosses midnight; each weekday is the day the frame starts on.
+    """
+
+    name: str
+    weekdays: list[int]
+    start_time: time
+    end_time: time
+
+
+class FrameOut(FrameIn):
+    id: UUID
+
+
+FRAME_GONE = "That work frame no longer exists."
+CHANGE_TIMED_OUT = "The planner ran out of time before finishing, so nothing was changed. Try again."
+
+
+def weeks_would_break(weeks: list[date]) -> str:
+    named = " and ".join(f"the week of {week_title(w)}" for w in weeks)
+    return f"Nothing changed: {named} wouldn't fit. Loosen the change, or make room there first."
+
+
+@app.get("/api/frames")
+def list_frames() -> list[FrameOut]:
+    """Every work frame, by first weekday and then start time."""
+    with database() as (conn, _settings):
+        frames = sorted(store.list_work_frames(conn), key=lambda f: (min(f.weekdays, default=7), f.start_time))
+        return [FrameOut(id=f.id, name=f.name, weekdays=sorted(f.weekdays), start_time=f.start_time, end_time=f.end_time) for f in frames]
+
+
+@app.post("/api/frames", status_code=201)
+def add_frame(request: FrameIn, week: date) -> WeekOut:
+    """Add a work frame, re-plan every planned week from this one on, and return the viewed `week`."""
+    with database() as (conn, settings):
+        frame = _to_frame(request, settings)
+        return _change_everywhere(conn, settings, lambda trial: store.put_work_frame(trial, frame), week, f"frame {frame.name!r}")
+
+
+@app.put("/api/frames/{frame_id}")
+def update_frame(frame_id: UUID, request: FrameIn, week: date) -> WeekOut:
+    """Change a work frame, re-plan, and return the viewed `week`. 422 and no change if a week would stop fitting."""
+    with database() as (conn, settings):
+        if frame_id not in {f.id for f in store.list_work_frames(conn)}:
+            raise HTTPException(status_code=404, detail=FRAME_GONE)
+        frame = replace(_to_frame(request, settings), id=frame_id)
+        return _change_everywhere(conn, settings, lambda trial: store.put_work_frame(trial, frame), week, f"frame {frame.name!r}")
+
+
+@app.delete("/api/frames/{frame_id}")
+def delete_frame(frame_id: UUID, week: date) -> WeekOut:
+    """Delete a work frame, re-plan, and return the viewed `week`. 422 and no change if a week would stop fitting."""
+    with database() as (conn, settings):
+        if frame_id not in {f.id for f in store.list_work_frames(conn)}:
+            raise HTTPException(status_code=404, detail=FRAME_GONE)
+        return _change_everywhere(conn, settings, lambda trial: store.delete_work_frame(trial, frame_id), week, f"frame {frame_id}")
+
+
+def _to_frame(request: FrameIn, settings: SolverSettings) -> WorkFrame:
+    """The dialog's fields as a WorkFrame in my timezone, or a 422 with the dialog's message."""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Give it a name, like Weekdays.")
+    if not request.weekdays or any(day not in range(7) for day in request.weekdays):
+        raise HTTPException(status_code=422, detail="Pick at least one day.")
+    if request.start_time == request.end_time:
+        raise HTTPException(status_code=422, detail="Start and end can't be the same time.")
+    return WorkFrame(name, sorted(set(request.weekdays)), request.start_time, request.end_time, settings.timezone)
+
+
+def _change_everywhere(
+    conn: sqlite3.Connection,
+    settings: SolverSettings,
+    change: Callable[[sqlite3.Connection], None],
+    week: date,
+    log_name: str,
+) -> WeekOut:
+    """Apply a change that reaches every week (a work frame or a rule), all or nothing, and return the viewed week."""
+    moment = now()
+    first, last = _weeks_from_now(conn, settings, moment)
+    _change_and_plan(
+        conn,
+        settings,
+        change,
+        first,
+        last,
+        moment,
+        log_name=log_name,
+        timed_out=CHANGE_TIMED_OUT,
+        broke=weeks_would_break,
+        clear_plans=True,
+    )
+    log.info("changed %s, re-planned %s to %s", log_name, first, last)
+    return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+def _weeks_from_now(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> tuple[date, date]:
+    """This week through the last week that has a plan or planned blocks, and at least the planning span."""
+    first = local_monday(moment, settings.timezone)
+    open_from = open_from_moment(moment, settings.slot_min)
+    ahead = [b for b in store.list_blocks(conn) if b.status is BlockStatus.PLANNED and b.start >= open_from]
+    later = store.planned_weeks(conn) + weeks_of_blocks(ahead, settings.timezone)
+    return first, max([first + (MAX_SPAN_WEEKS - 1) * ONE_WEEK, *later])
 
 
 def _put_and_plan(

@@ -265,6 +265,11 @@ def save_plan(
         )
 
 
+def planned_weeks(conn: sqlite3.Connection) -> list[date]:
+    """Every week (its Monday) that has a stored plan, earliest first."""
+    return [date.fromisoformat(row["week_start"]) for row in conn.execute("SELECT week_start FROM planned_weeks ORDER BY week_start")]
+
+
 def clear_plans(conn: sqlite3.Connection) -> None:
     """Forget which weeks are planned, so each one re-plans when next viewed. Blocks stay as the current plan."""
     with conn:

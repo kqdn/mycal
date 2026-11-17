@@ -822,3 +822,97 @@ def test_editing_a_lecture_keeps_it_checkable(db: Path, client: TestClient) -> N
 
     after = store.get_item(store.connect(db), lecture.id)
     assert after is not None and (after.title, after.checkable, after.series_id) == ("Algorithms", True, lecture.series_id)
+
+
+# Work frames
+
+
+WEEKDAYS_FRAME = {"name": "Weekdays", "weekdays": [0, 1, 2, 3, 4], "start_time": "09:00", "end_time": "18:00"}
+
+
+def frames(client: TestClient) -> list[dict]:
+    response = client.get("/api/frames")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def frame_id(client: TestClient, name: str) -> str:
+    return next(f["id"] for f in frames(client) if f["name"] == name)
+
+
+def test_frames_are_listed_by_first_day_then_start(client: TestClient) -> None:
+    assert [(f["name"], f["weekdays"], f["start_time"], f["end_time"]) for f in frames(client)] == [
+        ("Weekdays", [0, 1, 2, 3, 4], "09:00:00", "18:00:00"),
+        ("Weekend", [5, 6], "10:00:00", "16:00:00"),
+    ]
+
+
+def test_adding_a_frame_stores_it_and_returns_the_week(client: TestClient) -> None:
+    get(client)
+    evenings = {"name": "Evenings", "weekdays": [0, 2], "start_time": "19:00", "end_time": "22:00"}
+    response = client.post(f"/api/frames?week={WEEK}", json=evenings)
+    assert response.status_code == 201, response.text
+    assert response.json()["week_start"] == WEEK
+    assert [f["name"] for f in frames(client)] == ["Weekdays", "Evenings", "Weekend"]
+    # The page shades the new frame time: Monday now has two frame spans.
+    assert len(response.json()["frames"]) == 9
+
+
+def test_shrinking_a_frame_re_plans_the_week_into_it(client: TestClient) -> None:
+    gym_before = {local(b) for b in blocks_titled(get(client), "Gym")}
+    assert all(start.endswith("16:00") for start, _ in gym_before)  # its preferred 4 to 6pm
+    id_ = frame_id(client, "Weekdays")
+    response = client.put(f"/api/frames/{id_}?week={WEEK}", json=WEEKDAYS_FRAME | {"end_time": "15:00"})
+    assert response.status_code == 200, response.text
+    gym = blocks_titled(response.json(), "Gym")
+    assert len(gym) == 3
+    assert all(end <= f"{end[:3]} 15:00" for _, end in map(local, gym))  # inside 9 to 3 now
+
+
+def test_a_frame_change_that_breaks_the_week_changes_nothing(db: Path, client: TestClient) -> None:
+    before = get(client)["blocks"]
+    id_ = frame_id(client, "Weekdays")
+    response = client.put(f"/api/frames/{id_}?week={WEEK}", json=WEEKDAYS_FRAME | {"end_time": "09:30"})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith("Nothing changed: the week of Nov 16 to 22 wouldn't fit.")
+    assert frames(client)[0]["end_time"] == "18:00:00"
+    assert get(client)["blocks"] == before
+    assert status(db, WEEK) is True
+
+
+def test_deleting_a_frame_moves_work_out_of_its_days(client: TestClient) -> None:
+    get(client)
+    response = client.delete(f"/api/frames/{frame_id(client, 'Weekend')}?week={WEEK}")
+    assert response.status_code == 200, response.text
+    assert [f["name"] for f in frames(client)] == ["Weekdays"]
+    weekend = [b for b in response.json()["blocks"] if local(b)[0][:3] in ("Sat", "Sun")]
+    assert weekend == []
+
+
+def test_a_frame_change_clears_the_plans_of_other_weeks(db: Path, client: TestClient) -> None:
+    get(client)
+    store.save_plan(store.connect(db), [], [], {date(2026, 11, 2): True}, BEFORE_THE_WEEK)
+    evenings = {"name": "Evenings", "weekdays": [0], "start_time": "19:00", "end_time": "22:00"}
+    assert client.post(f"/api/frames?week={WEEK}", json=evenings).status_code == 201
+    assert status(db, "2026-11-02") is None  # re-plans when next viewed
+    assert status(db, WEEK) is True
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"name": "  "}, "Give it a name, like Weekdays."),
+        ({"weekdays": []}, "Pick at least one day."),
+        ({"end_time": "09:00"}, "Start and end can't be the same time."),
+    ],
+)
+def test_a_bad_frame_is_refused_with_the_dialogs_message(client: TestClient, change: dict, message: str) -> None:
+    response = client.post(f"/api/frames?week={WEEK}", json=WEEKDAYS_FRAME | change)
+    assert (response.status_code, response.json()["detail"]) == (422, message)
+    assert len(frames(client)) == 2
+
+
+def test_changing_a_missing_frame_is_404(client: TestClient) -> None:
+    response = client.put(f"/api/frames/{uuid4()}?week={WEEK}", json=WEEKDAYS_FRAME)
+    assert (response.status_code, response.json()["detail"]) == (404, "That work frame no longer exists.")
+    assert client.delete(f"/api/frames/{uuid4()}?week={WEEK}").status_code == 404
