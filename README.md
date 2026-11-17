@@ -9,7 +9,7 @@ A personal weekly planner: I describe what I need to do, and a constraint solver
 - **Fixed and flexible items.** A lecture is fixed at an exact time. A flexible item says how long it takes and roughly when ("any of these days", "before Friday 5pm"), and the solver picks the time.
 - **Splits long work.** Multi-hour work is cut into sessions of a set maximum length, optionally on different days.
 - **Balances the week.** It keeps the fullest day as light as it can and spreads an item's sessions out.
-- **Soft rules.** Preferred or avoided times of day, and rest days between sessions (say, for the gym).
+- **Your own frames and rules.** Work frames (when flexible work may go), daily limits, preferred or avoided times of day, and rest days between sessions (say, for the gym), all edited on their own page.
 - **Re-plans on changes.** Adding, editing or deleting an item re-plans the weeks it touches. A change that doesn't fit is refused with the reason, and nothing changes.
 
 ## How the solver works
@@ -81,7 +81,7 @@ The planner only places new work after the current time, so once that week is in
 uv run mycal-demo examples/week.toml
 ```
 
-Work frames and rules come from the week file for now. Edit `examples/week.toml` (its comments explain each field) and run `mycal-demo` again to try your own.
+On the page, work frames and rules are edited on the Frames and rules tab. `mycal-demo` reads them from the week file instead: edit `examples/week.toml` (its comments explain each field) and run it again to try your own.
 
 ## Tests
 
@@ -109,8 +109,8 @@ Built in milestones, each usable before the next starts (see Milestones in the [
 2. Read-only week view. Done.
 3. Storage, adding and deleting items. Done.
 4. Editing items. Done.
-5. Work frames and rules in the app. Next. Until then they are set in week files.
-6. Repeating items (weekly classes, habits) in the app.
+5. Work frames and rules in the app. Done.
+6. Repeating items (weekly classes, habits) in the app. Next.
 7. Check-ins: Yes / Partly / No when a session ends, then reschedule, catch up, skip or ask.
 
 ## How I built it

@@ -6,11 +6,11 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 ## Current milestone
 
-Milestone 5: work frames and rules in the app. Work frames and constraints (daily_limit, time_preference, rest_between) are viewed, added, edited and deleted from the page, then the affected weeks re-plan, instead of only coming from week files. No recurrence or check-ins yet. Done when I can change my work frames and rules from the page, see the week re-plan, and know what a later import does to those edits.
+Milestone 6: recurrence in the app. Series (weekly classes, habits) are stored in the database and created, edited and deleted from the page, instead of only coming from week files as one week's occurrences. The Series model and its expansion are already built in the solver package (`recurrence.py`). No check-ins yet. Done when I can create a repeating item from the page, see it in every week it repeats in, and change or delete the series.
 
-Next: Milestone 6, recurrence in the app (series stored and created, edited and deleted from the page; the Series model and its expansion are already built in `recurrence.py`), then 7, check-ins.
+Next: Milestone 7, check-ins and on-miss policies.
 
-Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items) and 4 (editing items) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
+Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items), 4 (editing items) and 5 (work frames and rules in the app) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 
 ## Stack
 
@@ -41,7 +41,7 @@ Run Python commands from `solver/` and web commands from `web/`. Keep this secti
 **Web** (`web/`)
 
 - Install dependencies (needs Node.js): `npm install`
-- Week page (start the API first): `npm run dev`, then open http://localhost:5173/?week=<week-start>. Without `?week=` it shows this week
+- Week page (start the API first): `npm run dev`, then open http://localhost:5173/?week=<week-start>. Without `?week=` it shows this week. Work frames and rules: http://localhost:5173/?view=rules
 - Run tests: `npm test`
 - Type-check and build: `npm run build`
 - Lint: `npm run lint`
