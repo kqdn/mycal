@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mycal import Block, FlexPreset, Item, WorkFrame, store
+from mycal import Block, Constraint, FlexPreset, Item, WorkFrame, store
 from mycal.demo import load_week
 from mycal.importer import import_week, main
 
@@ -38,7 +38,64 @@ def test_import_stores_the_whole_week(db: Path) -> None:
     kinds = lambda cs: [(c.kind, c.weight, c.hard) for c in cs]  # noqa: E731
     assert kinds(store.list_constraints(conn)) == kinds(week.constraints)
     assert store.list_blocks(conn) == []  # planned on first view, not imported
-    assert summary.startswith(f"Imported {len(items)} items and {len(week.constraints)} constraints from week.toml")
+    assert summary.startswith(
+        f"Imported {len(items)} items, {len(week.series)} series and {len(week.constraints)} constraints from week.toml"
+    )
+
+
+def test_import_stores_the_files_series_and_links_their_occurrences(db: Path) -> None:
+    import_week(EXAMPLE, db)
+    conn = store.connect(db)
+    stored = {s.title: s for s in store.list_series(conn)}
+    assert set(stored) == {s.title for s in load_week(EXAMPLE).series}
+    assert all(store.series_source(conn, s.id) == "week.toml" for s in stored.values())
+    lectures = [i for i in store.list_items(conn) if i.title == "Algorithms lecture"]
+    assert {i.series_id for i in lectures} == {stored["Algorithms lecture"].id}
+    gym_rules = [c for c in store.list_constraints(conn) if c.params.get("series_ids")]
+    assert gym_rules and all(c.params["series_ids"] == [stored["Gym"].id] for c in gym_rules)
+
+
+def test_a_later_file_repeating_a_series_keeps_the_stored_one(db: Path, tmp_path: Path) -> None:
+    import_week(EXAMPLE, db)
+    conn = store.connect(db)
+    before = store.list_series(conn)
+    gym = next(s for s in before if s.title == "Gym")
+
+    summary = import_week(next_week(tmp_path), db)
+
+    assert store.list_series(conn) == before  # nothing doubled, nothing changed
+    assert "Kept the series already stored: Algorithms lecture, Linear algebra, Gym, Weekly problem set." in summary
+    later_rules = conn.execute("SELECT id FROM constraints WHERE source = '2026-11-23.toml'").fetchall()
+    later = [c for c in store.list_constraints(conn) if str(c.id) in {r["id"] for r in later_rules}]
+    assert [c.params["series_ids"] for c in later if "series_ids" in c.params] == [[gym.id], [gym.id]]
+    # The kept series' occurrences in the later week come from the planner, not the import.
+    assert not [i for i in store.list_items(conn) if i.occurrence_date and i.occurrence_date >= date(2026, 11, 23)]
+
+
+def test_a_series_added_in_the_app_is_kept_over_a_files(db: Path) -> None:
+    import_week(EXAMPLE, db)
+    conn = store.connect(db)
+    gym = next(s for s in store.list_series(conn) if s.title == "Gym")
+    conn.execute("UPDATE series SET source = NULL WHERE id = ?", (str(gym.id),))  # as if added in the app
+    conn.commit()
+
+    import_week(EXAMPLE, db, replace=True)
+
+    assert [s.id for s in store.list_series(conn) if s.title == "Gym"] == [gym.id]
+    assert store.series_source(conn, gym.id) is None
+
+
+def test_replace_keeps_series_ids_so_app_rules_still_name_them(db: Path) -> None:
+    import_week(EXAMPLE, db)
+    conn = store.connect(db)
+    ids = {s.title: s.id for s in store.list_series(conn)}
+    app_rule = Constraint(kind="rest_between", params={"series_ids": [ids["Linear algebra"]]})
+    store.put_constraint(conn, app_rule)
+
+    import_week(EXAMPLE, db, replace=True)
+
+    assert {s.title: s.id for s in store.list_series(conn)} == ids
+    assert app_rule in store.list_constraints(conn)
 
 
 def test_a_later_import_keeps_frames_and_settings_edited_in_the_app(db: Path, tmp_path: Path) -> None:

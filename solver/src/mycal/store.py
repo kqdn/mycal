@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any
@@ -209,8 +210,11 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 def has_source(conn: sqlite3.Connection, source: str) -> bool:
     """Whether anything was imported from `source` (a week file's name)."""
-    query = "SELECT 1 FROM items WHERE source = ? UNION ALL SELECT 1 FROM constraints WHERE source = ? LIMIT 1"
-    return conn.execute(query, (source, source)).fetchone() is not None
+    query = (
+        "SELECT 1 FROM items WHERE source = ? UNION ALL SELECT 1 FROM constraints WHERE source = ? "
+        "UNION ALL SELECT 1 FROM series WHERE source = ? LIMIT 1"
+    )
+    return conn.execute(query, (source, source, source)).fetchone() is not None
 
 
 def import_source(
@@ -220,13 +224,15 @@ def import_source(
     frames: list[WorkFrame],
     items: list[Item],
     constraints: list[Constraint],
+    series: Sequence[Series] = (),
 ) -> tuple[int, bool]:
     """Import one week file's contents in one transaction.
 
     Returns how many earlier items it replaced, and whether it set the
-    settings and work frames. Items and constraints from an earlier import of
-    the same `source` are replaced (their blocks go with them). Everything else
-    stays: other files' items and items added in the app. The timezone, slot
+    settings and work frames. Items, series and constraints from an earlier
+    import of the same `source` are replaced (their blocks go with them, and so
+    do occurrences the planner created for those series). Everything else
+    stays: other files' items and series, and things added in the app. The timezone, slot
     size and work frames are set only by the first import into an empty
     database; after that they are edited in the app, and imports leave them
     alone. Engine settings never come from a file. If anything fails, nothing
@@ -236,7 +242,7 @@ def import_source(
     with conn:
         conn.execute("DELETE FROM planned_weeks")  # items change, so every week re-plans
         replaced = conn.execute("DELETE FROM items WHERE source = ?", (source,)).rowcount
-        _drop_deleted_targets(conn)
+        conn.execute("DELETE FROM series WHERE source = ?", (source,))
         conn.execute("DELETE FROM constraints WHERE source = ?", (source,))
         if first:
             _write_settings(conn, settings, FILE_SETTINGS)
@@ -248,8 +254,13 @@ def import_source(
             _write_item(conn, item, source)
         for item in items:
             _write_deps(conn, item)
+        for one in series:
+            _write_series(conn, one, source)
         for constraint in constraints:
             _write_constraint(conn, constraint, source)
+        # Last, so a rule from the app naming a series that came back with the
+        # same id keeps it.
+        _drop_deleted_targets(conn)
     return replaced, first
 
 
