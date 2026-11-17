@@ -320,8 +320,8 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 3. Storage and adding items: SQLite, and adding and deleting items in the app instead of a week file. Week files are imported once. Done.
 4. Edit items: change an existing item's fields from the page, then re-plan. Done.
 5. Work frames and rules in the app: view, add, edit and delete work frames and constraints (daily_limit, time_preference, rest_between) from the page, then re-plan. Settles how imports treat these app edits. Week files stay for importing. Done.
-6. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package.
-Between 6 and 7: keyboard shortcuts in the app (see the decision log, Nov 17).
+6. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package. Done.
+Between 6 and 7: keyboard shortcuts in the app (see the decision log, Nov 17). Done.
 7. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask.
 
 ## Open questions and decision log
@@ -343,6 +343,7 @@ Between 6 and 7: keyboard shortcuts in the app (see the decision log, Nov 17).
 
 | Date | Decision |
 | --- | --- |
+| Nov 17, 2026 | Milestone 6 (recurrence in the app) is done: Kaden checked on the real week that a repeating item can be created from the page, shows in every week it repeats in, and can be changed or deleted (This and All). Keyboard shortcuts are done too. Milestone 7, check-ins and on-miss policies, is next |
 | Nov 17, 2026 | Keyboard shortcuts, built before Milestone 7 as a small step of their own: 1 and 2 switch tabs, N adds an item, the arrows or K and J move a week, T goes to this week, E edits and Delete (or D) deletes the block under the mouse (or with keyboard focus) or the one whose popover is open, Delete always through the confirm step, F and R add a frame or a rule on the Frames and rules page, and ? lists them. Tabs use numbers so R can mean a new rule. Single keys, ignored while typing or with a dialog open, and never taken with Cmd, Ctrl or Alt. Kept as pure logic (web/src/shortcuts.ts) with each component acting on its own keys. Spec in web/DESIGN.md, Keyboard shortcuts |
 | Nov 17, 2026 | The app is called MyCal wherever it is displayed (the page title, the favicon). Code names stay lowercase: the mycal package, the mycal-api and mycal-import commands, and the folder. Settles the open question on a name for the app |
 | Nov 17, 2026 | A one-off item can be made to repeat from its edit dialog, which shows the Repeats field (on Never) for one-off items, though not for occurrences. POST /api/items/{id}/repeat takes the series fields and makes the item the series' occurrence on the item's own date (its day, its due date, or its week's Monday for a days item), so it keeps its id and sessions, and done work stays (rule 8). If it hasn't started and the rule falls on that date, it is rebuilt from the new template; otherwise it is kept as it is and marked hand_edited, so later series edits leave it alone. The series may start on the item's own date even if it has passed; any other start must lie ahead. An occurrence is refused ("It already repeats"). It re-plans like adding a series. recurrence gains occurrence_on, building one date's occurrence whether or not the rule falls on it |
