@@ -43,17 +43,19 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from mycal import store
-from mycal.model import BlockStatus, FlexPreset, Item, WorkFrame
+from mycal.model import BlockStatus, Constraint, FlexPreset, Item, WorkFrame
 from mycal.presets import every_day_session
 from mycal.planner import (
     effective_item,
     effective_items,
+    due_week,
     frame_spans,
     local_monday,
     MAX_SPAN_WEEKS,
     monday,
     open_from_moment,
     plan_weeks,
+    planned_down,
     remaining_min,
     span_for_item,
     PlannerTimeout,
@@ -406,6 +408,274 @@ def _to_frame(request: FrameIn, settings: SolverSettings) -> WorkFrame:
     if request.start_time == request.end_time:
         raise HTTPException(status_code=422, detail="Start and end can't be the same time.")
     return WorkFrame(name, sorted(set(request.weekdays)), request.start_time, request.end_time, settings.timezone)
+
+
+# Rules (constraints)
+
+RuleKind = Literal["daily_limit", "time_preference", "rest_between"]
+KIND_NAMES = {"daily_limit": "daily limit", "time_preference": "time preference", "rest_between": "rest days"}
+MAX_RANGES = 6
+
+
+class RangeIn(BaseModel):
+    """Local times of day on some weekdays (0 = Monday). An end before the start crosses midnight."""
+
+    weekdays: list[int]
+    start_time: time
+    end_time: time
+
+
+class RuleIn(BaseModel):
+    """A rule as the Rule dialog collects it. Only the fields of its kind are used.
+
+    `every_item` covers every item; otherwise `item_ids` and `series_ids` name
+    what it covers, and at least one is needed. A daily limit counts the whole
+    day, so it has no targets.
+    """
+
+    kind: RuleKind
+    max_min: int | None = None  # daily_limit
+    weekdays: list[int] | None = None  # daily_limit
+    mode: Literal["prefer", "avoid"] = "prefer"  # time_preference
+    ranges: list[RangeIn] | None = None  # time_preference
+    min_gap_days: int | None = None  # rest_between
+    every_item: bool = False
+    item_ids: list[UUID] = []
+    series_ids: list[UUID] = []
+
+
+class TargetOut(BaseModel):
+    id: UUID
+    kind: Literal["item", "series"]
+    title: str
+    week_start: date | None = None  # a one-off item's week; None for a series
+
+
+class RuleOut(BaseModel):
+    """A stored rule in the dialog's terms. `source` is the week file it came from, or None."""
+
+    id: UUID
+    kind: RuleKind
+    source: str | None
+    max_min: int | None = None
+    weekdays: list[int] | None = None
+    mode: Literal["prefer", "avoid"] | None = None
+    ranges: list[RangeIn] | None = None
+    min_gap_days: int | None = None
+    every_item: bool = False
+    targets: list[TargetOut] = []
+
+
+RULE_GONE = "That rule no longer exists."
+KIND_FIXED = "A rule's kind can't change. Delete it and add another."
+PICK_TARGETS = "Pick at least one item, or choose Every item."
+
+
+@app.get("/api/rules")
+def list_rules() -> list[RuleOut]:
+    """Every rule: daily limits, then time preferences, then rest days, each in the order added."""
+    with database() as (conn, settings):
+        targets = _targets_by_id(store.list_items(conn), settings, now())
+        order = list(KIND_NAMES)
+        rules = [c for c in store.list_constraints(conn) if c.kind in KIND_NAMES]
+        rules.sort(key=lambda c: order.index(c.kind))  # stable: the order added within a kind
+        return [_rule_out(c, store.constraint_source(conn, c.id), targets) for c in rules]
+
+
+@app.get("/api/rules/targets")
+def list_targets() -> list[TargetOut]:
+    """What a rule can name: series first, then one-off items with work or blocks from this week on, each by title.
+
+    Items a rule already names are always listed, so editing that rule shows them.
+    """
+    with database() as (conn, settings):
+        moment = now()
+        items = store.list_items(conn)
+        targets = _targets_by_id(items, settings, moment)
+        this_week = local_monday(moment, settings.timezone)
+        named = {i for c in store.list_constraints(conn) for i in c.params.get("item_ids", [])}
+        ends: dict[UUID, datetime] = {}
+        for b in store.list_blocks(conn):
+            ends[b.item_id] = max(ends.get(b.item_id, b.end), b.end)
+        week_start = week_horizon(this_week, settings.timezone).start
+        current = {
+            i.id
+            for i in items
+            if i.series_id is None
+            and (
+                i.id in named
+                or any(w >= this_week for w in weeks_touched(i, settings.timezone, moment))
+                or ends.get(i.id, week_start) > week_start
+            )
+        }
+        series = sorted((t for t in targets.values() if t.kind == "series"), key=lambda t: t.title.lower())
+        one_offs = sorted((targets[i] for i in current), key=lambda t: t.title.lower())
+        return series + one_offs
+
+
+@app.post("/api/rules", status_code=201)
+def add_rule(request: RuleIn, week: date) -> WeekOut:
+    """Add a rule, re-plan every planned week from this one on, and return the viewed `week`."""
+    with database() as (conn, settings):
+        rule = _to_rule(conn, request, settings)
+
+        def change(trial: sqlite3.Connection) -> None:
+            store.put_constraint(trial, rule)
+            _free_covered(trial, [rule], settings)
+
+        return _change_everywhere(conn, settings, change, week, f"rule {rule.kind}")
+
+
+@app.put("/api/rules/{rule_id}")
+def update_rule(rule_id: UUID, request: RuleIn, week: date) -> WeekOut:
+    """Change a rule, keeping its kind, weight and source; re-plan and return the viewed `week`."""
+    with database() as (conn, settings):
+        old = next((c for c in store.list_constraints(conn) if c.id == rule_id), None)
+        if old is None:
+            raise HTTPException(status_code=404, detail=RULE_GONE)
+        if old.kind != request.kind:
+            raise HTTPException(status_code=422, detail=KIND_FIXED)
+        rule = replace(_to_rule(conn, request, settings), id=old.id, weight=old.weight)
+
+        def change(trial: sqlite3.Connection) -> None:
+            store.put_constraint(trial, rule)
+            _free_covered(trial, [old, rule], settings)
+
+        return _change_everywhere(conn, settings, change, week, f"rule {rule.kind}")
+
+
+@app.delete("/api/rules/{rule_id}")
+def delete_rule(rule_id: UUID, week: date) -> WeekOut:
+    """Delete a rule, re-plan, and return the viewed `week`."""
+    with database() as (conn, settings):
+        old = next((c for c in store.list_constraints(conn) if c.id == rule_id), None)
+        if old is None:
+            raise HTTPException(status_code=404, detail=RULE_GONE)
+
+        def change(trial: sqlite3.Connection) -> None:
+            store.delete_constraint(trial, rule_id)
+            _free_covered(trial, [old], settings)
+
+        return _change_everywhere(conn, settings, change, week, f"rule {old.kind}")
+
+
+def _to_rule(conn: sqlite3.Connection, request: RuleIn, settings: SolverSettings) -> Constraint:
+    """The dialog's fields as a Constraint, stored the way week files store it, or a 422 with the dialog's message."""
+    if request.kind == "daily_limit":
+        if request.every_item is False and (request.item_ids or request.series_ids):
+            raise HTTPException(status_code=422, detail="A daily limit counts the whole day, so it names no items.")
+        return Constraint("daily_limit", {"max_min": _limit_min(request.max_min, settings), "weekdays": _days(request.weekdays)}, hard=True)
+
+    params: dict[str, Any] = {}
+    if request.kind == "time_preference":
+        if not request.ranges:
+            raise HTTPException(status_code=422, detail="Add at least one range of times.")
+        if len(request.ranges) > MAX_RANGES:
+            raise HTTPException(status_code=422, detail=f"Use at most {MAX_RANGES} ranges.")
+        ranges = []
+        for r in request.ranges:
+            if r.start_time == r.end_time:
+                raise HTTPException(status_code=422, detail="Start and end can't be the same time.")
+            ranges.append({"weekdays": _days(r.weekdays), "start_time": r.start_time, "end_time": r.end_time})
+        params = {"mode": request.mode, "ranges": ranges}
+    else:
+        gap = request.min_gap_days
+        if gap is None or not 1 <= gap <= 6:
+            raise HTTPException(status_code=422, detail="Use a whole number of days from 1 to 6.")
+        params = {"min_gap_days": gap}
+
+    if not request.every_item:
+        if not request.item_ids and not request.series_ids:
+            raise HTTPException(status_code=422, detail=PICK_TARGETS)
+        items = store.list_items(conn)
+        if set(request.item_ids) - {i.id for i in items} or set(request.series_ids) - {i.series_id for i in items}:
+            raise HTTPException(status_code=422, detail="One of the picked items no longer exists. Pick again.")
+        if request.item_ids:
+            params["item_ids"] = list(dict.fromkeys(request.item_ids))
+        if request.series_ids:
+            params["series_ids"] = list(dict.fromkeys(request.series_ids))
+    return Constraint(request.kind, params)
+
+
+def _free_covered(conn: sqlite3.Connection, rules: list[Constraint], settings: SolverSettings) -> None:
+    """Drop the planned sessions ahead of the items soft rules cover, so they are placed again under the change.
+
+    Stability is the top score tier, so without this a new wish would never
+    move work that is already planned. Hard rules (daily limits) leave the
+    plan alone: they move only what they must, like a work frame. Done,
+    started and locked sessions stay.
+    """
+    soft = [r for r in rules if r.kind in ("time_preference", "rest_between")]
+    if not soft:
+        return
+    items = store.list_items(conn)
+    covered: set[UUID] = set()
+    for rule in soft:
+        item_ids, series_ids = set(rule.params.get("item_ids", [])), set(rule.params.get("series_ids", []))
+        every = not item_ids and not series_ids
+        covered |= {i.id for i in items if every or i.id in item_ids or (i.series_id is not None and i.series_id in series_ids)}
+    open_from = open_from_moment(now(), settings.slot_min)
+    store.delete_blocks(
+        conn,
+        [
+            b.id
+            for b in store.list_blocks(conn)
+            if b.item_id in covered and b.status is BlockStatus.PLANNED and not b.locked and b.start >= open_from
+        ],
+    )
+
+
+def _days(weekdays: list[int] | None) -> list[int]:
+    if not weekdays or any(day not in range(7) for day in weekdays):
+        raise HTTPException(status_code=422, detail="Pick at least one day.")
+    return sorted(set(weekdays))
+
+
+def _limit_min(max_min: int | None, settings: SolverSettings) -> int:
+    """A daily limit's minutes, rounded down to the slot grid like the dialog's "Planned as"."""
+    if max_min is None or max_min <= 0:
+        raise HTTPException(status_code=422, detail="Use a length longer than 0m.")
+    if max_min > 24 * 60:
+        raise HTTPException(status_code=422, detail="A day only has 24h.")
+    return planned_down(max_min, settings.slot_min)
+
+
+def _targets_by_id(items: list[Item], settings: SolverSettings, moment: datetime) -> dict[UUID, TargetOut]:
+    """Every item and series a rule could name, by id. A series takes its latest occurrence's title."""
+    targets: dict[UUID, TargetOut] = {}
+    latest: dict[UUID, date] = {}
+    for item in items:
+        if item.series_id is not None and item.occurrence_date is not None:
+            if item.occurrence_date >= latest.get(item.series_id, item.occurrence_date):
+                latest[item.series_id] = item.occurrence_date
+                targets[item.series_id] = TargetOut(id=item.series_id, kind="series", title=item.title)
+        else:
+            week = due_week(item, settings.timezone) or next(iter(weeks_touched(item, settings.timezone, moment)), None)
+            targets[item.id] = TargetOut(id=item.id, kind="item", title=item.title, week_start=week)
+    return targets
+
+
+def _rule_out(rule: Constraint, source: str | None, targets: dict[UUID, TargetOut]) -> RuleOut:
+    """A stored rule in the dialog's terms. A single top-level range (week files allow it) becomes `ranges`."""
+    params = rule.params
+    ids = [*params.get("item_ids", []), *params.get("series_ids", [])]
+    out = RuleOut(
+        id=rule.id,
+        kind=rule.kind,  # type: ignore[arg-type]
+        source=source,
+        every_item=rule.kind != "daily_limit" and not ids,
+        targets=[targets[i] for i in ids if i in targets],
+    )
+    if rule.kind == "daily_limit":
+        out.max_min = params.get("max_min")
+        out.weekdays = sorted(params.get("weekdays", range(7)))
+    elif rule.kind == "time_preference":
+        raw = params.get("ranges") or [{k: params[k] for k in ("weekdays", "start_time", "end_time") if k in params}]
+        out.mode = params.get("mode", "prefer")
+        out.ranges = [RangeIn(**r) for r in raw]
+    else:
+        out.min_gap_days = params.get("min_gap_days", 1)
+    return out
 
 
 def _change_everywhere(

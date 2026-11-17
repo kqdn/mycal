@@ -558,6 +558,12 @@ def _write_constraint(conn: sqlite3.Connection, constraint: Constraint, source: 
     )
 
 
+def constraint_source(conn: sqlite3.Connection, constraint_id: UUID) -> str | None:
+    """The week file a constraint was imported from, or None if it was added in the app (or is gone)."""
+    row = conn.execute("SELECT source FROM constraints WHERE id = ?", (str(constraint_id),)).fetchone()
+    return row["source"] if row else None
+
+
 def list_constraints(conn: sqlite3.Connection) -> list[Constraint]:
     return [
         Constraint(

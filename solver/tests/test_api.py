@@ -916,3 +916,136 @@ def test_changing_a_missing_frame_is_404(client: TestClient) -> None:
     response = client.put(f"/api/frames/{uuid4()}?week={WEEK}", json=WEEKDAYS_FRAME)
     assert (response.status_code, response.json()["detail"]) == (404, "That work frame no longer exists.")
     assert client.delete(f"/api/frames/{uuid4()}?week={WEEK}").status_code == 404
+
+
+# Rules
+
+
+def rules(client: TestClient) -> list[dict]:
+    response = client.get("/api/rules")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def targets(client: TestClient) -> dict[str, dict]:
+    response = client.get("/api/rules/targets")
+    assert response.status_code == 200, response.text
+    return {t["title"]: t for t in response.json()}
+
+
+def add_rule(client: TestClient, status: int = 201, **fields) -> dict:  # type: ignore[no-untyped-def]
+    response = client.post(f"/api/rules?week={WEEK}", json=fields)
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def test_rules_are_listed_in_the_dialogs_terms(client: TestClient) -> None:
+    listed = rules(client)
+    assert [r["kind"] for r in listed] == ["daily_limit", "time_preference", "time_preference", "rest_between"]
+    limit, gym_pref, reading, rest = listed
+    assert (limit["max_min"], limit["weekdays"], limit["targets"], limit["source"]) == (120, [5, 6], [], "week.toml")
+    assert gym_pref["mode"] == "prefer"
+    assert gym_pref["ranges"] == [
+        {"weekdays": [0, 1, 2, 3, 4], "start_time": "16:00:00", "end_time": "18:00:00"},
+        {"weekdays": [5, 6], "start_time": "12:00:00", "end_time": "14:00:00"},
+    ]
+    assert [(t["kind"], t["title"]) for t in gym_pref["targets"]] == [("series", "Gym")]
+    # A single top-level range in the file comes back as one range.
+    assert reading["ranges"] == [{"weekdays": [0, 1, 2, 3, 4], "start_time": "09:00:00", "end_time": "12:00:00"}]
+    assert (rest["min_gap_days"], rest["every_item"]) == (1, False)
+
+
+def test_targets_list_series_first_then_one_off_items(client: TestClient) -> None:
+    listed = list(targets(client).values())
+    kinds = [t["kind"] for t in listed]
+    assert kinds == sorted(kinds, key=lambda k: k != "series")
+    by_title = targets(client)
+    assert by_title["Gym"]["week_start"] is None
+    assert by_title["Chemistry lab"]["week_start"] == WEEK
+    assert "Email advisor" not in by_title  # nothing to place it in, so nothing to rule on
+
+
+def test_an_avoid_rule_moves_work_out_of_its_times(client: TestClient) -> None:
+    week_before = get(client)
+    before = [local(b) for b in blocks_titled(week_before, "Project 3: design")]
+    assert before[0][0].endswith("09:00")
+    others = {b["id"]: (b["start"], b["end"]) for b in week_before["blocks"] if not b["title"].startswith("Project 3")}
+    design = targets(client)["Project 3: design"]["id"]
+    week = add_rule(
+        client,
+        kind="time_preference",
+        mode="avoid",
+        ranges=[{"weekdays": [0, 1, 2, 3, 4], "start_time": "09:00", "end_time": "12:00"}],
+        item_ids=[design],
+    )
+    after = [local(b) for b in blocks_titled(week, "Project 3: design")]
+    assert all(start[4:] >= "12:00" for start, _ in after)
+    # Only the work the rule covers is placed again (and what depends on it); everything else stays put.
+    moved = [b["title"] for b in week["blocks"] if b["id"] in others and (b["start"], b["end"]) != others[b["id"]]]
+    assert len(moved) <= 2, moved
+    added = rules(client)[-2]  # time preferences come before rest days
+    assert (added["mode"], added["source"], [t["title"] for t in added["targets"]]) == ("avoid", None, ["Project 3: design"])
+
+
+def test_a_daily_limit_that_breaks_the_week_changes_nothing(client: TestClient) -> None:
+    before = get(client)["blocks"]
+    detail = add_rule(client, 422, kind="daily_limit", max_min=60, weekdays=[0, 1, 2, 3, 4, 5, 6])["detail"]
+    assert detail.startswith("Nothing changed: the week of Nov 16 to 22 wouldn't fit.")
+    assert len(rules(client)) == 4
+    assert get(client)["blocks"] == before
+
+
+def test_a_daily_limit_is_rounded_down_to_the_slot(client: TestClient) -> None:
+    add_rule(client, kind="daily_limit", max_min=200, weekdays=[6])  # Sunday has room for it
+    assert [r["max_min"] for r in rules(client) if r["kind"] == "daily_limit"] == [120, 195]
+
+
+def test_a_rule_for_every_item_sends_no_targets(client: TestClient) -> None:
+    add_rule(client, kind="rest_between", min_gap_days=2, every_item=True)
+    added = rules(client)[-1]
+    assert (added["min_gap_days"], added["every_item"], added["targets"]) == (2, True, [])
+
+
+def test_editing_an_imported_rule_keeps_its_source_and_kind(db: Path, client: TestClient) -> None:
+    rest = rules(client)[-1]
+    gym = targets(client)["Gym"]["id"]
+    response = client.put(f"/api/rules/{rest['id']}?week={WEEK}", json={"kind": "rest_between", "min_gap_days": 2, "series_ids": [gym]})
+    assert response.status_code == 200, response.text
+    edited = rules(client)[-1]
+    assert (edited["id"], edited["min_gap_days"], edited["source"]) == (rest["id"], 2, "week.toml")
+    # The file wins on --replace, as for items.
+    import_week(EXAMPLE, db, replace=True)
+    assert rules(client)[-1]["min_gap_days"] == 1
+
+    changed_kind = client.put(f"/api/rules/{rules(client)[-1]['id']}?week={WEEK}", json={"kind": "daily_limit", "max_min": 60, "weekdays": [0]})
+    assert (changed_kind.status_code, changed_kind.json()["detail"]) == (422, "A rule's kind can't change. Delete it and add another.")
+
+
+def test_deleting_a_rule_re_plans(client: TestClient) -> None:
+    get(client)
+    limit = rules(client)[0]
+    response = client.delete(f"/api/rules/{limit['id']}?week={WEEK}")
+    assert response.status_code == 200, response.text
+    assert [r["kind"] for r in rules(client)] == ["time_preference", "time_preference", "rest_between"]
+    assert client.delete(f"/api/rules/{limit['id']}?week={WEEK}").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"kind": "daily_limit", "max_min": 0, "weekdays": [0]}, "Use a length longer than 0m."),
+        ({"kind": "daily_limit", "max_min": 1500, "weekdays": [0]}, "A day only has 24h."),
+        ({"kind": "daily_limit", "max_min": 60, "weekdays": []}, "Pick at least one day."),
+        ({"kind": "rest_between", "min_gap_days": 7, "every_item": True}, "Use a whole number of days from 1 to 6."),
+        ({"kind": "rest_between", "min_gap_days": 1}, "Pick at least one item, or choose Every item."),
+        (
+            {"kind": "time_preference", "every_item": True, "ranges": [{"weekdays": [0], "start_time": "09:00", "end_time": "09:00"}]},
+            "Start and end can't be the same time.",
+        ),
+        ({"kind": "time_preference", "every_item": True, "ranges": []}, "Add at least one range of times."),
+        ({"kind": "rest_between", "min_gap_days": 1, "item_ids": [str(uuid4())]}, "One of the picked items no longer exists. Pick again."),
+    ],
+)
+def test_a_bad_rule_is_refused_with_the_dialogs_message(client: TestClient, fields: dict, message: str) -> None:
+    assert add_rule(client, 422, **fields)["detail"] == message
+    assert len(rules(client)) == 4
