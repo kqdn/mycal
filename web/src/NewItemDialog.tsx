@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { addItem, addSeries, updateItem, updateSeries, WeekError, type Week } from './api'
+import { addItem, addSeries, repeatItem, updateItem, updateSeries, WeekError, type Week } from './api'
 import {
   emptyForm,
   firstError,
@@ -39,8 +39,16 @@ interface Props {
   frames: DayContext['frames'] // the week's work-frame time, to tell which picked days are still open
   slotMin: number // the planner's slot size, to show planned lengths
   // Set to edit an existing item or series: its id, where it came from, the form as stored, and its own week.
-  // An item (an occurrence too) is edited without the Repeats field; a series with it.
-  editing?: { kind: 'item' | 'series'; id: string; source: string | null; form: ItemForm; weekStart: DateString }
+  // A series is edited with the Repeats field, and so is a one-off item (`repeatable`), which it can turn
+  // into a series. An occurrence ("This one") is edited without it.
+  editing?: {
+    kind: 'item' | 'series'
+    repeatable?: boolean
+    id: string
+    source: string | null
+    form: ItemForm
+    weekStart: DateString
+  }
   onClose: () => void
   onSaved: (week: Week) => void
 }
@@ -75,7 +83,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
   // Editing without changing when the item is: a passed day or deadline is fine, as on the server.
   const unmoved = editing !== undefined && whenKey(form) === whenKey(editing.form)
   const editingSeries = editing?.kind === 'series'
-  const showsRepeat = editing === undefined || editingSeries
+  const showsRepeat = editing === undefined || editingSeries || editing.repeatable === true
   const errors: Errors = validateWithRepeat(
     form,
     openedAt,
@@ -83,7 +91,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
     { weekStart: formWeek, frames, slotMin },
     unmoved,
     today(),
-    editingSeries && form.startDate === editing.form.startDate,
+    editing !== undefined && form.startDate === editing.form.startDate, // its own start may have passed
   )
   const shown = (field: Field) => (touched.has(field) ? errors[field] : undefined)
 
@@ -122,6 +130,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
     try {
       let week: Week
       if (editingSeries) week = await updateSeries(editing.id, toSeriesRequest(form, formWeek), weekStart)
+      else if (editing && repeats(form)) week = await repeatItem(editing.id, toSeriesRequest(form, formWeek), weekStart)
       else if (editing) week = await updateItem(editing.id, toRequest(form, formWeek), weekStart)
       else if (repeats(form)) week = await addSeries(toSeriesRequest(form, weekStart))
       else week = await addItem(toRequest(form, weekStart))

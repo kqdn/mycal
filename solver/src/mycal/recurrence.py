@@ -55,6 +55,12 @@ def expand_series(series: Series, existing: list[Item], first: date, last: date)
     return [_occurrence(series, day) for day in occurrence_dates(series, first, last) if day not in taken]
 
 
+def occurrence_on(series: Series, day: date) -> Item:
+    """The occurrence Item for one date, whether or not the rule falls on it. For a caller
+    linking an existing item to a new series on that item's own date."""
+    return _occurrence(series, day)
+
+
 def _occurrence(series: Series, day: date) -> Item:
     """Copy the template onto one date, filling dates into the preset params."""
     template = series.template

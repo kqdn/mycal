@@ -241,6 +241,7 @@ Draft by Claude, for Kaden to review. A repeating item is a series: the item's f
   - "The end date is before the start date."
   - "Pick a due time." (Before a deadline)
 - **Adding:** the series re-plans every week from this one on, like a work frame, so it can take a few seconds. A week that would stop fitting refuses it, with the server's message in the banner.
+- **Editing a one-off item:** the Repeats field shows too, on Never. Picking Weekly or Daily and saving turns the item into a repeating item, with the item as its first date: it keeps its sessions, and done work stays. Starts begins on the item's own date (its day, its due date, or its week's Monday), which may have passed; only a different start has to lie ahead. If the item already started, or the repeat days don't include its date, it stays exactly as it is and the series continues on its own days.
 
 ### Details popover
 

@@ -49,7 +49,7 @@ from pydantic import BaseModel
 from mycal import store
 from mycal.model import BlockStatus, Constraint, FlexPreset, Item, ItemTemplate, Rule, Series, WorkFrame
 from mycal.presets import every_day_session
-from mycal.recurrence import occurrence_dates
+from mycal.recurrence import occurrence_dates, occurrence_on
 from mycal.planner import (
     create_occurrences,
     effective_item,
@@ -222,6 +222,7 @@ class ItemFormOut(BaseModel):
     id: UUID
     source: str | None  # the week file it was imported from, or None if added in the app
     editable: bool
+    series_id: UUID | None = None  # set on an occurrence of a series, which can't be made to repeat again
     week_start: date
     title: str
     preset: Literal["exact", "day", "day_range", "days", "every_day", "before_deadline", "custom"]
@@ -407,6 +408,7 @@ class SeriesFormOut(BaseModel):
 
 
 SERIES_GONE = "That repeating item no longer exists."
+ALREADY_REPEATS = "It already repeats. Edit the series instead."
 SERIES_TIMED_OUT = (
     "The planner ran out of time before finishing, so nothing was changed. "
     "Try again, or change fewer weeks at once."
@@ -422,6 +424,68 @@ def add_series(request: SeriesIn) -> WeekOut:
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return _change_everywhere(conn, settings, lambda trial: store.put_series(trial, series), request.week_start, repr(series.title))
+
+
+@app.post("/api/items/{item_id}/repeat")
+def repeat_item(item_id: UUID, request: SeriesIn, week: date) -> WeekOut:
+    """Turn a one-off item into a series, with the item as its occurrence on the item's own date.
+
+    The item keeps its id and its sessions, so done work stays. If it hasn't
+    started and the rule falls on its date, it is rebuilt from the new
+    template; otherwise it stays as it is and counts as edited by hand. Its
+    date may have passed; only a start date other than the item's own has to
+    lie ahead. Re-plans like adding a series, all or nothing.
+    """
+    with database() as (conn, settings):
+        old = store.get_item(conn, item_id)
+        if old is None:
+            raise HTTPException(status_code=404, detail=ITEM_GONE)
+        if old.series_id is not None:
+            raise HTTPException(status_code=422, detail=ALREADY_REPEATS)
+        if not editable(old):
+            raise HTTPException(status_code=422, detail=CUSTOM_NOT_EDITABLE)
+        moment = now()
+        day = _item_date(old, settings)
+        if request.preset in ("days", "every_day"):
+            day = monday(day)
+        try:
+            series = to_series(request, settings, moment, check_past=request.start_date != day)
+        except Invalid as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        rebuild = old.id in {i.id for i in _not_started_items([old], conn, settings, moment)} and bool(
+            occurrence_dates(series, day, day)
+        )
+        base = occurrence_on(series, day) if rebuild else old
+        linked = replace(
+            base,
+            id=old.id,
+            parent_id=old.parent_id,
+            depends_on=old.depends_on,
+            catch_up_of=old.catch_up_of,
+            series_id=series.id,
+            occurrence_date=day,
+        )
+
+        def change(trial: sqlite3.Connection) -> None:
+            store.put_series(trial, series)
+            store.put_item(trial, linked)
+            if not rebuild:
+                store.mark_hand_edited(trial, linked.id)
+
+        return _change_everywhere(conn, settings, change, week, repr(series.title))
+
+
+def _item_date(item: Item, settings: SolverSettings) -> date:
+    """The local date a one-off item belongs to: its day, its week's Monday, or its due date."""
+    form = from_item(item, None, settings)
+    if form.preset in ("days", "every_day"):
+        return form.week_start
+    if form.preset == "before_deadline":
+        assert form.deadline_date is not None
+        return form.deadline_date
+    assert form.day is not None
+    return form.day
 
 
 @app.get("/api/series/{series_id}")
@@ -487,14 +551,28 @@ def delete_series(series_id: UUID, week: date) -> WeekOut:
 
 def _not_started(conn: sqlite3.Connection, settings: SolverSettings, series_id: UUID, moment: datetime) -> list[Item]:
     """The series' occurrences that still lie ahead: none of their sessions started and they have a day left."""
+    occurrences = [i for i in store.list_items(conn) if i.series_id == series_id]
+    return _not_started_items(occurrences, conn, settings, moment)
+
+
+def _not_started_items(
+    items: list[Item], conn: sqlite3.Connection, settings: SolverSettings, moment: datetime
+) -> list[Item]:
+    """The items (occurrences, or one being made an occurrence) none of whose sessions started, with a day left."""
     today = moment.astimezone(ZoneInfo(settings.timezone)).date()
     started = {b.item_id for b in store.list_blocks(conn) if b.start <= moment or b.status is not BlockStatus.PLANNED}
+
+    def last_day(item: Item) -> date:
+        if item.occurrence_date is not None:
+            return occurrence_last_day(item)
+        day = _item_date(item, settings)
+        return day + timedelta(days=6) if item.flex_preset is FlexPreset.DAYS else day
+
     return [
         i
-        for i in store.list_items(conn)
-        if i.series_id == series_id
-        and i.id not in started
-        and occurrence_last_day(i) >= today
+        for i in items
+        if i.id not in started
+        and last_day(i) >= today
         and not (i.flex_preset is FlexPreset.EXACT and i.preset_params["start"] <= moment)
     ]
 
@@ -1252,6 +1330,7 @@ def from_item(item: Item, source: str | None, settings: SolverSettings) -> ItemF
         "id": item.id,
         "source": source,
         "editable": editable(item),
+        "series_id": item.series_id,
         "title": item.title,
         "estimate_min": item.estimate_min,
         "max_chunk_min": item.max_chunk_min,

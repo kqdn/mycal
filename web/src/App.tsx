@@ -47,6 +47,7 @@ export default function App() {
   const [openError, setOpenError] = useState<{ itemId: string; message: string } | null>(null)
   const [editing, setEditing] = useState<{
     kind: 'item' | 'series'
+    repeatable?: boolean // a one-off item, which the Repeats field can turn into a series
     id: string
     source: string | null
     form: ItemForm
@@ -166,7 +167,14 @@ export default function App() {
       }
       const item = await getItem(itemId)
       setOpen(null)
-      setEditing({ kind: 'item', id: item.id, source: item.source, form: formFrom(item, today()), weekStart: item.week_start })
+      setEditing({
+        kind: 'item',
+        repeatable: item.series_id === null,
+        id: item.id,
+        source: item.source,
+        form: formFrom(item, today()),
+        weekStart: item.week_start,
+      })
     } catch (error) {
       if (error instanceof WeekError && error.kind === 'missing') {
         // Already gone: close and reload, as for a delete.

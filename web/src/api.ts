@@ -79,6 +79,7 @@ export interface ItemFormOut {
   id: string
   source: string | null // the week file it was imported from, or null if added in the app
   editable: boolean
+  series_id: string | null // set on an occurrence, which can't be made to repeat again
   week_start: DateString // the item's own week for days and every-day items
   title: string
   preset: Preset | 'custom'
@@ -289,6 +290,11 @@ async function sendForWeek(url: string, method: 'POST' | 'PUT' | 'DELETE', body?
 /** Add a repeating item. Throws WeekError with the server's message on a 422. */
 export async function addSeries(request: SeriesRequest): Promise<Week> {
   return sendForWeek('/api/series', 'POST', request)
+}
+
+/** Turn a one-off item into a series; the item becomes its occurrence on the item's own date. */
+export async function repeatItem(itemId: string, request: SeriesRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/items/${itemId}/repeat?week=${week}`, 'POST', request)
 }
 
 /** A series as the edit dialog shows it. A 404 (already gone) throws WeekError with kind 'missing'. */

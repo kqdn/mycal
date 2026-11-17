@@ -1232,3 +1232,67 @@ def test_a_new_series_can_be_named_by_a_rule(client: TestClient) -> None:
     sid = series_id(week, "Office hours")
     targets = client.get("/api/rules/targets").json()
     assert {"id": sid, "kind": "series", "title": "Office hours", "week_start": None} in targets
+
+
+# Turning a one-off item into a series
+
+
+def item_titled(client: TestClient, title: str, week: str = WEEK) -> str:
+    return blocks_titled(get(client, week), title)[0]["item_id"]
+
+
+LAB_WEEKLY = {
+    "title": "Chemistry lab", "preset": "day", "estimate_min": 120,
+    "freq": "weekly", "repeat_weekdays": [2], "start_date": "2026-11-18",  # Wednesdays, from its own date
+}
+
+
+def repeat(client: TestClient, item_id: str, status: int = 200, **fields) -> dict:  # type: ignore[no-untyped-def]
+    response = client.post(f"/api/items/{item_id}/repeat", params={"week": WEEK}, json={"week_start": WEEK, **fields})
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def test_an_item_made_to_repeat_becomes_the_first_occurrence(client: TestClient, db: Path) -> None:
+    lab = item_titled(client, "Chemistry lab")
+    week = repeat(client, lab, **LAB_WEEKLY)
+
+    [block] = blocks_titled(week, "Chemistry lab")
+    assert block["item_id"] == lab and block["series_id"] is not None  # same item, now an occurrence
+    assert local_starts(get(client, "2026-11-23"), "Chemistry lab")[0].startswith("Wed")
+    conn = store.connect(db)
+    assert not store.hand_edited(conn, UUID(lab))  # rebuilt from the template, so series edits reach it
+    assert client.get(f"/api/items/{lab}").json()["series_id"] == block["series_id"]
+
+
+def test_an_item_off_the_repeat_days_is_kept_as_it_is(client: TestClient, db: Path) -> None:
+    lab = item_titled(client, "Chemistry lab")  # Wednesday
+    week = repeat(client, lab, **(LAB_WEEKLY | {"repeat_weekdays": [3], "start_date": "2026-11-18"}))  # Thursdays
+
+    assert local_starts(week, "Chemistry lab")[1].startswith("Thu")  # Wednesday's lab stays, Thursday's comes too
+    assert lab in [b["item_id"] for b in blocks_titled(week, "Chemistry lab")]
+    later = local_starts(get(client, "2026-11-23"), "Chemistry lab")
+    assert len(later) == 1 and later[0].startswith("Thu")
+    assert store.hand_edited(store.connect(db), UUID(lab))
+
+
+def test_a_past_item_can_be_made_to_repeat_from_its_own_date(client: TestClient, db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lab = item_titled(client, "Chemistry lab")
+    monkeypatch.setattr(api, "now", lambda: datetime(2026, 11, 19, 20, tzinfo=UTC))  # Thu noon PST, the lab is over
+
+    week = repeat(client, lab, **LAB_WEEKLY)
+
+    assert [b["item_id"] for b in blocks_titled(week, "Chemistry lab")] == [lab]  # its session stays
+    assert store.hand_edited(store.connect(db), UUID(lab))  # it already happened, so it's kept as it was
+    assert len(blocks_titled(get(client, "2026-11-23"), "Chemistry lab")) == 1
+    # Any other start in the past is refused, as for a new series.
+    other = item_titled(client, "Study group")
+    detail = repeat(client, other, 422, title="Study group", preset="exact", start_time="15:00", end_time="16:30",
+                    freq="weekly", repeat_weekdays=[3], start_date="2026-11-12")["detail"]
+    assert "can't start in the past" in detail
+
+
+def test_an_occurrence_cant_be_made_to_repeat_again(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    occurrence = blocks_titled(week, "Office hours")[0]["item_id"]
+    assert repeat(client, occurrence, 422, **OFFICE_HOURS)["detail"] == api.ALREADY_REPEATS

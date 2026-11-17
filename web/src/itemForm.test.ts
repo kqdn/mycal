@@ -328,6 +328,7 @@ describe('formFrom', () => {
     id: 'i1',
     source: null,
     editable: true,
+    series_id: null,
     week_start: WEEK,
     title: 'Thing',
     preset: 'day',
@@ -374,6 +375,13 @@ describe('formFrom', () => {
       }).filter(([, value]) => value !== null && value !== undefined),
     )
     expect(request).toEqual(expected)
+  })
+
+  it("starts a repeat from the item's own date", () => {
+    const start = (changes: Partial<ItemFormOut>) => formFrom(stored(changes), WEEK).startDate
+    expect(start({ preset: 'day', day: '2026-11-18' })).toBe('2026-11-18')
+    expect(start({ preset: 'before_deadline', deadline_date: '2026-11-20', deadline_time: '17:00:00' })).toBe('2026-11-20')
+    expect(start({ preset: 'days', weekdays: [1], week_start: '2026-11-23' })).toBe('2026-11-23')
   })
 
   it('shows lengths as typed, not rounded', () => {

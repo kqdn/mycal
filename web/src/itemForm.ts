@@ -144,6 +144,8 @@ export function formFrom(item: ItemFormOut, today: DateString): ItemForm {
     longestSession: length(item.max_chunk_min),
     oneSessionPerDay: item.one_block_per_day,
     eachDay: length(item.session_min),
+    // Made to repeat, it starts from its own date: its day, its due date, or its week.
+    startDate: item.day ?? item.deadline_date ?? item.week_start,
   }
 }
 
