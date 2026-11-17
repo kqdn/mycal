@@ -1,6 +1,7 @@
 // Types matching GET /api/weeks/{week_start} in solver/src/mycal/api.py.
 // All times are UTC ISO strings.
 
+import type { FrameOut, FrameRequest } from './frameForm'
 import type { ItemRequest, Preset } from './itemForm'
 import type { DateString } from './time'
 
@@ -171,6 +172,44 @@ export async function updateItem(itemId: string, request: ItemRequest, week: Dat
 
 export async function deleteItem(itemId: string, week: DateString): Promise<Week> {
   const response = await fetch(`/api/items/${itemId}?week=${week}`, { method: 'DELETE' })
+  if (!response.ok) throw await failure(response)
+  const returned: Week = await response.json()
+  rememberOnly(returned)
+  return returned
+}
+
+// Work frames. A change re-plans every week from this one on, so the cache
+// keeps only the returned (viewed) week, as for items.
+
+/** GET /api/frames: every work frame, by first weekday then start time. */
+export async function listFrames(): Promise<FrameOut[]> {
+  const response = await fetch('/api/frames')
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/** Add a work frame. Throws WeekError with the server's message on a 422 (a week would stop fitting). */
+export async function addFrame(request: FrameRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/frames?week=${week}`, 'POST', request)
+}
+
+/** Change a work frame. A 404 (already gone) throws WeekError with kind 'missing'. */
+export async function updateFrame(frameId: string, request: FrameRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/frames/${frameId}?week=${week}`, 'PUT', request)
+}
+
+/** Delete a work frame. Refused with a 422 if a week would stop fitting without it. */
+export async function deleteFrame(frameId: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/frames/${frameId}?week=${week}`, 'DELETE')
+}
+
+/** Send a change that returns the viewed week, and keep only that week in the cache. */
+async function sendForWeek(url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<Week> {
+  const response = await fetch(url, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
   if (!response.ok) throw await failure(response)
   const returned: Week = await response.json()
   rememberOnly(returned)

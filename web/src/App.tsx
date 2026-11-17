@@ -4,12 +4,14 @@ import { weekAfterDelete } from './itemDetails'
 import { formFrom, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
+import { RulesPage } from './RulesPage'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
 import { WeekGrid } from './WeekGrid'
 
 type Problem = { title: string; body: string }
 type Result = { status: 'error'; problem: Problem } | { status: 'ready'; week: Week }
 type State = { status: 'loading' } | Result
+type View = 'week' | 'rules'
 
 /** The week in the URL (?week=2026-11-16), or this week's Monday. */
 function weekFromUrl(): DateString {
@@ -17,8 +19,18 @@ function weekFromUrl(): DateString {
   return param && /^\d{4}-\d{2}-\d{2}$/.test(param) ? mondayOf(param) : mondayOf(today())
 }
 
+/** The page in the URL: ?view=rules is Frames and rules, anything else the week. */
+function viewFromUrl(): View {
+  return new URLSearchParams(window.location.search).get('view') === 'rules' ? 'rules' : 'week'
+}
+
+function urlFor(view: View, weekStart: DateString): string {
+  return view === 'rules' ? `?view=rules&week=${weekStart}` : `?week=${weekStart}`
+}
+
 export default function App() {
   const [weekStart, setWeekStart] = useState(weekFromUrl)
+  const [view, setView] = useState(viewFromUrl)
   // Each result remembers which week it is for; a newer week shows as loading.
   const [result, setResult] = useState<{ for: DateString } & Result>()
   const [adding, setAdding] = useState(false)
@@ -52,10 +64,25 @@ export default function App() {
       : { status: 'loading' }
 
   useEffect(() => {
-    const onPop = () => setWeekStart(weekFromUrl())
+    const onPop = () => {
+      setWeekStart(weekFromUrl())
+      setView(viewFromUrl())
+    }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
+
+  // Frames and rules reach every week, so the Week page fetches its week again
+  // each time it is shown after that page.
+  const lastView = useRef(view)
+  useEffect(() => {
+    if (view === 'week' && lastView.current === 'rules') {
+      clearWeekCache()
+      setResult(undefined)
+      setReload((n) => n + 1)
+    }
+    lastView.current = view
+  }, [view])
 
   useEffect(() => {
     let current = true
@@ -143,29 +170,54 @@ export default function App() {
 
   function go(days: number) {
     const next = addDays(weekStart, days)
-    window.history.pushState(null, '', `?week=${next}`)
+    window.history.pushState(null, '', urlFor('week', next))
     setWeekStart(next)
   }
+
+  function show(next: View) {
+    if (next === view) return
+    setOpen(null)
+    window.history.pushState(null, '', urlFor(next, weekStart))
+    setView(next)
+  }
+
+  const tab = (name: View, label: string) => (
+    <a
+      className={view === name ? 'tab active' : 'tab'}
+      href={urlFor(name, weekStart)}
+      aria-current={view === name ? 'page' : undefined}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return // new tab or window
+        event.preventDefault()
+        show(name)
+      }}
+    >
+      {label}
+    </a>
+  )
 
   return (
     <>
       <nav className="top-bar" aria-label="Main">
-        <span className="tab active" aria-current="page">
-          Week
-        </span>
-        <div className="top-bar-actions">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => setAdding(true)}
-            disabled={state.status !== 'ready'}
-          >
-            New item
-          </button>
-        </div>
+        {tab('week', 'Week')}
+        {tab('rules', 'Frames and rules')}
+        {view === 'week' && (
+          <div className="top-bar-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setAdding(true)}
+              disabled={state.status !== 'ready'}
+            >
+              New item
+            </button>
+          </div>
+        )}
       </nav>
 
-      {adding && state.status === 'ready' && (
+      {view === 'rules' && <RulesPage week={weekStart} />}
+
+      {view === 'week' && adding && state.status === 'ready' && (
         <NewItemDialog
           weekStart={weekStart}
           timezone={state.week.timezone}
@@ -176,7 +228,7 @@ export default function App() {
         />
       )}
 
-      {editing && state.status === 'ready' && (
+      {view === 'week' && editing && state.status === 'ready' && (
         <NewItemDialog
           key={editing.id}
           weekStart={weekStart}
@@ -193,76 +245,78 @@ export default function App() {
         />
       )}
 
-      <main className="content">
-        <div className="title-row">
-          <div className="title-block">
-            <span className="eyebrow">Your week</span>
-            <h1 className="page-title">{weekTitle(weekStart)}</h1>
+      {view === 'week' && (
+        <main className="content">
+          <div className="title-row">
+            <div className="title-block">
+              <span className="eyebrow">Your week</span>
+              <h1 className="page-title">{weekTitle(weekStart)}</h1>
+            </div>
+            <div className="week-nav">
+              <button type="button" className="icon-button" onClick={() => go(-7)} aria-label="Previous week">
+                <Chevron direction="left" />
+              </button>
+              <button type="button" className="icon-button" onClick={() => go(7)} aria-label="Next week">
+                <Chevron direction="right" />
+              </button>
+            </div>
           </div>
-          <div className="week-nav">
-            <button type="button" className="icon-button" onClick={() => go(-7)} aria-label="Previous week">
-              <Chevron direction="left" />
-            </button>
-            <button type="button" className="icon-button" onClick={() => go(7)} aria-label="Next week">
-              <Chevron direction="right" />
-            </button>
-          </div>
-        </div>
 
-        {pageProblem && <Banner {...pageProblem} onDismiss={() => setPageProblem(null)} />}
-        {state.status === 'loading' && <p className="loading">Loading...</p>}
-        {state.status === 'error' && <Banner {...state.problem} />}
-        {state.status === 'ready' && !state.week.feasible && (
-          <Banner
-            title="This week can't be planned"
-            body="Some deadline, window or dependency can't be met. Check the week file's estimates and windows."
-          />
-        )}
-        {state.status === 'ready' && state.week.feasible && (
-          <>
-            <WeekGrid
-              week={state.week}
-              onOpen={(block, opener) => setOpen({ kind: 'block', itemId: block.item_id, title: block.title, block, opener })}
+          {pageProblem && <Banner {...pageProblem} onDismiss={() => setPageProblem(null)} />}
+          {state.status === 'loading' && <p className="loading">Loading...</p>}
+          {state.status === 'error' && <Banner {...state.problem} />}
+          {state.status === 'ready' && !state.week.feasible && (
+            <Banner
+              title="This week can't be planned"
+              body="Some deadline, window or dependency can't be met. Check the week file's estimates and windows."
             />
-            {state.week.unscheduled.length > 0 && (
-              <section aria-labelledby="unscheduled-label">
-                <h2 id="unscheduled-label" className="section-label">
-                  Unscheduled
-                </h2>
-                <ul className="list-card">
-                  {state.week.unscheduled.map((item) => (
-                    <li key={item.id} className="list-row">
-                      <div className="row-text">
-                        <span className="row-title">{item.title}</span>
-                        {(item.estimate_min !== null || item.reason) && (
-                          <span className="row-sub">
-                            {item.estimate_min !== null && estimateLabel(item.estimate_min)}
-                            {item.estimate_min !== null && item.reason && ' · '}
-                            {item.reason && <span className="row-reason">{item.reason}</span>}
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="more-button"
-                        aria-label={`More about ${item.title}`}
-                        aria-haspopup="dialog"
-                        onClick={(event) =>
-                          setOpen({ kind: 'unscheduled', itemId: item.id, title: item.title, item, opener: event.currentTarget })
-                        }
-                      >
-                        <Dots />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-          </>
-        )}
-      </main>
+          )}
+          {state.status === 'ready' && state.week.feasible && (
+            <>
+              <WeekGrid
+                week={state.week}
+                onOpen={(block, opener) => setOpen({ kind: 'block', itemId: block.item_id, title: block.title, block, opener })}
+              />
+              {state.week.unscheduled.length > 0 && (
+                <section aria-labelledby="unscheduled-label">
+                  <h2 id="unscheduled-label" className="section-label">
+                    Unscheduled
+                  </h2>
+                  <ul className="list-card">
+                    {state.week.unscheduled.map((item) => (
+                      <li key={item.id} className="list-row">
+                        <div className="row-text">
+                          <span className="row-title">{item.title}</span>
+                          {(item.estimate_min !== null || item.reason) && (
+                            <span className="row-sub">
+                              {item.estimate_min !== null && estimateLabel(item.estimate_min)}
+                              {item.estimate_min !== null && item.reason && ' · '}
+                              {item.reason && <span className="row-reason">{item.reason}</span>}
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="more-button"
+                          aria-label={`More about ${item.title}`}
+                          aria-haspopup="dialog"
+                          onClick={(event) =>
+                            setOpen({ kind: 'unscheduled', itemId: item.id, title: item.title, item, opener: event.currentTarget })
+                          }
+                        >
+                          <Dots />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </>
+          )}
+        </main>
+      )}
 
-      {open && state.status === 'ready' && (
+      {view === 'week' && open && state.status === 'ready' && (
         <ItemPopover
           key={open.kind === 'block' ? open.block.id : open.itemId}
           target={open}

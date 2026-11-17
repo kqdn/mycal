@@ -36,6 +36,10 @@ ul {
   font-weight: 500;
 }
 
+a.tab {
+  text-decoration: none;
+}
+
 .tab.active {
   border-bottom-color: var(--accent);
   color: var(--accent);
@@ -878,3 +882,112 @@ html:has(.item-dialog[open]) .week-body {
   font-weight: 600;
 }
 
+
+/* Frames and rules (DESIGN.md, Frames and rules) */
+
+.rules-column {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.section-header .section-label {
+  margin-bottom: 0;
+}
+
+.section-description {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.add-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.rules-column .list-card {
+  overflow: hidden; /* keeps a hovered row inside the rounded corners */
+}
+
+.edit-row {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.edit-row:hover {
+  background: var(--surface-sunken);
+}
+
+.edit-row + .edit-row {
+  border-top: 1px solid var(--divider);
+}
+
+.edit-row .row-text {
+  gap: 2px;
+}
+
+.edit-row .row-title {
+  overflow-wrap: anywhere; /* wraps instead of cutting off: a rule's meaning is all in it */
+}
+
+.row-chevron {
+  flex-shrink: 0;
+}
+
+.empty-row {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.dialog-delete {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.dialog-delete .popover-confirm {
+  align-self: stretch;
+}
+
+@media (max-width: 600px) {
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .add-button {
+    width: 100%;
+  }
+}

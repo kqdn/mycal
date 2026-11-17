@@ -20,6 +20,8 @@ import {
   type ItemForm,
   type Preset,
 } from './itemForm'
+import { fieldProps } from './fieldProps'
+import { Check, FieldError } from './fields'
 import { today, type DateString } from './time'
 
 interface Props {
@@ -411,30 +413,4 @@ function PresetPanel({ form, weekStart, context, update, touch, shown }: PanelPr
 /** The length the planner will use, when it differs from what was typed. Never an error. */
 function PlannedAs({ text }: { text?: string }) {
   return text ? <p className="hint">{text}</p> : null
-}
-
-/** Marks the field Add goes to, and ties it to its error for screen readers. */
-function fieldProps(field: Field, shown: (field: Field) => string | undefined) {
-  const message = shown(field)
-  return {
-    'data-field': field,
-    'aria-invalid': message ? true : undefined,
-    'aria-describedby': message ? `${field}-error` : undefined,
-  }
-}
-
-function FieldError({ field, message }: { field: Field; message?: string }) {
-  return message ? (
-    <p className="field-error" id={`${field}-error`}>
-      {message}
-    </p>
-  ) : null
-}
-
-function Check() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" className="check">
-      <path d="M4 9.5 7.5 13 14 5.5" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
 }
