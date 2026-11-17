@@ -327,6 +327,10 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 
 **Open questions**
 
+- [ ] Milestone 6, editing a series vs. occurrences edited by hand: a series edit changes future occurrences only, but next week's occurrence may already exist (created when that week was planned) and would be rebuilt from the new template. Keep a future occurrence edited by hand (say, a moved lecture), which needs a flag on items set when an occurrence is edited directly, or overwrite it? Leaning keep
+- [ ] Milestone 6, deleting a series: "This one" skips that date (skipped_dates). For "The series", end it at today, deleting future occurrences that haven't started and keeping past and done ones (rule 8, completion history), or delete everything? Leaning end it at today
+- [ ] Milestone 6, start date: a series starts on the date picked and can't start in the past, and past weeks never get occurrences backfilled? Leaning yes
+- [ ] Milestone 6, design: a "Repeat" section for web/DESIGN.md (the Repeats field in the New item dialog, the series line in the popover, and the This one / The series choice when editing or deleting an occurrence), written by Kaden or drafted by Claude
 - [ ] Name for the app
 - [ ] rest_between sees only this week's input, so last Sunday's session does not stop one on Monday. Pass recent done blocks from the previous week, or a rule of its own?
 - [ ] Follow-up: count the span cap from now instead of the current week's Monday, so an add on a weekend still looks two weeks ahead (today a Saturday add's span is that weekend plus one week)
