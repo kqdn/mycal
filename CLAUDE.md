@@ -35,7 +35,7 @@ Run Python commands from `solver/` and web commands from `web/`. Keep this secti
 - Demo schedule (sample week): `uv run mycal-demo examples/week.toml`
 - Demo schedule (my real week, gitignored): `uv run mycal-demo weeks/<week-start>.toml`
 - Week API on http://127.0.0.1:8000 (serves weeks from the database, reloads on code changes): `uv run mycal-api`. Import a week file first. Another database, in PowerShell: `$env:MYCAL_DB = "<file>"; uv run mycal-api`; on a Mac: `MYCAL_DB=<file> uv run mycal-api`
-- Import a week file into the database (`data/mycal.db`, gitignored; another file: `--db` or `MYCAL_DB`): `uv run mycal-import weeks/<week-start>.toml`. Each new file adds to the database; to import a changed file again, add `--replace`, which replaces only that file's items and constraints (items added in the app stay). Every import sets the work frames and settings from its file
+- Import a week file into the database (`data/mycal.db`, gitignored; another file: `--db` or `MYCAL_DB`): `uv run mycal-import weeks/<week-start>.toml`. Each new file adds to the database; to import a changed file again, add `--replace`, which replaces only that file's items and constraints (items added in the app stay). Only the first import into an empty database sets the timezone, slot size and work frames; later imports keep the ones already there (edit them in the app)
 - A week is planned the first time it's viewed and the plan is stored. Importing a file clears every week's plan, so weeks re-plan when next viewed
 
 **Web** (`web/`)

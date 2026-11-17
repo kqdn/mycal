@@ -247,6 +247,22 @@ def test_a_version_1_database_upgrades_in_place(tmp_path: Path) -> None:
     assert (row["title"], row["source"]) == ("Old item", None)  # existing rows count as added in the app
 
 
+def test_engine_settings_stored_by_old_imports_are_dropped(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(f"BEGIN; {''.join(store.MIGRATIONS[:3])} PRAGMA user_version = 3; COMMIT;")
+    old.executemany(
+        "INSERT INTO settings (key, value) VALUES (?, ?)",
+        [("timezone", '"America/Los_Angeles"'), ("slot_min", "15"), ("work_limit", "20.0"), ("engine", '"cp_sat"')],
+    )
+    old.commit()
+    old.close()
+
+    settings = store.load_settings(store.connect(path))
+
+    assert settings == SolverSettings(LA)  # the old work limit of 20 is gone; the default applies
+
+
 def test_a_rule_that_also_targets_a_series_keeps_it_when_its_item_goes(conn: sqlite3.Connection) -> None:
     gym = item("Gym")
     store.put_item(conn, gym)

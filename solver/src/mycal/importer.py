@@ -4,10 +4,11 @@ Not part of the solver: a caller, like api.py, demo.py and store.py.
 
 Each week file adds to the database. Its items and constraints are stored
 with the file's name as their source; series come in as that week's
-occurrence items, since series are not stored until Milestone 5. Settings and
-work frames describe me, not a week, so each import replaces them: the latest
-file wins. No blocks are imported: the API plans a week the first time it is
-viewed.
+occurrence items, since series are not stored yet. The timezone, slot size
+and work frames come only from the first import into an empty database; after
+that they are edited in the app and later imports leave them alone. Engine
+settings never come from a file. No blocks are imported: the API plans a week
+the first time it is viewed.
 
 Importing a file whose name is already in the database is refused unless
 --replace is given. Then only that file's items and constraints are replaced
@@ -51,13 +52,14 @@ def import_week(path: Path, db: Path, replace: bool = False) -> str:
                 f"{source} was already imported into {db}. "
                 f"Use --replace to replace the items and constraints that came from it."
             )
-        replaced = store.import_source(conn, source, week.settings, week.work_frames, items, week.constraints)
+        replaced, first = store.import_source(conn, source, week.settings, week.work_frames, items, week.constraints)
     finally:
         conn.close()
-    summary = (
-        f"Imported {len(items)} items and {len(week.constraints)} constraints from {source} into {db}, "
-        f"and set {len(week.work_frames)} work frames."
-    )
+    if first:
+        frames = f"set the timezone and {len(week.work_frames)} work frames"
+    else:
+        frames = "kept the timezone and work frames already in the database"
+    summary = f"Imported {len(items)} items and {len(week.constraints)} constraints from {source} into {db}, and {frames}."
     return summary + (f" Replaced {replaced} items from the earlier import." if replace else "")
 
 

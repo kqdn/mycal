@@ -109,6 +109,11 @@ MIGRATIONS = [
         planned_at TEXT NOT NULL
     );
     """,
+    # 4: engine settings come from the code's defaults, not from week files.
+    # Imports used to store them, which pinned old values.
+    """
+    DELETE FROM settings WHERE key IN ('engine', 'work_limit', 'earliness_slack_min');
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -179,24 +184,28 @@ def import_source(
     frames: list[WorkFrame],
     items: list[Item],
     constraints: list[Constraint],
-) -> int:
-    """Import one week file's contents in one transaction, and return how many earlier items it replaced.
+) -> tuple[int, bool]:
+    """Import one week file's contents in one transaction.
 
-    Items and constraints from an earlier import of the same `source` are
-    replaced (their blocks go with them). Everything else stays: other files'
-    items and items added in the app. Settings and work frames describe me, not
-    a week, so the imported ones replace the current ones. If anything fails,
-    nothing changes.
+    Returns how many earlier items it replaced, and whether it set the
+    settings and work frames. Items and constraints from an earlier import of
+    the same `source` are replaced (their blocks go with them). Everything else
+    stays: other files' items and items added in the app. The timezone, slot
+    size and work frames are set only by the first import into an empty
+    database; after that they are edited in the app, and imports leave them
+    alone. Engine settings never come from a file. If anything fails, nothing
+    changes.
     """
+    first = load_settings(conn) is None
     with conn:
-        conn.execute("DELETE FROM planned_weeks")  # frames and items change, so every week re-plans
+        conn.execute("DELETE FROM planned_weeks")  # items change, so every week re-plans
         replaced = conn.execute("DELETE FROM items WHERE source = ?", (source,)).rowcount
         _drop_deleted_targets(conn)
         conn.execute("DELETE FROM constraints WHERE source = ?", (source,))
-        conn.execute("DELETE FROM work_frames")
-        _write_settings(conn, settings)
-        for frame in frames:
-            _write_work_frame(conn, frame)
+        if first:
+            _write_settings(conn, settings, FILE_SETTINGS)
+            for frame in frames:
+                _write_work_frame(conn, frame)
         # Item rows before dependency links, and parents before their subtasks,
         # since foreign keys are checked right away.
         for item in _parents_first(items):
@@ -205,7 +214,7 @@ def import_source(
             _write_deps(conn, item)
         for constraint in constraints:
             _write_constraint(conn, constraint, source)
-    return replaced
+    return replaced, first
 
 
 def _parents_first(items: list[Item]) -> list[Item]:
@@ -265,27 +274,30 @@ def clear_plans(conn: sqlite3.Connection) -> None:
 # Settings
 
 
+# The settings a week file sets (on the first import). The rest belong to the
+# engine and come from SolverSettings' defaults unless saved on purpose.
+FILE_SETTINGS = ("timezone", "slot_min")
+ALL_SETTINGS = FILE_SETTINGS + ("engine", "earliness_slack_min", "work_limit")
+
+
 def save_settings(conn: sqlite3.Connection, settings: SolverSettings) -> None:
+    """Store every setting, engine ones included (tests use it to set a small work limit)."""
     with conn:
-        _write_settings(conn, settings)
+        _write_settings(conn, settings, ALL_SETTINGS)
 
 
-def _write_settings(conn: sqlite3.Connection, settings: SolverSettings) -> None:
-    values = {
-        "timezone": settings.timezone,
-        "slot_min": settings.slot_min,
-        "engine": settings.engine,
-        "earliness_slack_min": settings.earliness_slack_min,
-        "work_limit": settings.work_limit,
-    }
+def _write_settings(conn: sqlite3.Connection, settings: SolverSettings, keys: tuple[str, ...]) -> None:
     conn.executemany(
         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        [(key, json.dumps(value)) for key, value in values.items()],
+        [(key, json.dumps(getattr(settings, key))) for key in keys],
     )
 
 
 def load_settings(conn: sqlite3.Connection) -> SolverSettings | None:
-    """The saved settings, or None before any are saved (there is no default timezone)."""
+    """The saved settings, or None before any are saved (there is no default timezone).
+
+    Settings that aren't stored take SolverSettings' defaults.
+    """
     values = {row["key"]: json.loads(row["value"]) for row in conn.execute("SELECT key, value FROM settings")}
     if "timezone" not in values:
         return None

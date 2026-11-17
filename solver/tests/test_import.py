@@ -1,11 +1,11 @@
 """Importing a week file into the database, using the made-up sample week."""
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
 
-from mycal import Block, FlexPreset, Item, store
+from mycal import Block, FlexPreset, Item, WorkFrame, store
 from mycal.demo import load_week
 from mycal.importer import import_week, main
 
@@ -39,6 +39,21 @@ def test_import_stores_the_whole_week(db: Path) -> None:
     assert kinds(store.list_constraints(conn)) == kinds(week.constraints)
     assert store.list_blocks(conn) == []  # planned on first view, not imported
     assert summary.startswith(f"Imported {len(items)} items and {len(week.constraints)} constraints from week.toml")
+
+
+def test_a_later_import_keeps_frames_and_settings_edited_in_the_app(db: Path, tmp_path: Path) -> None:
+    import_week(EXAMPLE, db)
+    conn = store.connect(db)
+    evenings = WorkFrame("Evenings", [0, 1, 2, 3, 4], time(19), time(22), "America/Los_Angeles")
+    store.put_work_frame(conn, evenings)
+    other = next_week(tmp_path)
+    other.write_text(other.read_text(encoding="utf-8").replace("slot_min = 15", "slot_min = 30"), encoding="utf-8")
+
+    summary = import_week(other, db)
+
+    assert "kept the timezone and work frames already in the database" in summary
+    assert [f.name for f in store.list_work_frames(conn)] == ["Weekdays", "Weekend", "Evenings"]
+    assert store.load_settings(conn).slot_min == 15
 
 
 def test_dependencies_survive_the_import(db: Path) -> None:
@@ -84,8 +99,8 @@ def test_importing_another_file_adds_to_the_database(db: Path, tmp_path: Path) -
     assert set(grouped) == {"week.toml", "2026-11-23.toml"}
     assert "Project 3: design" in grouped["week.toml"]
     assert "Project 4: design" in grouped["2026-11-23.toml"]
-    # Work frames are mine, not a week's: the latest file's frames replace the old ones.
-    assert [f.name for f in store.list_work_frames(store.connect(db))] == ["Weekend"]
+    # Work frames come from the first import only; the second file's (just "Weekend") are not used.
+    assert [f.name for f in store.list_work_frames(store.connect(db))] == ["Weekdays", "Weekend"]
     sources = [r["source"] for r in store.connect(db).execute("SELECT source FROM constraints")]
     assert sorted(sources) == ["2026-11-23.toml"] * SAMPLE_RULES + ["week.toml"] * SAMPLE_RULES
 
