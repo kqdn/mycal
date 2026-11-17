@@ -24,6 +24,11 @@ week right after it is the broken one and is marked infeasible on its own,
 keeping its old blocks; planning then continues after it as a joint span
 again. Items left waiting on a broken week are listed with a reason.
 
+Series (Milestone 6). Before planning, the missing occurrences of every stored
+series are created for the weeks being planned (create_occurrences), so a
+weekly class shows up in every week it repeats in. Occurrences are never
+created in the past: only ones with a day left from today on.
+
 How blocks are passed to solve() for a span:
     - The span's planned, unlocked blocks that start at or after now, of items
       that aren't deferred, are the current plan. solve() may move them, and
@@ -48,6 +53,7 @@ from zoneinfo import ZoneInfo
 from mycal import store
 from mycal.model import Block, BlockStatus, FlexPreset, Item, Window, WorkFrame
 from mycal.presets import compile_constraint, compile_windows, every_day_session
+from mycal.recurrence import expand_series
 from mycal.problem import ceil_slot, covered_min, floor_slot, slot_start
 from mycal.settings import SolverSettings
 from mycal.solve import SolveResult, solve
@@ -93,12 +99,39 @@ def plan_weeks(
     planning resumes jointly rather than one week at a time. Returns each week's
     outcome: True if it fit (as part of a span), False if it can't be planned.
     """
+    create_occurrences(conn, settings, first, last, now)
     outcome: dict[date, bool] = {}
     week = first
     while week <= last:
         span_outcome, week = _plan_span(conn, settings, week, min(last, week + (MAX_SPAN_WEEKS - 1) * WEEK), now)
         outcome |= span_outcome
     return outcome
+
+
+def create_occurrences(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime) -> None:
+    """Store the missing occurrences of every series in the weeks [first..last], skipping the past.
+
+    An occurrence is created only if it still has a day from today on: its
+    date, or for a days item (repeating on Monday), any day of its week. So the
+    past is never filled in, but this week's Gym still appears on a Wednesday.
+    Each occurrence takes its series' source, so replacing that week file
+    removes it too. Running it twice creates nothing new.
+    """
+    today = now.astimezone(ZoneInfo(settings.timezone)).date()
+    items = store.list_items(conn)
+    for series in store.list_series(conn):
+        source = store.series_source(conn, series.id)
+        for item in expand_series(series, items, first, last + timedelta(days=6)):
+            if occurrence_last_day(item) >= today:
+                store.put_item(conn, item, source)
+
+
+def occurrence_last_day(occurrence: Item) -> date:
+    """An occurrence's last local day: its date, or for a days item, the Sunday of its week."""
+    assert occurrence.occurrence_date is not None
+    if occurrence.flex_preset is FlexPreset.DAYS:
+        return occurrence.occurrence_date + timedelta(days=6 - occurrence.occurrence_date.weekday())
+    return occurrence.occurrence_date
 
 
 @dataclass(slots=True)

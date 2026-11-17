@@ -1,12 +1,13 @@
 """Planning spans of weeks from the database, below the API."""
 
+import sqlite3
 from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from mycal import FlexPreset, Item, SolverSettings, WorkFrame, store
-from mycal.planner import MAX_SPAN_WEEKS, effective_item, plan_weeks
+from mycal import FlexPreset, Item, ItemTemplate, Rule, Series, SolverSettings, WorkFrame, store
+from mycal.planner import MAX_SPAN_WEEKS, create_occurrences, effective_item, plan_weeks
 
 LA = "America/Los_Angeles"
 W1, W2, W3, W4 = date(2026, 11, 16), date(2026, 11, 23), date(2026, 11, 30), date(2026, 12, 7)
@@ -120,3 +121,81 @@ def test_a_stored_estimate_off_the_grid_keeps_its_value_after_planning() -> None
     [block] = store.list_blocks(conn)
     assert (block.end - block.start).seconds // 60 == 30
     assert store.list_items(conn)[0].estimate_min == 20
+
+
+# Series occurrences (Milestone 6)
+
+
+def series_db() -> tuple[sqlite3.Connection, Series, Series]:
+    """A Tue/Thu lecture and a Gym "3 times a week" (one occurrence per week, on Monday), both from Nov 2."""
+    conn = store.connect(":memory:")
+    store.save_settings(conn, SolverSettings(LA))
+    store.put_work_frame(conn, WorkFrame("Weekdays", [0, 1, 2, 3, 4], time(9), time(18), LA))
+    lecture = Series(
+        "Lecture",
+        Rule("weekly", 1, [1, 3]),
+        LA,
+        date(2026, 11, 2),
+        ItemTemplate(FlexPreset.EXACT, {"start_time": time(11), "end_time": time(12, 30)}),
+    )
+    gym = Series(
+        "Gym",
+        Rule("weekly", 1, [0]),
+        LA,
+        date(2026, 11, 2),
+        ItemTemplate(FlexPreset.DAYS, {"weekdays": [0, 2, 4]}, estimate_min=180, max_chunk_min=60, one_block_per_day=True),
+    )
+    store.put_series(conn, lecture, source="week.toml")
+    store.put_series(conn, gym)
+    return conn, lecture, gym
+
+
+def occurrences(conn: sqlite3.Connection) -> list[tuple[str, date]]:
+    return sorted((i.title, i.occurrence_date) for i in store.list_items(conn) if i.occurrence_date)
+
+
+def test_planning_creates_each_weeks_occurrences_and_places_them() -> None:
+    conn, lecture, _ = series_db()
+
+    assert plan_weeks(conn, store.load_settings(conn), W1, W2, NOW) == {W1: True, W2: True}
+
+    assert occurrences(conn) == [
+        ("Gym", W1), ("Gym", W2),
+        ("Lecture", date(2026, 11, 17)), ("Lecture", date(2026, 11, 19)),
+        ("Lecture", date(2026, 11, 24)), ("Lecture", date(2026, 11, 26)),
+    ]
+    titles = {i.id: i.title for i in store.list_items(conn)}
+    assert sorted(titles[b.item_id] for b in store.list_blocks(conn)).count("Gym") == 6  # 3 sessions a week
+    # An occurrence takes its series' source, so replacing that file removes it too.
+    lecture_ids = [i.id for i in store.list_items(conn) if i.series_id == lecture.id]
+    assert {store.item_source(conn, i) for i in lecture_ids} == {"week.toml"}
+
+
+def test_creating_occurrences_twice_creates_nothing_new() -> None:
+    conn, _, _ = series_db()
+    settings = store.load_settings(conn)
+    create_occurrences(conn, settings, W1, W1, NOW)
+    first = store.list_items(conn)
+    create_occurrences(conn, settings, W1, W1, NOW)
+    assert store.list_items(conn) == first
+
+
+def test_the_past_is_never_filled_in_but_this_weeks_gym_still_comes() -> None:
+    conn, _, _ = series_db()
+    wednesday = pacific(11, 18, 12)
+
+    create_occurrences(conn, store.load_settings(conn), date(2026, 11, 9), W1, wednesday)
+
+    # No week of Nov 9 at all, no Tuesday lecture; Thursday's lecture and this week's Gym (dated Monday) come.
+    assert occurrences(conn) == [("Gym", W1), ("Lecture", date(2026, 11, 19))]
+
+
+def test_skipped_dates_and_the_end_date_are_respected() -> None:
+    conn, lecture, _ = series_db()
+    lecture.skipped_dates = [date(2026, 11, 19)]
+    lecture.end_date = date(2026, 11, 24)
+    store.put_series(conn, lecture)
+
+    create_occurrences(conn, store.load_settings(conn), W1, W2, NOW)
+
+    assert [d for t, d in occurrences(conn) if t == "Lecture"] == [date(2026, 11, 17), date(2026, 11, 24)]

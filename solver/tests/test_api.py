@@ -1,8 +1,10 @@
 """The week API, serving stored plans from a temporary database with the made-up sample week."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,7 +24,17 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv(store.DB_ENV, str(path))
     monkeypatch.setattr(api, "now", lambda: BEFORE_THE_WEEK)
     import_week(EXAMPLE, path)
+    end_series(path, date(2026, 11, 22))
     return path
+
+
+def end_series(path: Path, last_day: date) -> None:
+    """End every stored series on `last_day`. The tests here were written when the
+    example's series came in for its own week only, so later weeks stay empty."""
+    conn = store.connect(path)
+    for series in store.list_series(conn):
+        store.put_series(conn, replace(series, end_date=last_day))
+    conn.close()
 
 
 @pytest.fixture
@@ -70,8 +82,17 @@ def test_a_week_is_planned_and_returned_in_utc(client: TestClient) -> None:
     assert blocks["Chemistry lab"]["fixed"] is False
     assert week["frames"][0] == {"start": "2026-11-16T17:00:00Z", "end": "2026-11-17T02:00:00Z"}  # Mon 9 to 6
     assert week["unscheduled"] == [
-        {"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0, "editable": False}
+        {"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0, "editable": False, "series_id": None}
     ]
+    stored = {s.title: s.id for s in store.list_series(store.connect(store.db_path()))}
+    assert lecture["series_id"] == str(stored["Algorithms lecture"])
+    assert blocks["Chemistry lab"]["series_id"] is None
+    repeats = {r["id"]: r for r in week["series"]}
+    assert repeats[str(stored["Algorithms lecture"])] == {
+        "id": str(stored["Algorithms lecture"]), "freq": "weekly", "interval": 1, "weekdays": [1, 3], "per_week": False,
+        "end_date": "2026-11-22",  # the fixture ends the example's series with its week
+    }
+    assert repeats[str(stored["Gym"])]["per_week"] is True
 
 
 def test_a_stored_plan_is_served_without_solving_again(client: TestClient, solves: list[int]) -> None:
@@ -1049,3 +1070,165 @@ def test_deleting_a_rule_re_plans(client: TestClient) -> None:
 def test_a_bad_rule_is_refused_with_the_dialogs_message(client: TestClient, fields: dict, message: str) -> None:
     assert add_rule(client, 422, **fields)["detail"] == message
     assert len(rules(client)) == 4
+
+
+# Series (Milestone 6)
+
+OFFICE_HOURS = {
+    "title": "Office hours",
+    "preset": "exact",
+    "start_time": "08:00",
+    "end_time": "09:00",
+    "freq": "weekly",
+    "repeat_weekdays": [1, 4],  # Tue and Fri
+    "start_date": "2026-11-16",
+}
+
+
+def add_series(client: TestClient, status: int = 201, **fields) -> dict:  # type: ignore[no-untyped-def]
+    response = client.post("/api/series", json={"week_start": WEEK, **fields})
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def local_starts(week: dict, title: str) -> list[str]:
+    zone = ZoneInfo("America/Los_Angeles")
+    return [
+        datetime.fromisoformat(b["start"]).astimezone(zone).strftime("%a %H:%M")
+        for b in sorted(blocks_titled(week, title), key=lambda b: b["start"])
+    ]
+
+
+def series_id(week: dict, title: str) -> str:
+    return blocks_titled(week, title)[0]["series_id"]
+
+
+def test_a_series_added_in_the_app_shows_in_every_week_it_repeats_in(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    assert local_starts(week, "Office hours") == ["Tue 08:00", "Fri 08:00"]
+    for later in ("2026-11-23", "2026-12-07", "2027-01-04"):
+        assert local_starts(get(client, later), "Office hours") == ["Tue 08:00", "Fri 08:00"]
+    [repeat] = [r for r in week["series"] if r["id"] == series_id(week, "Office hours")]
+    assert (repeat["freq"], repeat["weekdays"], repeat["per_week"]) == ("weekly", [1, 4], False)
+
+
+def test_a_series_round_trips_through_the_edit_form(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS, end_date="2026-12-18")
+    form = client.get(f"/api/series/{series_id(week, 'Office hours')}").json()
+    assert form | {"id": None} == {
+        "id": None, "source": None, "title": "Office hours", "preset": "exact", "start_time": "08:00:00",
+        "end_time": "09:00:00", "weekdays": None, "deadline_time": None, "estimate_min": None,
+        "max_chunk_min": None, "one_block_per_day": False, "session_min": None, "freq": "weekly",
+        "interval": 1, "repeat_weekdays": [1, 4], "start_date": "2026-11-16", "end_date": "2026-12-18",
+    }
+
+
+def test_an_every_day_series_repeats_by_the_week_from_its_monday(client: TestClient) -> None:
+    week = add_series(
+        client, title="Piano", preset="every_day", weekdays=[0, 1, 2, 3, 4], session_min=30,
+        start_time="18:00", end_time="20:00", start_date="2026-11-18",
+    )
+    assert len(blocks_titled(week, "Piano")) == 5  # Monday on: the series starts on its week's Monday
+    assert len(blocks_titled(get(client, "2026-11-30"), "Piano")) == 5
+    form = client.get(f"/api/series/{series_id(week, 'Piano')}").json()
+    assert (form["preset"], form["session_min"], form["start_date"], form["repeat_weekdays"]) == ("every_day", 30, WEEK, [])
+    assert [r["per_week"] for r in week["series"] if r["id"] == series_id(week, "Piano")] == [True]
+
+
+def test_a_weekly_deadline_series_is_due_on_each_date(client: TestClient) -> None:
+    week = add_series(
+        client, title="Reading response", preset="before_deadline", estimate_min=60, deadline_time="17:00",
+        repeat_weekdays=[2], start_date="2026-11-16",
+    )
+    ends: dict[str, str] = {}
+    for b in blocks_titled(week, "Reading response"):  # next week's may start early too
+        ends[b["item_id"]] = max(ends.get(b["item_id"], b["end"]), b["end"])
+    items = {i: client.get(f"/api/items/{i}").json()["deadline_date"] for i in ends}
+    due = {"2026-11-18": "2026-11-19T01:00:00Z", "2026-11-25": "2026-11-26T01:00:00Z"}  # Wed 5pm PST
+    assert "2026-11-18" in items.values()
+    assert all(end <= due[items[i]] for i, end in ends.items())
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"start_date": "2026-11-13"}, "can't start in the past"),
+        ({"repeat_weekdays": []}, "Pick at least one day to repeat on"),
+        ({"end_date": "2026-11-01"}, "end date is before the start date"),
+        ({"end_date": "2026-11-16"}, "No day between"),  # a Monday; it repeats Tue and Fri
+        ({"interval": 0}, "1 or more"),
+        ({"preset": "days", "weekdays": [0], "estimate_min": 60, "freq": "daily"}, "repeats every week"),
+        ({"title": " "}, "title"),
+        ({"preset": "day", "estimate_min": None}, "Add an estimate"),
+    ],
+)
+def test_a_bad_series_is_refused_with_a_reason(client: TestClient, change: dict, message: str) -> None:
+    detail = add_series(client, 422, **(OFFICE_HOURS | change))["detail"]
+    assert message in detail
+
+
+def test_editing_a_series_rebuilds_future_occurrences_but_not_hand_edited_ones(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    sid = series_id(week, "Office hours")
+    # Move Friday's by hand to 5pm.
+    friday = sorted(blocks_titled(week, "Office hours"), key=lambda b: b["start"])[1]["item_id"]
+    form = client.get(f"/api/items/{friday}").json()
+    moved = client.put(f"/api/items/{friday}", params={"week": WEEK}, json=form | {"start_time": "17:00", "end_time": "18:00"})
+    assert moved.status_code == 200, moved.text
+
+    response = client.put(f"/api/series/{sid}", params={"week": WEEK}, json={"week_start": WEEK, **OFFICE_HOURS, "start_time": "09:00", "end_time": "10:00"})
+
+    assert response.status_code == 200, response.text
+    assert local_starts(response.json(), "Office hours") == ["Tue 09:00", "Fri 17:00"]
+    assert local_starts(get(client, "2026-11-23"), "Office hours") == ["Tue 09:00", "Fri 09:00"]
+
+
+def test_editing_a_series_keeps_occurrences_that_already_happened(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    sid = series_id(week, "Office hours")
+    monkeypatch.setattr(api, "now", lambda: datetime(2026, 11, 18, 20, tzinfo=UTC))  # Wed noon PST
+
+    response = client.put(f"/api/series/{sid}", params={"week": WEEK}, json={"week_start": WEEK, **OFFICE_HOURS, "start_time": "09:00", "end_time": "10:00"})
+
+    assert response.status_code == 200, response.text  # its start passed but didn't change
+    assert local_starts(response.json(), "Office hours") == ["Tue 08:00", "Fri 09:00"]
+
+
+def test_deleting_one_occurrence_skips_its_date(client: TestClient, db: Path) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    tuesday = sorted(blocks_titled(week, "Office hours"), key=lambda b: b["start"])[0]
+    response = client.delete(f"/api/items/{tuesday['item_id']}", params={"week": WEEK})
+    assert response.status_code == 200, response.text
+    store.clear_plans(store.connect(db))  # plan again from scratch: it must not come back
+    assert local_starts(get(client), "Office hours") == ["Fri 08:00"]
+    assert local_starts(get(client, "2026-11-23"), "Office hours") == ["Tue 08:00", "Fri 08:00"]
+
+
+def test_deleting_the_series_keeps_what_already_happened(client: TestClient, db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    get(client, "2026-11-23")
+    sid = series_id(week, "Office hours")
+    monkeypatch.setattr(api, "now", lambda: datetime(2026, 11, 18, 20, tzinfo=UTC))  # Wed noon PST
+
+    response = client.delete(f"/api/series/{sid}", params={"week": WEEK})
+
+    assert response.status_code == 200, response.text
+    assert local_starts(response.json(), "Office hours") == ["Tue 08:00"]
+    assert local_starts(get(client, "2026-11-23"), "Office hours") == []
+    assert client.get(f"/api/series/{sid}").json()["end_date"] == "2026-11-17"
+
+
+def test_deleting_a_series_that_never_happened_deletes_it_whole(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    sid = series_id(week, "Office hours")
+    response = client.delete(f"/api/series/{sid}", params={"week": WEEK})
+    assert response.status_code == 200, response.text
+    assert blocks_titled(response.json(), "Office hours") == []
+    assert client.get(f"/api/series/{sid}").status_code == 404
+
+
+def test_a_new_series_can_be_named_by_a_rule(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    sid = series_id(week, "Office hours")
+    targets = client.get("/api/rules/targets").json()
+    assert {"id": sid, "kind": "series", "title": "Office hours", "week_start": None} in targets

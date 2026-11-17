@@ -19,6 +19,10 @@ Work frames and rules apply to every week, so changing one re-plans every
 week from this one on that has a plan, the same all-or-nothing way, and
 clears the plans of earlier weeks so they re-plan when next viewed.
 
+Series (Milestone 6) are added, changed and deleted here too. A series
+reaches every week, so adding or changing one re-plans like a work frame
+change; the planner creates its occurrences in each week it plans.
+
 All times in responses are UTC. The page converts them to the week's
 timezone only for display.
 """
@@ -43,11 +47,14 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from mycal import store
-from mycal.model import BlockStatus, Constraint, FlexPreset, Item, WorkFrame
+from mycal.model import BlockStatus, Constraint, FlexPreset, Item, ItemTemplate, Rule, Series, WorkFrame
 from mycal.presets import every_day_session
+from mycal.recurrence import occurrence_dates
 from mycal.planner import (
+    create_occurrences,
     effective_item,
     effective_items,
+    occurrence_last_day,
     due_week,
     frame_spans,
     local_monday,
@@ -102,6 +109,7 @@ class BlockOut(BaseModel):
     placed_min: int  # minutes of the item's work placed so far, in every week
     estimate_min: int | None  # None for an exact-time item
     editable: bool  # whether the edit dialog can change the item (not Custom)
+    series_id: UUID | None = None  # set on an occurrence of a stored series
 
 
 class SpanOut(BaseModel):
@@ -116,6 +124,22 @@ class ItemRef(BaseModel):
     reason: str | None = None  # why it isn't scheduled, when it is waiting on a week that can't be planned
     sessions: int = 0  # how many blocks it has in every week
     editable: bool = False  # whether the edit dialog can change the item (not Custom)
+    series_id: UUID | None = None  # set on an occurrence of a stored series
+
+
+class RepeatOut(BaseModel):
+    """How a series repeats, for the details popover's "Repeats" line.
+
+    A days item ("any of these days", "every one of these days") repeats as a
+    whole week: `per_week` is true and `weekdays` is empty.
+    """
+
+    id: UUID
+    freq: Literal["daily", "weekly"]
+    interval: int
+    weekdays: list[int]
+    per_week: bool
+    end_date: date | None
 
 
 class WeekOut(BaseModel):
@@ -126,6 +150,8 @@ class WeekOut(BaseModel):
     blocks: list[BlockOut]
     frames: list[SpanOut]  # work-frame time inside the week, merged
     unscheduled: list[ItemRef]
+    series: list[RepeatOut] = []  # how each series with an occurrence in the week repeats
+
 
 
 def now() -> datetime:
@@ -271,6 +297,7 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
             raise HTTPException(status_code=404, detail=ITEM_GONE)
         moment = now()
         weeks = weeks_of_blocks([b for b in store.list_blocks(conn) if b.item_id == item_id], settings.timezone)
+        _skip_occurrence(conn, item_id)
         store.delete_item(conn, item_id)
         try:
             if weeks:
@@ -331,8 +358,253 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
             _put_and_plan(conn, settings, new, min(weeks), max(weeks), moment, EDIT_TIMED_OUT)
         else:
             store.put_item(conn, new)  # nothing left to place, say a past item's new title
+        if new.series_id is not None:
+            store.mark_hand_edited(conn, new.id)  # a series edit leaves it alone from now on
         log.info("edited %r, re-planned %s", new.title, f"{min(weeks)} to {max(weeks)}" if weeks else "nothing")
         return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+# Series
+
+
+class SeriesIn(ItemIn):
+    """A repeating item: the New item dialog's fields plus how it repeats.
+
+    The item fields describe every occurrence; their dates are ignored, since
+    each occurrence's date fills them in. `repeat_weekdays` are the days a
+    weekly series falls on. A days item ("days", "every_day") repeats as a
+    whole week, so it takes no repeat days and its series starts on the Monday
+    of `start_date`'s week.
+    """
+
+    freq: Literal["daily", "weekly"] = "weekly"
+    interval: int = 1
+    repeat_weekdays: list[int] = []
+    start_date: date
+    end_date: date | None = None
+
+
+class SeriesFormOut(BaseModel):
+    """A stored series in the dialog's terms, to fill in the edit dialog."""
+
+    id: UUID
+    source: str | None
+    title: str
+    preset: Literal["exact", "day", "day_range", "days", "every_day", "before_deadline"]
+    start_time: time | None = None
+    end_time: time | None = None
+    weekdays: list[int] | None = None
+    deadline_time: time | None = None
+    estimate_min: int | None = None
+    max_chunk_min: int | None = None
+    one_block_per_day: bool = False
+    session_min: int | None = None
+    freq: Literal["daily", "weekly"]
+    interval: int
+    repeat_weekdays: list[int]
+    start_date: date
+    end_date: date | None = None
+
+
+SERIES_GONE = "That repeating item no longer exists."
+SERIES_TIMED_OUT = (
+    "The planner ran out of time before finishing, so nothing was changed. "
+    "Try again, or change fewer weeks at once."
+)
+
+
+@app.post("/api/series", status_code=201)
+def add_series(request: SeriesIn) -> WeekOut:
+    """Add a repeating item and re-plan every week from this one on, like a work frame. 422 if a week stops fitting."""
+    with database() as (conn, settings):
+        try:
+            series = to_series(request, settings, now())
+        except Invalid as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return _change_everywhere(conn, settings, lambda trial: store.put_series(trial, series), request.week_start, repr(series.title))
+
+
+@app.get("/api/series/{series_id}")
+def get_series(series_id: UUID) -> SeriesFormOut:
+    with database() as (conn, settings):
+        series = store.get_series(conn, series_id)
+        if series is None:
+            raise HTTPException(status_code=404, detail=SERIES_GONE)
+        return from_series(series, store.series_source(conn, series_id))
+
+
+@app.put("/api/series/{series_id}")
+def update_series(series_id: UUID, request: SeriesIn, week: date) -> WeekOut:
+    """Change a series. Occurrences that haven't started are rebuilt from the new template,
+    except ones edited by hand; started and past ones stay as they are. All or nothing."""
+    with database() as (conn, settings):
+        old = store.get_series(conn, series_id)
+        if old is None:
+            raise HTTPException(status_code=404, detail=SERIES_GONE)
+        moment = now()
+        try:
+            # An unchanged start may have passed, so an old series can still be edited.
+            new = to_series(request, settings, moment, check_past=request.start_date != old.start_date)
+        except Invalid as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        new = replace(new, id=old.id, skipped_dates=old.skipped_dates)
+
+        def change(trial: sqlite3.Connection) -> None:
+            store.put_series(trial, new)
+            for occurrence in _not_started(trial, settings, series_id, moment):
+                if not store.hand_edited(trial, occurrence.id):
+                    store.delete_item(trial, occurrence.id)  # the planner creates it again from the new template
+
+        return _change_everywhere(conn, settings, change, week, repr(new.title))
+
+
+@app.delete("/api/series/{series_id}")
+def delete_series(series_id: UUID, week: date) -> WeekOut:
+    """End a series: occurrences that haven't started are deleted, and past and started ones stay
+    (completion history). A series with nothing left is deleted whole."""
+    with database() as (conn, settings):
+        series = store.get_series(conn, series_id)
+        if series is None:
+            raise HTTPException(status_code=404, detail=SERIES_GONE)
+        moment = now()
+        gone = {o.id for o in _not_started(conn, settings, series_id, moment)}
+        weeks = weeks_of_blocks([b for b in store.list_blocks(conn) if b.item_id in gone], settings.timezone)
+        for item_id in gone:
+            store.delete_item(conn, item_id)
+        left = [i.occurrence_date for i in store.list_items(conn) if i.series_id == series_id and i.occurrence_date]
+        if left:
+            store.put_series(conn, replace(series, end_date=max(left)))
+        else:
+            store.delete_series(conn, series_id)
+        try:
+            if weeks:
+                plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
+        except PlannerTimeout as error:
+            log.warning("re-planning after ending series %s: %s", series_id, error)
+        log.info("ended %r", series.title)
+        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+def _not_started(conn: sqlite3.Connection, settings: SolverSettings, series_id: UUID, moment: datetime) -> list[Item]:
+    """The series' occurrences that still lie ahead: none of their sessions started and they have a day left."""
+    today = moment.astimezone(ZoneInfo(settings.timezone)).date()
+    started = {b.item_id for b in store.list_blocks(conn) if b.start <= moment or b.status is not BlockStatus.PLANNED}
+    return [
+        i
+        for i in store.list_items(conn)
+        if i.series_id == series_id
+        and i.id not in started
+        and occurrence_last_day(i) >= today
+        and not (i.flex_preset is FlexPreset.EXACT and i.preset_params["start"] <= moment)
+    ]
+
+
+def _skip_occurrence(conn: sqlite3.Connection, item_id: UUID) -> None:
+    """Before deleting an occurrence, add its date to its series' skipped dates, so the planner doesn't create it again."""
+    item = store.get_item(conn, item_id)
+    if item is None or item.series_id is None or item.occurrence_date is None:
+        return
+    series = store.get_series(conn, item.series_id)
+    if series is not None:
+        store.put_series(conn, replace(series, skipped_dates=sorted({*series.skipped_dates, item.occurrence_date})))
+
+
+def to_series(request: SeriesIn, settings: SolverSettings, moment: datetime, check_past: bool = True) -> Series:
+    """Turn the dialog's fields into a Series. Raises Invalid with a message for the dialog.
+
+    The template's lengths and checks come from to_item on the first
+    occurrence, so a series is refused for the same reasons as a one-off item.
+    """
+    title = request.title.strip()
+    if not title:
+        raise Invalid("Give the item a title.")
+    if request.interval < 1:
+        raise Invalid("Repeat every 1 or more.")
+    per_week = request.preset in ("days", "every_day")
+    start = request.start_date
+    if per_week:
+        if request.freq != "weekly":
+            raise Invalid("An item on chosen days repeats every week, not every day.")
+        start = monday(start)
+        rule = Rule("weekly", request.interval, [0])  # one occurrence a week, dated its Monday
+    elif request.freq == "weekly":
+        weekdays = sorted(set(request.repeat_weekdays))
+        if not weekdays or any(d not in range(7) for d in weekdays):
+            raise Invalid("Pick at least one day to repeat on.")
+        rule = Rule("weekly", request.interval, weekdays)
+    else:
+        rule = Rule("daily", request.interval)
+
+    today = moment.astimezone(ZoneInfo(settings.timezone)).date()
+    if check_past and start < (monday(today) if per_week else today):
+        raise Invalid("A repeating item can't start in the past.")
+    if request.end_date is not None and request.end_date < start:
+        raise Invalid("The end date is before the start date.")
+
+    # The first occurrence, checked like a one-off item. A rule repeats within interval weeks.
+    probe = Series(title, rule, settings.timezone, start, ItemTemplate(FlexPreset.DAY), request.end_date)
+    horizon = start + timedelta(weeks=request.interval + 1)
+    first = next(iter(occurrence_dates(probe, start, min(horizon, request.end_date or horizon))), None)
+    if first is None:
+        raise Invalid("No day between the start and end dates matches how it repeats.")
+    sample = request.model_copy(update={"day": first, "deadline_date": first, "week_start": monday(first)})
+    item = to_item(sample, settings, moment, check_past=False)
+
+    params: dict[str, Any] = {}
+    if request.preset in ("exact", "day_range"):
+        params = {"start_time": request.start_time, "end_time": request.end_time}
+    elif per_week:
+        params = {k: v for k, v in item.preset_params.items() if k != "week"}
+    template = ItemTemplate(
+        flex_preset=item.flex_preset,
+        preset_params=params,
+        estimate_min=item.estimate_min,
+        deadline_time=request.deadline_time if item.flex_preset is FlexPreset.BEFORE_DEADLINE else None,
+        max_chunk_min=item.max_chunk_min,
+        one_block_per_day=item.one_block_per_day,
+    )
+    return Series(title, rule, settings.timezone, start, template, request.end_date)
+
+
+def from_series(series: Series, source: str | None) -> SeriesFormOut:
+    """The series in the dialog's terms: the inverse of to_series."""
+    t = series.template
+    params = t.preset_params
+    fields: dict[str, Any] = {
+        "id": series.id,
+        "source": source,
+        "title": series.title,
+        "preset": t.flex_preset.value,
+        "start_time": params.get("start_time"),
+        "end_time": params.get("end_time"),
+        "deadline_time": t.deadline_time,
+        "estimate_min": t.estimate_min,
+        "max_chunk_min": t.max_chunk_min,
+        "one_block_per_day": t.one_block_per_day,
+        "freq": series.rule.freq,
+        "interval": series.rule.interval,
+        "repeat_weekdays": series.rule.weekdays,
+        "start_date": series.start_date,
+        "end_date": series.end_date,
+    }
+    if t.flex_preset is FlexPreset.DAYS:
+        fields |= {"weekdays": list(params["weekdays"]), "repeat_weekdays": []}
+        if (session := every_day_session(params)) is not None:
+            fields |= {"preset": "every_day", "session_min": session, "estimate_min": None, "max_chunk_min": None}
+            fields["one_block_per_day"] = False  # every-day items set it themselves
+    return SeriesFormOut(**fields)
+
+
+def repeat_out(series: Series) -> RepeatOut:
+    per_week = series.template.flex_preset is FlexPreset.DAYS
+    return RepeatOut(
+        id=series.id,
+        freq=series.rule.freq,
+        interval=series.rule.interval,
+        weekdays=[] if per_week else series.rule.weekdays,
+        per_week=per_week,
+        end_date=series.end_date,
+    )
 
 
 # Work frames
@@ -475,7 +747,7 @@ PICK_TARGETS = "Pick at least one item, or choose Every item."
 def list_rules() -> list[RuleOut]:
     """Every rule: daily limits, then time preferences, then rest days, each in the order added."""
     with database() as (conn, settings):
-        targets = _targets_by_id(store.list_items(conn), settings, now())
+        targets = _targets_by_id(store.list_items(conn), store.list_series(conn), settings, now())
         order = list(KIND_NAMES)
         rules = [c for c in store.list_constraints(conn) if c.kind in KIND_NAMES]
         rules.sort(key=lambda c: order.index(c.kind))  # stable: the order added within a kind
@@ -491,9 +763,12 @@ def list_targets() -> list[TargetOut]:
     with database() as (conn, settings):
         moment = now()
         items = store.list_items(conn)
-        targets = _targets_by_id(items, settings, moment)
+        targets = _targets_by_id(items, store.list_series(conn), settings, moment)
         this_week = local_monday(moment, settings.timezone)
         named = {i for c in store.list_constraints(conn) for i in c.params.get("item_ids", [])}
+        named_series = {i for c in store.list_constraints(conn) for i in c.params.get("series_ids", [])}
+        today = moment.astimezone(ZoneInfo(settings.timezone)).date()
+        ended = {s.id for s in store.list_series(conn) if s.end_date is not None and s.end_date < today}
         ends: dict[UUID, datetime] = {}
         for b in store.list_blocks(conn):
             ends[b.item_id] = max(ends.get(b.item_id, b.end), b.end)
@@ -508,7 +783,10 @@ def list_targets() -> list[TargetOut]:
                 or ends.get(i.id, week_start) > week_start
             )
         }
-        series = sorted((t for t in targets.values() if t.kind == "series"), key=lambda t: t.title.lower())
+        series = sorted(
+            (t for t in targets.values() if t.kind == "series" and (t.id not in ended or t.id in named_series)),
+            key=lambda t: t.title.lower(),
+        )
         one_offs = sorted((targets[i] for i in current), key=lambda t: t.title.lower())
         return series + one_offs
 
@@ -588,7 +866,8 @@ def _to_rule(conn: sqlite3.Connection, request: RuleIn, settings: SolverSettings
         if not request.item_ids and not request.series_ids:
             raise HTTPException(status_code=422, detail=PICK_TARGETS)
         items = store.list_items(conn)
-        if set(request.item_ids) - {i.id for i in items} or set(request.series_ids) - {i.series_id for i in items}:
+        series_ids = {i.series_id for i in items} | {s.id for s in store.list_series(conn)}
+        if set(request.item_ids) - {i.id for i in items} or set(request.series_ids) - series_ids:
             raise HTTPException(status_code=422, detail="One of the picked items no longer exists. Pick again.")
         if request.item_ids:
             params["item_ids"] = list(dict.fromkeys(request.item_ids))
@@ -640,7 +919,9 @@ def _limit_min(max_min: int | None, settings: SolverSettings) -> int:
     return planned_down(max_min, settings.slot_min)
 
 
-def _targets_by_id(items: list[Item], settings: SolverSettings, moment: datetime) -> dict[UUID, TargetOut]:
+def _targets_by_id(
+    items: list[Item], series: list[Series], settings: SolverSettings, moment: datetime
+) -> dict[UUID, TargetOut]:
     """Every item and series a rule could name, by id. A series takes its latest occurrence's title."""
     targets: dict[UUID, TargetOut] = {}
     latest: dict[UUID, date] = {}
@@ -652,6 +933,8 @@ def _targets_by_id(items: list[Item], settings: SolverSettings, moment: datetime
         else:
             week = due_week(item, settings.timezone) or next(iter(weeks_touched(item, settings.timezone, moment)), None)
             targets[item.id] = TargetOut(id=item.id, kind="item", title=item.title, week_start=week)
+    for one in series:  # a stored series goes by its own title, and counts before it has occurrences
+        targets[one.id] = TargetOut(id=one.id, kind="series", title=one.title)
     return targets
 
 
@@ -825,6 +1108,8 @@ def _status(conn: sqlite3.Connection, settings: SolverSettings, week_start: date
     """The week's plan status, planning it (and the weeks its deadline items reach) first if it has none."""
     feasible = store.plan_status(conn, week_start)
     if feasible is None:
+        # Occurrences first, so a repeating deadline item due next week can stretch the span.
+        create_occurrences(conn, settings, week_start, week_start + (MAX_SPAN_WEEKS - 1) * ONE_WEEK, moment)
         first, last = span_for_view(conn, settings, week_start, moment)
         began = perf_counter()
         outcome = plan_weeks(conn, settings, first, last, moment)
@@ -1027,6 +1312,8 @@ def week_out(
     for b in every_block:
         sessions.setdefault(b.item_id, []).append(b.id)
     placed = {item_id: placed_min(items[item_id], every_block) for item_id in sessions}
+    stored_series = {s.id: s for s in store.list_series(conn)}
+    in_week = {items[b.item_id].series_id for b in blocks} | {i.series_id for i in items.values() if i.id in waiting}
     return WeekOut(
         week_start=week_start,
         timezone=settings.timezone,
@@ -1045,6 +1332,7 @@ def week_out(
                 placed_min=placed[b.item_id],
                 estimate_min=items[b.item_id].estimate_min,
                 editable=editable(items[b.item_id]),
+                series_id=_stored(items[b.item_id].series_id, stored_series),
             )
             for b in blocks
         ],
@@ -1062,11 +1350,18 @@ def week_out(
                 reason=waiting.get(i.id),
                 sessions=len(sessions.get(i.id, [])),
                 editable=editable(i),
+                series_id=_stored(i.series_id, stored_series),
             )
             for i in items.values()
             if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
         ],
+        series=[repeat_out(s) for s in stored_series.values() if s.id in in_week],
     )
+
+
+def _stored(series_id: UUID | None, stored: dict[UUID, Series]) -> UUID | None:
+    """The series id, if that series is stored (occurrences imported before series were stored have none)."""
+    return series_id if series_id in stored else None
 
 
 def main() -> None:
