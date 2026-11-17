@@ -6,7 +6,9 @@ import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
 import { formFromSeries } from './repeatForm'
 import { RulesPage } from './RulesPage'
+import { ShortcutsHelp } from './ShortcutsHelp'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
+import { HELP_ID, pointedBlock, toggleHelp, useShortcuts } from './useShortcuts'
 import { WeekGrid } from './WeekGrid'
 
 type Problem = { title: string; body: string }
@@ -195,9 +197,64 @@ export default function App() {
   }
 
   function go(days: number) {
-    const next = addDays(weekStart, days)
+    goTo(addDays(weekStart, days))
+  }
+
+  function goTo(next: DateString) {
+    if (next === weekStart) return
     window.history.pushState(null, '', urlFor('week', next))
     setWeekStart(next)
+  }
+
+  // Keyboard shortcuts for the whole app (web/DESIGN.md, "Keyboard shortcuts"). The item
+  // popover and the Frames and rules page handle their own keys.
+  useShortcuts(view, (action) => {
+    switch (action.type) {
+      case 'tab':
+        show(action.view)
+        return true
+      case 'help':
+        toggleHelp()
+        return true
+      case 'newItem':
+        if (state.status !== 'ready') return false
+        setAdding(true)
+        return true
+      case 'moveWeek':
+        go(action.days)
+        return true
+      case 'thisWeek':
+        goTo(mondayOf(today()))
+        return true
+      case 'edit':
+      case 'delete':
+        return actOnPointedBlock(action.type)
+      default:
+        return false
+    }
+  })
+
+  /** E or Delete on the block under the mouse (or with focus): Delete opens its popover on the confirm
+   * step; E edits a one-off item right away, or asks "Edit which?" for a series. With a popover open,
+   * only another block counts; the popover's own block (or none) is left to the popover. */
+  function actOnPointedBlock(action: 'edit' | 'delete'): boolean {
+    const element = pointedBlock()
+    if (state.status !== 'ready' || !element) return false
+    if (open?.kind === 'block' && open.block.id === element.dataset.blockId) return false
+    const block = state.week.blocks.find((b) => b.id === element.dataset.blockId)
+    if (!block) return false
+    const target: PopoverTarget = { kind: 'block', itemId: block.item_id, title: block.title, block, opener: element }
+    if (action === 'delete') {
+      setOpen({ ...target, startAt: 'confirm' })
+    } else if (!block.editable) {
+      setOpen(target) // says why it can't be edited
+    } else if (block.series_id && state.week.series.some((r) => r.id === block.series_id)) {
+      setOpen({ ...target, startAt: 'pickEdit' })
+    } else {
+      setOpen(target) // shows "Opening..." and any error, and closes when the dialog opens
+      startEdit(target, 'one')
+    }
+    return true
   }
 
   function show(next: View) {
@@ -227,8 +284,17 @@ export default function App() {
       <nav className="top-bar" aria-label="Main">
         {tab('week', 'Week')}
         {tab('rules', 'Frames and rules')}
-        {view === 'week' && (
-          <div className="top-bar-actions">
+        <div className="top-bar-actions">
+          <button
+            type="button"
+            className="help-button"
+            popoverTarget={HELP_ID}
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+          >
+            ?
+          </button>
+          {view === 'week' && (
             <button
               type="button"
               className="primary-button"
@@ -237,9 +303,10 @@ export default function App() {
             >
               New item
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </nav>
+      <ShortcutsHelp />
 
       {view === 'rules' && <RulesPage week={weekStart} />}
 

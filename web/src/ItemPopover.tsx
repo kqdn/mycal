@@ -2,11 +2,17 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Block, RepeatOut } from './api'
 import { confirmLine, kindLine, popoverPosition, unscheduledLine, whenLine, type UnscheduledItem } from './itemDetails'
 import { repeatLine } from './repeatForm'
+import { pointedBlock, useShortcuts } from './useShortcuts'
 
-/** What the popover is about, and the element that opened it (for placing it and returning focus). */
-export type PopoverTarget =
+/** The popover's bottom row: its actions, a delete's confirm step, or a series' "Edit which?" choice. */
+export type Step = 'actions' | 'confirm' | 'pickEdit'
+
+/** What the popover is about, the element that opened it (for placing it and returning focus),
+ * and, from a keyboard shortcut, the step it opens on. */
+export type PopoverTarget = (
   | { kind: 'block'; itemId: string; title: string; block: Block; opener: HTMLElement }
   | { kind: 'unscheduled'; itemId: string; title: string; item: UnscheduledItem; opener: HTMLElement }
+) & { startAt?: Step }
 
 /** Which an action on an occurrence of a series reaches: this date only, or the series. */
 export type Scope = 'one' | 'series'
@@ -35,7 +41,7 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   // The actions row, or in its place: confirming a delete, or (for a series) picking what Edit changes.
-  const [step, setStep] = useState<'actions' | 'confirm' | 'pickEdit'>('actions')
+  const [step, setStep] = useState<Step>(target.startAt ?? 'actions')
   const [chosen, setChosen] = useState<Scope>('one') // which delete is running, for its "Deleting..." label
   const confirming = step !== 'actions'
   const [openedAt] = useState(() => new Date().toISOString()) // "now" for "Already started"
@@ -74,6 +80,25 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
 
   const sessions = target.kind === 'block' ? target.block.sessions : target.item.sessions
   const editable = target.kind === 'block' ? target.block.editable : target.item.editable
+
+  // E and Delete do what the Edit and Delete item buttons do, from any step, so you can switch
+  // between "Edit which?" and the delete confirm without starting over. Not while a delete or an
+  // edit is loading. When the mouse is on another block, they're for that block, and App handles them.
+  useShortcuts('week', (action) => {
+    const pointed = pointedBlock()?.dataset.blockId
+    if (pointed !== undefined && pointed !== (target.kind === 'block' ? target.block.id : undefined)) return false
+    if (opening || deleting) return false
+    if (action.type === 'edit' && editable) {
+      if (repeat) setStep('pickEdit')
+      else onEdit('one')
+      return true
+    }
+    if (action.type === 'delete') {
+      setStep('confirm')
+      return true
+    }
+    return false
+  })
 
   return (
     <div ref={box} popover="auto" className="item-popover" role="dialog" aria-label={target.title}>

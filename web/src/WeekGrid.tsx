@@ -123,6 +123,7 @@ function BlockView({ block, piece, timezone, onOpen }: BlockViewProps) {
       style={style}
       aria-label={label}
       aria-haspopup="dialog"
+      data-block-id={block.id}
       onClick={(event) => onOpen(block, event.currentTarget)}
     >
       {mode === 'two-line' && (

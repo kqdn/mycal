@@ -5,6 +5,7 @@ import { frameDetail, frameLabel, type FrameOut } from './frameForm'
 import { RuleDialog } from './RuleDialog'
 import { ruleDetail, ruleFormFrom, ruleLabel, ruleSentence, sortRules, type RuleOut } from './ruleForm'
 import type { DateString } from './time'
+import { useShortcuts } from './useShortcuts'
 
 interface Props {
   week: DateString // the week last viewed; changes return it and the Week tab shows it
@@ -72,6 +73,19 @@ export function RulesPage({ week }: Props) {
   }
 
   const loadError = frames.status === 'error' ? frames.message : rules.status === 'error' ? rules.message : null
+
+  // F and R add a frame or a rule, like the sections' add buttons.
+  useShortcuts('rules', (action) => {
+    if (action.type === 'newFrame' && frames.status === 'ready') {
+      setFrameDialog({})
+      return true
+    }
+    if (action.type === 'newRule' && rules.status === 'ready') {
+      setRuleDialog({})
+      return true
+    }
+    return false
+  })
 
   return (
     <main className="content">

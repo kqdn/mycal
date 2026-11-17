@@ -8,7 +8,7 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 Milestone 6: recurrence in the app. Series (weekly classes, habits) are stored in the database and created, edited and deleted from the page, instead of only coming from week files as one week's occurrences. The Series model and its expansion are already built in the solver package (`recurrence.py`). No check-ins yet. Done when I can create a repeating item from the page, see it in every week it repeats in, and change or delete the series.
 
-Next: Milestone 7, check-ins and on-miss policies.
+Next: keyboard shortcuts (a small step, spec in `web/DESIGN.md`), then Milestone 7, check-ins and on-miss policies.
 
 Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items), 4 (editing items) and 5 (work frames and rules in the app) are done. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 

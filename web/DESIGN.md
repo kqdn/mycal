@@ -185,7 +185,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
    - If the item has more than one session, add where this one fits and how much of the work is placed, for example "Placed by the solver · Session 2 of 4 · 2h in all". When the placed minutes are less than the estimate (work waiting on a week that can't be planned, or not yet within planning range), say so instead: "Session 2 of 2 · 2h of 4h placed". "In all" is only for an item whose work is all placed. Sessions are counted across every week, in time order. The week response carries what this needs for each block: its session number, the item's session count, its placed minutes and its estimate.
    - If the block has already started: "Already started", because the solver no longer moves it.
    - For an Unscheduled row instead of a block: its reason, the same text as the row ("Waiting on Nov 30 to Dec 6, which can't be planned."), or "Not scheduled: it has no times to go in yet" if it has none. Then its estimate, for example "· 15m".
-4. **Actions:** a row of buttons at the bottom, right-aligned, with an 8px gap.
+4. **Actions:** a row of buttons at the bottom, centered, with an 8px gap. Every button row in the popover is centered: the actions, the delete confirm, and a series' Edit which? / Delete which? choice.
    - "Edit", a secondary button, left of "Delete item", also secondary. Edit opens the item in the edit dialog (see Editing). While the item loads it reads "Opening..." and both buttons are disabled. If loading fails, a 12px `--attention-strong` line under the actions says "Couldn't open it:" and the server's message.
    - For a Custom item, Edit is disabled, and a 12px `--text-muted` line under the actions says "Change Custom items in their week file."
 
@@ -195,7 +195,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 - **Imported items:** deleting an item that came from a week file doesn't stop a later `mycal-import --replace` of that file from bringing it back.
 - **Confirming:** pressing "Delete item" swaps the actions row, in place, for a confirm row. Nothing else opens.
   - The question, 13px / 600 `--text`: "Delete this item?", then a 12px `--text-muted` line saying what goes: "All 4 sessions go, in every week." or "Its one session goes." or "It has no sessions yet."
-  - Two buttons, right-aligned: "Cancel" (secondary) and "Delete" (secondary, with `--attention-strong` text and border). Focus moves to "Cancel".
+  - Two buttons, centered: "Cancel" (secondary) and "Delete" (secondary, with `--attention-strong` text and border). Focus moves to "Cancel".
   - Cancel brings the actions row back. Escape still closes the whole popover.
 - **While deleting:** the solver re-plans the weeks the item was in. That usually takes a second or two, and can take longer on busy weeks, up to the planner's work limit. "Delete" reads "Deleting..." and both buttons are disabled. The grid stays as it was until the delete finishes, so nothing jumps around. Closing isn't blocked: Escape and clicking outside close the popover as usual (plain `popover="auto"`), the delete keeps running, and the grid updates when it finishes.
 - **When it's done:** the popover closes and the grid shows the re-planned week. Focus goes to the grid's scroll area, since the block it came from is gone.
@@ -419,6 +419,28 @@ Shown under their field in 12px `--attention-strong`, with the field's border in
 ### Narrow screens
 
 Under 600px: the content's side padding drops to 16px, the section header stacks (the add button goes under the description, full width), and dialogs follow the Add item dialog's narrow rules. The weekday picker's buttons shrink to fit (the 44px height stays).
+
+## Keyboard shortcuts
+
+Draft by Claude, for Kaden to review. Single keys, no combinations to learn.
+
+| Key | Does | Where |
+| --- | --- | --- |
+| 1 / 2 | Week tab / Frames and rules tab | Anywhere |
+| N | New item | Week page |
+| ← or K / → or J | Previous / next week | Week page |
+| T | This week | Week page |
+| E | Edit; for an occurrence, opens the This one / The series choice | A block under the mouse or with focus, or the item details popover |
+| Delete, Backspace or D | Delete; opens the confirm step, never deletes outright | A block under the mouse or with focus, or the item details popover |
+| F / R | New frame / New rule | Frames and rules page |
+| ? | The list of shortcuts | Anywhere |
+
+- **When they work:** never while typing in a field (text, date, time, select) or while a dialog is open, so typing "n" in a title is just text. A key held with Cmd, Ctrl or Alt is always left to the browser (Cmd+T, Cmd+R). With the item popover open, only E, Delete and ? count, so the week doesn't move out from under it. A block having focus doesn't stop them, since blocks are buttons.
+- **Pointing at a block:** E and Delete (or D) work on the block under the mouse without clicking it first, or on the block with keyboard focus when the mouse isn't over one. E on a one-off item opens the edit dialog straight away (its popover shows "Opening..." meanwhile, and any error). E on an occurrence, and Delete on any block, open that block's popover on the "Edit which?" or delete confirm step, so a delete always asks first. With a popover already open, the block under the mouse still wins: E or Delete on another block opens that block's popover in place of the open one. With the mouse on the open popover's own block, or on no block (say, inside the popover), they act on the open popover.
+- **Same as clicking:** each shortcut does exactly what its button does, with the same states (E does nothing while Edit is disabled or "Opening..."). In the popover, E and Delete work from any step, so they switch straight between "Edit which?" and the delete confirm; they do nothing while a delete or an edit is loading.
+- **The list:** ? or a 44px "?" button at the right of the top bar (secondary-button look, `--text-muted` text, before New item) opens it. It's a native `popover="auto"`, centered with a `--scrim` backdrop, 400px wide (full width minus 32px on narrow screens), `--surface`, 1px `--border`, radius `--radius-card`, 20px padding. It has the title "Keyboard shortcuts" (15px / 600), one row per shortcut (keys on the left in 112px, the action in 14px with where it works under it in 12px `--text-muted`, a 1px `--divider` between rows), and a closing hint: "Shortcuts don't work while you type in a field or a dialog is open." Escape or a click outside closes it.
+- **Keys:** each key is a `<kbd>` chip: at least 24px wide, 2px 6px padding, 1px `--border`, radius 6px, `--surface-sunken`, 12px / 600. Two keys for one action read "← or K".
+- **Accessibility:** single-key shortcuts can clash with screen readers and voice control (WCAG 2.1.4). This is a one-person app and the keys only act outside text fields, so there is no setting to turn them off for now.
 
 ## Controls
 
