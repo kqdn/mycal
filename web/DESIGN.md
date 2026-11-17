@@ -246,10 +246,10 @@ Draft by Claude, for Kaden to review. A repeating item is a series: the item's f
 ### Details popover
 
 - **Repeats line:** an occurrence of a series adds a line under the kind line, same style (12px `--text-muted`): "Repeats every Tue and Fri", "Repeats every week", "Repeats every 2 weeks on Tue", "Repeats every day", plus " until Fri, Dec 18" when it ends.
-- **Edit:** for an occurrence, Edit swaps the actions row for a choice row, like the delete confirm: "Edit which?" (13px / 600), then "This one changes only this date. The series changes every date that hasn't started." (12px `--text-muted`), and three secondary buttons: "Cancel", "This one", "The series". The row wraps when the buttons don't fit. Focus moves to Cancel.
-  - **This one** opens the normal edit dialog for that date, without the Repeats field. A date edited this way keeps its changes when the series is edited later.
-  - **The series** opens the dialog as "Edit repeating item", with the Repeats field (no Never) and the series' fields. Saving rebuilds every date that hasn't started, except ones edited on their own. Past dates stay as they were. A start date that has passed can stay; only a changed start has to lie ahead.
-- **Delete:** for an occurrence, "Delete item" asks "Delete which?" with "This one skips only this date. The series stops repeating: dates that haven't started go, and past ones stay." The buttons are "Cancel", "This one" and "The series", the last two styled like Delete (`--attention-strong`). The one pressed reads "Deleting..." and all three are disabled while it runs. Everything else (errors, closing while it runs, a 404) works as for deleting an item.
+- **Edit:** for an occurrence, Edit swaps the actions row for a choice row, like the delete confirm: "Edit which?" (13px / 600), then "This changes only this date. All changes every date that hasn't started." (12px `--text-muted`), and three secondary buttons: "Cancel", "This", "All". The row wraps when the buttons don't fit. Focus moves to Cancel.
+  - **This** opens the normal edit dialog for that date, without the Repeats field. A date edited this way keeps its changes when the series is edited later.
+  - **All** opens the dialog as "Edit repeating item", with the Repeats field (no Never) and the series' fields. Saving rebuilds every date that hasn't started, except ones edited on their own. Past dates stay as they were. A start date that has passed can stay; only a changed start has to lie ahead.
+- **Delete:** for an occurrence, "Delete item" asks "Delete which?" with "This skips only this date. All stops it repeating: dates that haven't started go, and past ones stay." The buttons are "Cancel", "This" and "All", the last two styled like Delete (`--attention-strong`). The one pressed reads "Deleting..." and all three are disabled while it runs. Everything else (errors, closing while it runs, a 404) works as for deleting an item.
 
 ## Frames and rules (Milestone 5)
 
@@ -430,7 +430,7 @@ Draft by Claude, for Kaden to review. Single keys, no combinations to learn.
 | N | New item | Week page |
 | ← or K / → or J | Previous / next week | Week page |
 | T | This week | Week page |
-| E | Edit; for an occurrence, opens the This one / The series choice | A block under the mouse or with focus, or the item details popover |
+| E | Edit; for an occurrence, opens the This / All choice | A block under the mouse or with focus, or the item details popover |
 | Delete, Backspace or D | Delete; opens the confirm step, never deletes outright | A block under the mouse or with focus, or the item details popover |
 | F / R | New frame / New rule | Frames and rules page |
 | ? | The list of shortcuts | Anywhere |
