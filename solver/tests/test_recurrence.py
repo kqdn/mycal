@@ -94,6 +94,23 @@ def test_deadline_time_lands_on_the_occurrence_date() -> None:
     assert item.deadline == utc(2026, 11, 21, 1)  # Fri 5pm PST
 
 
+def test_every_day_template_gets_the_occurrence_week() -> None:
+    piano = ItemTemplate(
+        FlexPreset.DAYS,
+        {"weekdays": [MON, TUE, WED, THU, FRI], "every_day": True, "session_min": 30},
+        estimate_min=150,
+        max_chunk_min=30,
+        one_block_per_day=True,
+    )
+    [item] = expand_series(series(Rule("weekly", weekdays=[MON]), piano), [], NOV(16), NOV(22))
+    assert item.preset_params == {
+        "weekdays": [MON, TUE, WED, THU, FRI],
+        "every_day": True,
+        "session_min": 30,
+        "week": NOV(16),
+    }
+
+
 def test_expanding_twice_creates_nothing_new() -> None:
     s = series(Rule("weekly", weekdays=[TUE, THU]))
     first = expand_series(s, [], NOV(16), NOV(22))

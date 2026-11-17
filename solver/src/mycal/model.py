@@ -197,7 +197,7 @@ TEMPLATE_PARAMS: dict[FlexPreset, tuple[set[str], set[str]]] = {
     FlexPreset.EXACT: ({"start_time", "end_time"}, set()),
     FlexPreset.DAY: (set(), set()),
     FlexPreset.DAY_RANGE: ({"start_time", "end_time"}, set()),
-    FlexPreset.DAYS: ({"weekdays"}, {"start_time", "end_time"}),
+    FlexPreset.DAYS: ({"weekdays"}, {"start_time", "end_time", "every_day", "session_min"}),
     FlexPreset.BEFORE_DEADLINE: (set(), set()),
 }
 
