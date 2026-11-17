@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { listFrames, WeekError } from './api'
+import { listFrames, listRules, loadWeek, WeekError } from './api'
 import { FrameDialog } from './FrameDialog'
 import { frameDetail, frameLabel, type FrameOut } from './frameForm'
+import { RuleDialog } from './RuleDialog'
+import { ruleDetail, ruleFormFrom, ruleLabel, ruleSentence, sortRules, type RuleOut } from './ruleForm'
 import type { DateString } from './time'
 
 interface Props {
@@ -9,46 +11,67 @@ interface Props {
 }
 
 type Load<T> = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; rows: T[] }
+type Focus = { section: 'frame' | 'rule'; ids: Set<string>; edited?: string; deleted: boolean }
 
 /** The Frames and rules page (web/DESIGN.md, "Frames and rules"). */
 export function RulesPage({ week }: Props) {
   const [frames, setFrames] = useState<Load<FrameOut>>({ status: 'loading' })
+  const [rules, setRules] = useState<Load<RuleOut>>({ status: 'loading' })
   const [reload, setReload] = useState(0)
-  // The frame dialog: closed, adding, or editing a frame.
+  // The planner's slot size, for "Planned as" under a daily limit. From the week, never hardcoded.
+  const [slotMin, setSlotMin] = useState<number | null>(null)
+  // The open dialog: closed, or adding or editing a frame or a rule.
   const [frameDialog, setFrameDialog] = useState<{ editing?: FrameOut } | null>(null)
-  // Where focus goes once the list has reloaded: a saved row, or the add button after a delete.
-  const focusAfter = useRef<{ ids: Set<string>; edited?: string } | 'add-frame' | null>(null)
+  const [ruleDialog, setRuleDialog] = useState<{ editing?: RuleOut } | null>(null)
+  // Where focus goes once the lists have reloaded: a saved row, or the section's add button after a delete.
+  const focusAfter = useRef<Focus | null>(null)
 
   useEffect(() => {
     let current = true
+    const failed = (error: unknown) => ({
+      status: 'error' as const,
+      message: error instanceof WeekError ? error.message : "Can't reach the planner.",
+    })
     listFrames()
       .then((rows) => current && setFrames({ status: 'ready', rows }))
-      .catch((error: unknown) => {
-        if (current) setFrames({ status: 'error', message: error instanceof WeekError ? error.message : "Can't reach the planner." })
-      })
+      .catch((error: unknown) => current && setFrames(failed(error)))
+    listRules()
+      .then((rows) => current && setRules({ status: 'ready', rows: sortRules(rows) }))
+      .catch((error: unknown) => current && setRules(failed(error)))
     return () => {
       current = false
     }
   }, [reload])
 
+  useEffect(() => {
+    loadWeek(week)
+      .then((loaded) => setSlotMin(loaded.slot_min))
+      .catch(() => setSlotMin(null))
+  }, [week])
+
   // After a save, focus the saved row (the new one when adding); after a delete, the add button.
   useEffect(() => {
     const target = focusAfter.current
-    if (frames.status !== 'ready' || !target) return
+    if (!target) return
+    const list = target.section === 'frame' ? frames : rules
+    if (list.status !== 'ready') return
     focusAfter.current = null
-    if (target === 'add-frame') {
-      document.getElementById('add-frame')?.focus()
+    if (target.deleted) {
+      document.getElementById(`add-${target.section}`)?.focus()
       return
     }
-    const id = target.edited ?? frames.rows.find((row) => !target.ids.has(row.id))?.id
-    if (id) document.querySelector<HTMLElement>(`[data-frame="${id}"]`)?.focus()
-  }, [frames])
+    const id = target.edited ?? list.rows.find((row) => !target.ids.has(row.id))?.id
+    if (id) document.querySelector<HTMLElement>(`[data-${target.section}="${id}"]`)?.focus()
+  }, [frames, rules])
 
-  function saved(editing: FrameOut | undefined, deleted: boolean) {
-    const ids = new Set(frames.status === 'ready' ? frames.rows.map((row) => row.id) : [])
-    focusAfter.current = deleted ? 'add-frame' : { ids, edited: editing?.id }
+  function saved(section: 'frame' | 'rule', editing: { id: string } | undefined, deleted: boolean) {
+    const list = section === 'frame' ? frames : rules
+    const ids = new Set(list.status === 'ready' ? list.rows.map((row) => row.id) : [])
+    focusAfter.current = { section, ids, edited: editing?.id, deleted }
     setReload((n) => n + 1)
   }
+
+  const loadError = frames.status === 'error' ? frames.message : rules.status === 'error' ? rules.message : null
 
   return (
     <main className="content">
@@ -59,11 +82,11 @@ export function RulesPage({ week }: Props) {
         </div>
       </div>
 
-      {frames.status === 'error' && (
+      {loadError && (
         <div className="banner" role="status">
           <div>
             <p className="banner-title">Couldn't load frames and rules</p>
-            <p className="banner-body">{frames.message}</p>
+            <p className="banner-body">{loadError}</p>
           </div>
         </div>
       )}
@@ -103,6 +126,41 @@ export function RulesPage({ week }: Props) {
               ))}
           </div>
         </section>
+
+        <section aria-labelledby="rules-label">
+          <SectionHeader
+            id="rules-label"
+            label="Rules"
+            description="Limits and wishes the planner follows when it places work."
+            addId="add-rule"
+            addLabel="Add rule"
+            disabled={rules.status !== 'ready'}
+            onAdd={() => setRuleDialog({})}
+          />
+          <div className="list-card">
+            {rules.status === 'loading' && <p className="empty-row">Loading...</p>}
+            {rules.status === 'ready' && rules.rows.length === 0 && (
+              <p className="empty-row">No rules yet. The planner only uses your work frames and each item's times.</p>
+            )}
+            {rules.status === 'ready' &&
+              rules.rows.map((rule) => (
+                <button
+                  key={rule.id}
+                  type="button"
+                  className="edit-row"
+                  data-rule={rule.id}
+                  aria-label={ruleLabel(rule)}
+                  onClick={() => setRuleDialog({ editing: rule })}
+                >
+                  <span className="row-text">
+                    <span className="row-title">{ruleSentence(ruleFormFrom(rule))}</span>
+                    <span className="row-sub">{ruleDetail(rule)}</span>
+                  </span>
+                  <RowChevron />
+                </button>
+              ))}
+          </div>
+        </section>
       </div>
 
       {frameDialog && (
@@ -111,8 +169,20 @@ export function RulesPage({ week }: Props) {
           week={week}
           editing={frameDialog.editing}
           onClose={() => setFrameDialog(null)}
-          onSaved={() => saved(frameDialog.editing, false)}
-          onDeleted={() => saved(frameDialog.editing, true)}
+          onSaved={() => saved('frame', frameDialog.editing, false)}
+          onDeleted={() => saved('frame', frameDialog.editing, true)}
+        />
+      )}
+
+      {ruleDialog && (
+        <RuleDialog
+          key={ruleDialog.editing?.id ?? 'new'}
+          week={week}
+          slotMin={slotMin}
+          editing={ruleDialog.editing}
+          onClose={() => setRuleDialog(null)}
+          onSaved={() => saved('rule', ruleDialog.editing, false)}
+          onDeleted={() => saved('rule', ruleDialog.editing, true)}
         />
       )}
     </main>

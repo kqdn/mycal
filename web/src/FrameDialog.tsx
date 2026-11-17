@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { addFrame, deleteFrame, updateFrame, WeekError } from './api'
 import { fieldProps } from './fieldProps'
-import { FieldError } from './fields'
+import { FieldError, WeekdayPicker } from './fields'
 import {
   emptyFrameForm,
   firstFrameError,
@@ -13,7 +13,6 @@ import {
   type FrameForm,
   type FrameOut,
 } from './frameForm'
-import { WEEKDAYS } from './itemForm'
 import type { DateString } from './time'
 
 interface Props {
@@ -253,36 +252,5 @@ export function FrameDialog({ week, editing, onClose, onSaved, onDeleted }: Prop
         </div>
       </form>
     </dialog>
-  )
-}
-
-interface PickerProps {
-  labelledBy: string
-  value: number[]
-  error?: string
-  onChange: (weekdays: number[]) => void
-}
-
-/** Seven segmented day buttons, Mon to Sun. */
-export function WeekdayPicker({ labelledBy, value, error, onChange }: PickerProps) {
-  return (
-    <div className="weekday-picker" role="group" aria-labelledby={labelledBy}>
-      {WEEKDAYS.map((name, day) => {
-        const on = value.includes(day)
-        return (
-          <button
-            key={name}
-            type="button"
-            aria-pressed={on}
-            data-field={day === 0 ? 'weekdays' : undefined}
-            aria-describedby={error ? 'weekdays-error' : undefined}
-            className={on ? 'segment selected' : 'segment'}
-            onClick={() => onChange(on ? value.filter((d) => d !== day) : [...value, day])}
-          >
-            {name}
-          </button>
-        )
-      })}
-    </div>
   )
 }

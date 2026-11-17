@@ -3,6 +3,7 @@
 
 import type { FrameOut, FrameRequest } from './frameForm'
 import type { ItemRequest, Preset } from './itemForm'
+import type { RuleOut, RuleRequest, TargetOut } from './ruleForm'
 import type { DateString } from './time'
 
 export interface Block {
@@ -201,6 +202,37 @@ export async function updateFrame(frameId: string, request: FrameRequest, week: 
 /** Delete a work frame. Refused with a 422 if a week would stop fitting without it. */
 export async function deleteFrame(frameId: string, week: DateString): Promise<Week> {
   return sendForWeek(`/api/frames/${frameId}?week=${week}`, 'DELETE')
+}
+
+// Rules (constraints). Like work frames, a change re-plans every week from this one on.
+
+/** GET /api/rules: every rule in the dialog's terms. */
+export async function listRules(): Promise<RuleOut[]> {
+  const response = await fetch('/api/rules')
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/** GET /api/rules/targets: the items and series a rule can name. */
+export async function listTargets(): Promise<TargetOut[]> {
+  const response = await fetch('/api/rules/targets')
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/** Add a rule. Throws WeekError with the server's message on a 422. */
+export async function addRule(request: RuleRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/rules?week=${week}`, 'POST', request)
+}
+
+/** Change a rule (its kind stays). A 404 (already gone) throws WeekError with kind 'missing'. */
+export async function updateRule(ruleId: string, request: RuleRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/rules/${ruleId}?week=${week}`, 'PUT', request)
+}
+
+/** Delete a rule. Deleting a rule never makes a week stop fitting. */
+export async function deleteRule(ruleId: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/rules/${ruleId}?week=${week}`, 'DELETE')
 }
 
 /** Send a change that returns the viewed week, and keep only that week in the cache. */

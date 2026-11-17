@@ -980,6 +980,171 @@ html:has(.item-dialog[open]) .week-body {
   align-self: stretch;
 }
 
+/* Rule dialog */
+
+.choice-row.two-line {
+  min-height: 60px;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.choice-row.two-line .row-text {
+  gap: 2px;
+}
+
+.kind-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.choice-row.two-line.selected {
+  font-weight: inherit; /* only the name gets heavier */
+}
+
+.choice-row.two-line.selected .kind-name {
+  font-weight: 600;
+}
+
+.choice-row .check {
+  flex-shrink: 0;
+}
+
+.segmented-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.segmented-pair .segment {
+  font-size: 15px;
+}
+
+.range-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.range-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+}
+
+.range-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.range-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.range-remove {
+  font-size: 13px;
+}
+
+.add-range {
+  align-self: flex-start;
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.number-input {
+  width: 120px;
+}
+
+/* Target picker ("Applies to") */
+
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-input {
+  height: var(--tap);
+}
+
+.picked-count {
+  align-self: flex-end;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.target-card {
+  max-height: 264px; /* six rows */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+}
+
+.target-row {
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.target-row + .target-row {
+  border-top: 1px solid var(--divider);
+}
+
+.target-row:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.target-title {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.checkbox {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--checkbox-border);
+  border-radius: 6px;
+}
+
+.checkbox.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.target-empty {
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 @media (max-width: 600px) {
   .section-header {
     flex-direction: column;
