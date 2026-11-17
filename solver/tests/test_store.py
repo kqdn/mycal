@@ -9,6 +9,7 @@ import pytest
 
 from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, OnMiss, SolverSettings, Window, WorkFrame
 from mycal import store
+from mycal.model import ItemTemplate, Rule, Series
 
 LA = "America/Los_Angeles"
 MON_9AM = datetime(2026, 11, 16, 17, tzinfo=UTC)  # 9am PST
@@ -102,6 +103,119 @@ def test_two_occurrences_of_a_series_cannot_share_a_date(conn: sqlite3.Connectio
     store.put_item(conn, item("Gym", series_id=series_id, occurrence_date=date(2026, 11, 16)))
     with pytest.raises(sqlite3.IntegrityError):
         store.put_item(conn, item("Gym", series_id=series_id, occurrence_date=date(2026, 11, 16)))
+
+
+# Series
+
+
+def lecture(**fields) -> Series:  # type: ignore[no-untyped-def]
+    template = ItemTemplate(FlexPreset.EXACT, {"start_time": time(11), "end_time": time(12, 30)}, checkable=True)
+    return Series("Lecture", Rule("weekly", 1, [1, 3]), LA, date(2026, 11, 16), template, **fields)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        ItemTemplate(FlexPreset.EXACT, {"start_time": time(11), "end_time": time(12, 30)}, checkable=True),
+        ItemTemplate(FlexPreset.DAY_RANGE, {"start_time": time(17), "end_time": time(21)}, estimate_min=30),
+        ItemTemplate(
+            FlexPreset.DAYS,
+            {"weekdays": [0, 2, 4], "every_day": True, "session_min": 30},
+            estimate_min=90,
+            max_chunk_min=30,
+            one_block_per_day=True,
+            on_miss=OnMiss.SKIP,
+        ),
+        ItemTemplate(FlexPreset.BEFORE_DEADLINE, estimate_min=240, deadline_time=time(23, 59)),
+    ],
+)
+def test_series_round_trips_with_its_template(conn: sqlite3.Connection, template: ItemTemplate) -> None:
+    original = Series(
+        "Weekly thing",
+        Rule("weekly", 2, [1, 3]),
+        LA,
+        date(2026, 11, 16),
+        template,
+        end_date=date(2026, 12, 18),
+        skipped_dates=[date(2026, 11, 26)],
+    )
+    store.put_series(conn, original)
+    assert store.get_series(conn, original.id) == original
+    assert store.list_series(conn) == [original]
+
+
+def test_a_daily_series_with_no_end_round_trips(conn: sqlite3.Connection) -> None:
+    piano = Series("Piano", Rule("daily", 1), LA, date(2026, 11, 16), ItemTemplate(FlexPreset.DAY, estimate_min=30))
+    store.put_series(conn, piano)
+    assert store.get_series(conn, piano.id) == piano
+
+
+def test_saving_a_series_again_updates_it_and_keeps_its_source(conn: sqlite3.Connection) -> None:
+    series = lecture()
+    store.put_series(conn, series, source="2026-11-16.toml")
+    series.end_date = date(2026, 12, 18)
+    store.put_series(conn, series)
+    assert store.get_series(conn, series.id) == series
+    assert store.series_source(conn, series.id) == "2026-11-16.toml"
+
+
+def test_deleting_a_series_takes_its_occurrences_and_their_blocks(conn: sqlite3.Connection) -> None:
+    series = lecture()
+    store.put_series(conn, series)
+    tue = item("Lecture", series_id=series.id, occurrence_date=date(2026, 11, 17))
+    other = item("Other")
+    store.put_item(conn, tue)
+    store.put_item(conn, other)
+    store.put_blocks(conn, [Block(tue.id, MON_9AM, MON_9AM + timedelta(hours=1))])
+
+    store.delete_series(conn, series.id)
+
+    assert store.get_series(conn, series.id) is None
+    assert store.list_items(conn) == [other]
+    assert store.list_blocks(conn) == []
+
+
+def test_deleting_a_series_drops_it_from_rules(conn: sqlite3.Connection) -> None:
+    series = lecture()
+    store.put_series(conn, series)
+    gym = item("Gym")
+    store.put_item(conn, gym)
+    only_series = Constraint(kind="rest_between", params={"series_ids": [series.id]})
+    both = Constraint(kind="rest_between", params={"item_ids": [gym.id], "series_ids": [series.id]})
+    store.put_constraint(conn, only_series)
+    store.put_constraint(conn, both)
+
+    store.delete_series(conn, series.id)
+
+    [left] = store.list_constraints(conn)  # a rule with no targets left is deleted, never "every item"
+    assert left.id == both.id
+    assert left.params == {"item_ids": [gym.id], "series_ids": []}
+
+
+def test_a_series_known_only_from_its_occurrences_stays_a_rule_target(conn: sqlite3.Connection) -> None:
+    # Occurrences imported before series were stored point to a series that was never saved.
+    series_id = uuid4()
+    store.put_item(conn, item("Lecture", series_id=series_id, occurrence_date=date(2026, 11, 17)))
+    other = item("Other")
+    store.put_item(conn, other)
+    rule = Constraint(kind="rest_between", params={"series_ids": [series_id]})
+    store.put_constraint(conn, rule)
+
+    store.delete_item(conn, other.id)
+
+    assert store.list_constraints(conn) == [rule]
+
+
+def test_an_item_remembers_being_edited_by_hand(conn: sqlite3.Connection) -> None:
+    occurrence = item("Lecture", series_id=uuid4(), occurrence_date=date(2026, 11, 17))
+    store.put_item(conn, occurrence)
+    assert not store.hand_edited(conn, occurrence.id)
+
+    store.mark_hand_edited(conn, occurrence.id)
+    occurrence.title = "Lecture (moved)"
+    store.put_item(conn, occurrence)  # saving again keeps the mark
+
+    assert store.hand_edited(conn, occurrence.id)
 
 
 # Blocks
@@ -263,10 +377,30 @@ def test_engine_settings_stored_by_old_imports_are_dropped(tmp_path: Path) -> No
     assert settings == SolverSettings(LA)  # the old work limit of 20 is gone; the default applies
 
 
+def test_a_version_4_database_gets_series_and_keeps_its_items(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(f"BEGIN; {''.join(store.MIGRATIONS[:4])} PRAGMA user_version = 4; COMMIT;")
+    old.execute(
+        "INSERT INTO items (id, title, flex_preset, preset_params, checkable, one_block_per_day, on_miss) "
+        "VALUES (?, 'Old item', 'day', ?, 0, 0, 'reschedule')",
+        (str(uuid4()), store.dump_json({"day": date(2026, 11, 16)})),
+    )
+    old.commit()
+    old.close()
+
+    conn = store.connect(path)
+
+    [old_item] = store.list_items(conn)
+    assert not store.hand_edited(conn, old_item.id)
+    assert store.list_series(conn) == []
+
+
 def test_a_rule_that_also_targets_a_series_keeps_it_when_its_item_goes(conn: sqlite3.Connection) -> None:
     gym = item("Gym")
     store.put_item(conn, gym)
-    series_id = uuid4()
+    series_id = lecture().id
+    store.put_series(conn, lecture(id=series_id))
     rule = Constraint(kind="rest_between", params={"item_ids": [gym.id], "series_ids": [series_id]})
     store.put_constraint(conn, rule)
 

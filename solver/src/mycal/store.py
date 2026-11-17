@@ -1,4 +1,4 @@
-"""SQLite storage for items, blocks, work frames, constraints and settings (Milestone 3).
+"""SQLite storage for items, series, blocks, work frames, constraints and settings (Milestone 3).
 
 Not part of the solver: like api.py and demo.py, this module is a caller. The
 core modules never import it.
@@ -15,6 +15,13 @@ Storage rules:
       imported from, or None if added in the app. Saving one again keeps its
       source, so re-importing that file still finds it. Source lives only in
       the database, not on the model classes.
+    - Series (Milestone 6) store their rule and template as JSON, and remember
+      their source like items. Occurrences point to their series by
+      series_id, without a foreign key: occurrences imported before series
+      were stored point to series that were never saved.
+    - Items remember whether they were edited by hand (hand_edited), so a
+      series edit leaves an occurrence changed on its own alone. Like source,
+      it lives only in the database.
     - preset_params and constraint params are JSON. Values JSON has no type
       for (datetimes, dates, times, UUIDs, windows) are tagged, for example
       {"$type": "date", "value": "2026-11-16"}, so they load back exactly.
@@ -33,7 +40,19 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from mycal.model import Block, BlockStatus, Constraint, FlexPreset, Item, OnMiss, Window, WorkFrame
+from mycal.model import (
+    Block,
+    BlockStatus,
+    Constraint,
+    FlexPreset,
+    Item,
+    ItemTemplate,
+    OnMiss,
+    Rule,
+    Series,
+    Window,
+    WorkFrame,
+)
 from mycal.settings import SolverSettings
 
 MIGRATIONS = [
@@ -113,6 +132,23 @@ MIGRATIONS = [
     # Imports used to store them, which pinned old values.
     """
     DELETE FROM settings WHERE key IN ('engine', 'work_limit', 'earliness_slack_min');
+    """,
+    # 5: series (Milestone 6), and which items were edited by hand. rule,
+    # skipped_dates and template are JSON.
+    """
+    CREATE TABLE series (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        rule TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        skipped_dates TEXT NOT NULL,
+        template TEXT NOT NULL,
+        source TEXT
+    );
+    ALTER TABLE items ADD COLUMN hand_edited INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX items_by_series ON items (series_id);
     """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -390,25 +426,44 @@ def delete_item(conn: sqlite3.Connection, item_id: UUID) -> None:
 
 
 def _drop_deleted_targets(conn: sqlite3.Connection) -> None:
-    """Remove ids of items that no longer exist from every constraint's item_ids.
+    """Remove ids of items and series that no longer exist from every constraint's targets.
 
-    A constraint left with no targets at all is deleted: no targets would mean
-    "every item", turning a rule for one item into a rule for everything. The
-    solver refuses unknown ids on purpose, so without this, deleting an item a
-    constraint names would stop every week from planning.
+    A series counts as existing while it is stored or any item still points to
+    it, since occurrences imported before series were stored point to series
+    that were never saved. A constraint left with no targets at all is
+    deleted: no targets would mean "every item", turning a rule for one item
+    into a rule for everything. The solver refuses unknown ids on purpose, so
+    without this, deleting an item a constraint names would stop every week
+    from planning.
     """
-    existing = {row["id"] for row in conn.execute("SELECT id FROM items")}
+    items = {row["id"] for row in conn.execute("SELECT id FROM items")}
+    series = {row["id"] for row in conn.execute("SELECT id FROM series")}
+    series |= {row["series_id"] for row in conn.execute("SELECT series_id FROM items WHERE series_id IS NOT NULL")}
     for row in conn.execute("SELECT id, params FROM constraints").fetchall():
         params = load_json(row["params"])
-        ids = params.get("item_ids") or []
-        kept = [i for i in ids if str(i) in existing]
-        if len(kept) == len(ids):
+        item_ids, series_ids = params.get("item_ids") or [], params.get("series_ids") or []
+        kept_items = [i for i in item_ids if str(i) in items]
+        kept_series = [i for i in series_ids if str(i) in series]
+        if len(kept_items) == len(item_ids) and len(kept_series) == len(series_ids):
             continue
-        if not kept and not params.get("series_ids"):
+        if not kept_items and not kept_series:
             conn.execute("DELETE FROM constraints WHERE id = ?", (row["id"],))
-        else:
-            params["item_ids"] = kept
-            conn.execute("UPDATE constraints SET params = ? WHERE id = ?", (dump_json(params), row["id"]))
+            continue
+        for key, kept in (("item_ids", kept_items), ("series_ids", kept_series)):
+            if key in params:
+                params[key] = kept
+        conn.execute("UPDATE constraints SET params = ? WHERE id = ?", (dump_json(params), row["id"]))
+
+
+def mark_hand_edited(conn: sqlite3.Connection, item_id: UUID) -> None:
+    """Record that an item was edited directly, so a series edit won't rebuild it."""
+    with conn:
+        conn.execute("UPDATE items SET hand_edited = 1 WHERE id = ?", (str(item_id),))
+
+
+def hand_edited(conn: sqlite3.Connection, item_id: UUID) -> bool:
+    row = conn.execute("SELECT hand_edited FROM items WHERE id = ?", (str(item_id),)).fetchone()
+    return bool(row and row["hand_edited"])
 
 
 def _item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
@@ -431,6 +486,99 @@ def _item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
         catch_up_of=_from_id(row["catch_up_of"]),
         series_id=_from_id(row["series_id"]),
         occurrence_date=date.fromisoformat(row["occurrence_date"]) if row["occurrence_date"] else None,
+    )
+
+
+# Series
+
+
+def put_series(conn: sqlite3.Connection, series: Series, source: str | None = None) -> None:
+    """Insert or update a series. Like items, an update keeps its source."""
+    with conn:
+        _write_series(conn, series, source)
+
+
+def _write_series(conn: sqlite3.Connection, series: Series, source: str | None) -> None:
+    rule = {"freq": series.rule.freq, "interval": series.rule.interval, "weekdays": series.rule.weekdays}
+    t = series.template
+    template = {
+        "flex_preset": t.flex_preset.value,
+        "preset_params": t.preset_params,
+        "estimate_min": t.estimate_min,
+        "deadline_time": t.deadline_time,
+        "checkable": t.checkable,
+        "on_miss": t.on_miss.value,
+        "max_chunk_min": t.max_chunk_min,
+        "one_block_per_day": t.one_block_per_day,
+    }
+    conn.execute(
+        """
+        INSERT INTO series (id, title, rule, timezone, start_date, end_date, skipped_dates, template, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+            title = excluded.title, rule = excluded.rule, timezone = excluded.timezone,
+            start_date = excluded.start_date, end_date = excluded.end_date,
+            skipped_dates = excluded.skipped_dates, template = excluded.template
+        """,
+        (
+            str(series.id),
+            series.title,
+            dump_json(rule),
+            series.timezone,
+            series.start_date.isoformat(),
+            series.end_date.isoformat() if series.end_date else None,
+            dump_json(series.skipped_dates),
+            dump_json(template),
+            source,
+        ),
+    )
+
+
+def get_series(conn: sqlite3.Connection, series_id: UUID) -> Series | None:
+    row = conn.execute("SELECT * FROM series WHERE id = ?", (str(series_id),)).fetchone()
+    return _series(row) if row else None
+
+
+def series_source(conn: sqlite3.Connection, series_id: UUID) -> str | None:
+    """The week file a series was imported from, or None if it was added in the app (or is gone)."""
+    row = conn.execute("SELECT source FROM series WHERE id = ?", (str(series_id),)).fetchone()
+    return row["source"] if row else None
+
+
+def list_series(conn: sqlite3.Connection) -> list[Series]:
+    return [_series(row) for row in conn.execute("SELECT * FROM series ORDER BY rowid")]
+
+
+def delete_series(conn: sqlite3.Connection, series_id: UUID) -> None:
+    """Delete a series and every occurrence of it (their blocks go with them), and drop it from constraints."""
+    with conn:
+        conn.execute("DELETE FROM items WHERE series_id = ?", (str(series_id),))
+        conn.execute("DELETE FROM series WHERE id = ?", (str(series_id),))
+        _drop_deleted_targets(conn)
+
+
+def _series(row: sqlite3.Row) -> Series:
+    rule = load_json(row["rule"])
+    t = load_json(row["template"])
+    template = ItemTemplate(
+        flex_preset=FlexPreset(t["flex_preset"]),
+        preset_params=t["preset_params"],
+        estimate_min=t["estimate_min"],
+        deadline_time=t["deadline_time"],
+        checkable=t["checkable"],
+        on_miss=OnMiss(t["on_miss"]),
+        max_chunk_min=t["max_chunk_min"],
+        one_block_per_day=t["one_block_per_day"],
+    )
+    return Series(
+        id=UUID(row["id"]),
+        title=row["title"],
+        rule=Rule(rule["freq"], rule["interval"], rule["weekdays"]),
+        timezone=row["timezone"],
+        start_date=date.fromisoformat(row["start_date"]),
+        end_date=date.fromisoformat(row["end_date"]) if row["end_date"] else None,
+        skipped_dates=load_json(row["skipped_dates"]),
+        template=template,
     )
 
 
