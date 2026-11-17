@@ -337,25 +337,66 @@ def _put_and_plan(
 ) -> None:
     """Store the item (new or changed) and re-plan [first..last], or raise HTTPException and change nothing.
 
-    Tried on an in-memory copy, kept only if no week that fit before stops
-    fitting and all of the item's work is placed.
+    Kept only if no week that fit before stops fitting and all of the item's work is placed.
     """
-    trial = store.copy_in_memory(conn)
-    try:
-        before = _baseline(trial, settings, first, last, moment)
-        store.put_item(trial, item)
-        after = plan_weeks(trial, settings, first, last, moment)
-        if any(before.get(week) and not fit for week, fit in after.items()):
-            raise HTTPException(status_code=422, detail=DOES_NOT_FIT)
+
+    def all_placed(trial: sqlite3.Connection, after: dict[date, bool]) -> None:
         trial_blocks = store.list_blocks(trial)
         placed = effective_item(item, trial_blocks, store.list_work_frames(trial), settings, moment)
         if remaining_min(placed, trial_blocks) > 0:
             # Its work could only go into weeks that can't be planned.
             broken = [week for week, fit in sorted(after.items()) if not fit]
             raise HTTPException(status_code=422, detail=waits_on_broken_week(broken) if broken else DOES_NOT_FIT)
+
+    _change_and_plan(
+        conn,
+        settings,
+        lambda trial: store.put_item(trial, item),
+        first,
+        last,
+        moment,
+        log_name=repr(item.title),
+        timed_out=timed_out,
+        broke=lambda _weeks: DOES_NOT_FIT,
+        check=all_placed,
+    )
+
+
+def _change_and_plan(
+    conn: sqlite3.Connection,
+    settings: SolverSettings,
+    change: Callable[[sqlite3.Connection], None],
+    first: date,
+    last: date,
+    moment: datetime,
+    *,
+    log_name: str,
+    timed_out: str,
+    broke: Callable[[list[date]], str],
+    check: Callable[[sqlite3.Connection, dict[date, bool]], None] | None = None,
+    clear_plans: bool = False,
+) -> None:
+    """Apply `change` and re-plan [first..last], or raise HTTPException and change nothing.
+
+    Tried on an in-memory copy. It is kept only if no week that fit before
+    stops fitting (else 422 with `broke(weeks)`) and `check`, if given, raises
+    nothing. With `clear_plans`, every week's plan mark is cleared after the
+    change, so weeks outside the span re-plan when next viewed.
+    """
+    trial = store.copy_in_memory(conn)
+    try:
+        before = _baseline(trial, settings, first, last, moment)
+        change(trial)
+        if clear_plans:
+            store.clear_plans(trial)
+        after = plan_weeks(trial, settings, first, last, moment)
+        if broken := [week for week, fit in sorted(after.items()) if before.get(week) and not fit]:
+            raise HTTPException(status_code=422, detail=broke(broken))
+        if check is not None:
+            check(trial, after)
         store.keep_copy(trial, conn)
     except PlannerTimeout as error:
-        log.warning("saving %r: %s", item.title, error)
+        log.warning("saving %s: %s", log_name, error)
         raise HTTPException(status_code=503, detail=timed_out) from error
     finally:
         trial.close()
