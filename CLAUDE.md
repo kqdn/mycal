@@ -6,7 +6,7 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 ## Current milestone
 
-Milestone 7: check-ins and on-miss policies. When a checkable block ends, the app asks Yes / Partly / No, and a No (or the unchecked part of a Partly) runs the item's on-miss policy: reschedule, catch-up, skip or ask. No plan yet: show me one before building. Done when a checkable block that ends asks for a check-in and each answer and on-miss policy does what the PRD says. Several open questions in `docs/PRD.md` are tagged Milestone 7; settle them in the plan.
+Milestone 7: check-ins and on-miss policies. When a checkable block ends, the app asks Yes / Partly / No, and a No (or the unchecked part of a Partly) runs the item's on-miss policy: reschedule, catch-up, skip or ask. The plan is agreed: see "How check-ins work" in `docs/PRD.md` and its Nov 17 decision log rows. Done when a checkable block that ends asks for a check-in and each answer and on-miss policy does what the PRD says. Milestone 8 (preview and accept re-plans) comes next; until then changes keep re-planning and saving right away.
 
 Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items), 4 (editing items), 5 (work frames and rules in the app) and 6 (recurrence in the app) are done, and so are keyboard shortcuts (spec in `web/DESIGN.md`). The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 
