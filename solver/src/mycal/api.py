@@ -123,6 +123,7 @@ class BlockOut(BaseModel):
     done_min: int | None = None
     missed_action: str | None = None
     history: bool = False  # it has check-in history, so deleting it archives it instead
+    on_miss: str = "reschedule"  # what a No does (Skip for an exact item set to Reschedule)
 
 
 class CheckInOut(BaseModel):
@@ -1704,6 +1705,7 @@ def week_out(
                 done_min=b.actual_min if b.status in (BlockStatus.DONE, BlockStatus.PARTIAL) else None,
                 missed_action=None if b.missed_action is None else b.missed_action.value,
                 history=b.item_id in history,
+                on_miss=checkins.policy_for(items[b.item_id]).value,
             )
             for b in blocks
         ],

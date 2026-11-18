@@ -18,6 +18,12 @@ function block(changes: Partial<Block>): Block {
     estimate_min: 30,
     editable: true,
     series_id: null,
+    checkable: false,
+    status: 'planned',
+    done_min: null,
+    missed_action: null,
+    history: false,
+    on_miss: 'reschedule',
     ...changes,
   }
 }

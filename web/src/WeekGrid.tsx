@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Block, Week } from './api'
+import { awaitsCheckIn, blockKind } from './checkIn'
 import { initialScrollMinute, minutesToPx, pieces, textMode, weekDates, type Piece } from './layout'
 import { hourLabel, range12, time12, toLocal, weekdayShort } from './time'
 
@@ -68,6 +69,7 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
                       block={block}
                       piece={piece}
                       timezone={timezone}
+                      now={now.iso}
                       onOpen={onOpen}
                     />
                   ))}
@@ -90,6 +92,14 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
           Placed by the solver
         </span>
         <span className="legend-item">
+          <span className="swatch done" aria-hidden="true" />
+          Done
+        </span>
+        <span className="legend-item">
+          <span className="swatch missed" aria-hidden="true" />
+          Missed
+        </span>
+        <span className="legend-item">
           <span className="swatch work-hours" aria-hidden="true" />
           Work hours
         </span>
@@ -102,16 +112,18 @@ interface BlockViewProps {
   block: Block
   piece: Piece
   timezone: string
+  now: string // UTC ISO, for whether the block is waiting for its check-in
   onOpen: (block: Block, opener: HTMLElement) => void
 }
 
 /** A block is a button: clicking it, or Enter or Space, opens its details popover. */
-function BlockView({ block, piece, timezone, onOpen }: BlockViewProps) {
+function BlockView({ block, piece, timezone, now, onOpen }: BlockViewProps) {
   const start = toLocal(block.start, timezone)
   const end = toLocal(block.end, timezone)
   const style = place(piece)
   const mode = textMode(style.height)
-  const classes = ['block', block.fixed ? 'fixed' : 'placed', mode]
+  const classes = ['block', blockKind(block), mode]
+  if (awaitsCheckIn(block, now)) classes.push('needs-check-in')
   if (piece.continuesBefore) classes.push('cont-before')
   if (piece.continuesAfter) classes.push('cont-after')
   const label = `${block.title}, ${weekdayShort(start.date)} ${range12(start.minutes, end.minutes)}`
@@ -146,11 +158,15 @@ function place(piece: Piece): { top: number; height: number } {
   return { top: minutesToPx(piece.startMin), height: minutesToPx(piece.endMin - piece.startMin) }
 }
 
-/** The current local date and minute in the week's timezone, updated every minute. */
+/** The current local date and minute in the week's timezone, and the UTC ISO time, updated every minute. */
 function useNow(timezone: string) {
-  const [now, setNow] = useState(() => toLocal(new Date().toISOString(), timezone))
+  const at = (iso: string) => ({ ...toLocal(iso, timezone), iso })
+  const [now, setNow] = useState(() => at(new Date().toISOString()))
   useEffect(() => {
-    const tick = () => setNow(toLocal(new Date().toISOString(), timezone))
+    const tick = () => {
+      const iso = new Date().toISOString()
+      setNow({ ...toLocal(iso, timezone), iso })
+    }
     const id = window.setInterval(tick, 60_000)
     return () => window.clearInterval(id)
   }, [timezone])

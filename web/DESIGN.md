@@ -63,7 +63,9 @@ Blocks are positioned absolutely in their day column, inset 12px from the column
 | --- | --- | --- | --- | --- | --- |
 | Fixed | API `fixed: true` | `--block-fixed-bg` | 1px `--block-fixed-bg` | `--block-fixed-text` | `--block-fixed-sub` |
 | Placed | API `fixed: false` | `--block-flex-bg` | 1px `--block-flex-border` | `--text` | `--text-muted` |
-| Done (later) | block status done | `--block-done-bg` | 1px `--block-done-border` | `--text-muted`, line-through | `--text-muted` |
+| Done | block status done or partial | `--block-done-bg` | 1px `--block-done-border` | `--text-muted`, line-through | `--text-muted` |
+| Missed | block status missed or unanswered | `--bg` | 1px dashed `--block-done-border` | `--text-muted` | `--text-muted` |
+| Waiting for a check-in | checkable, ended, still planned | as its kind | 2px `--attention-border` | as its kind | as its kind |
 | Locked (later) | placed by hand | same as Placed, plus a 14px lock icon at the top right | | | |
 
 **Text by height** (fixes clipped titles on short blocks). The title never wraps: it stays on one line and ends with an ellipsis when it doesn't fit.
@@ -78,7 +80,7 @@ Each block also gets an accessible name with the full details, for example `aria
 
 ### Legend
 
-Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver", then "Work hours" (an `--surface` swatch with a 1px `--border`, for the white time inside work frames). Add "Done" and "Locked by you" when those exist.
+Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver", "Done", "Missed", then "Work hours" (an `--surface` swatch with a 1px `--border`, for the white time inside work frames). Add "Locked by you" when that exists.
 
 ## Other pieces
 
@@ -197,6 +199,9 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 4. **Actions:** a row of buttons at the bottom, centered, with an 8px gap. Every button row in the popover is centered: the actions, the delete confirm, and a series' Edit which? / Delete which? choice.
    - "Edit", a secondary button, left of "Delete item", also secondary. Edit opens the item in the edit dialog (see Editing). While the item loads it reads "Opening..." and both buttons are disabled. If loading fails, a 12px `--attention-strong` line under the actions says "Couldn't open it:" and the server's message.
    - For a Custom item, Edit is disabled, and a 12px `--text-muted` line under the actions says "Change Custom items in their week file."
+   - For a checkable block that has started, "Check in" (or "Change answer" once answered) comes first in the row. It closes the popover and opens the check-in dialog (see Check-ins).
+   - For an item with check-in history, "Delete item" reads "Archive item" (see Deleting).
+5. **Check-in line (Milestone 7):** under the kind line, 13px `--text`, when there is something to say: "Waiting for a check-in", "Done", "Partly done: 30m of 1h · The rest is rescheduled", "Missed · Caught up later", "No answer · Skipped", or "Missed · Waiting for your choice" while an Ask waits.
 
 ### Deleting
 
@@ -211,6 +216,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 - **If the planner runs out of time:** the item is still deleted, and the weeks it was in re-plan when next viewed. The popover closes as when it's done.
 - **If it fails:** if the popover is still open, the confirm row stays, and a line under it in 12px `--attention-strong` says what went wrong, using the server's message, for example "Couldn't delete it: Can't reach the planner." The buttons are enabled again so it can be retried. If the popover was already closed, the page's attention banner shows the same message instead.
 - **If the item was already gone** (a 404, say it was deleted from another tab): the popover closes and the week reloads, without an error.
+- **Archiving (Milestone 7):** an item with check-in history is archived instead, to keep that history. The button reads "Archive item", the confirm asks "Archive this item?" with "Its finished sessions stay as history. The ones ahead go.", and its button reads "Archive" ("Archiving..."). The item then leaves the week. For a series, This adds ", keeping its finished sessions as history" to its line.
 
 ### Editing (Milestone 4)
 
@@ -223,11 +229,26 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 
 ### Past blocks
 
-Blocks that already started can be opened and their item deleted like any other, with the "Already started" line as the reminder. In Milestone 3 a past block is only a planned slot, not completion history. Once check-ins exist (Milestone 6), an item with finished blocks should be archived instead of deleted, to keep that history (see the "get right now" rules in the PRD). The popover will need a different action then.
+Blocks that already started can be opened like any other, with the "Already started" line as the reminder. A checkable one can be checked in from its popover. An item with check-in history is archived instead of deleted (see Deleting); one without is deleted as before.
 
 ### Exception to the 44px rule
 
 Blocks are clickable, but a block's height comes from its length (a 15 min block is 13px tall), so it can't always be 44px. This is the one exception to "everything clickable is at least 44px". Every block is still reachable with the keyboard, and the Unscheduled "More" button is a full 44px.
+
+## Check-ins (Milestone 7)
+
+When a checkable session ends, the page asks how it went. Push notifications wait for the PWA install, so for now the asking happens on the Week page.
+
+- **Banner:** above the grid, in the attention style (orange: check-ins need you), on any week while something waits. Title: "1 session to check in" or "3 sessions to check in". Then one row per session, earliest first, at least 56px tall with a 1px `--attention-ring` line between rows: the title (15px / 600) and its day and time under it (12px `--text-muted`), with " · Waiting for your choice" for an Ask that went unanswered, and a "Check in" secondary button on the right.
+- **Refreshing:** the page asks the server for the list when it loads, after every change, and every minute. A session left unanswered for 4 hours counts as No, and that can re-plan, so when the server's list changes on its own, the week reloads.
+- **Dialog:** a native `<dialog>` like the Add item dialog (same box, header and body), titled "Check in", or "Change answer" for a block already answered. The primary button reads "Save" ("Saving..."). In the body, in order:
+  1. The session: its title (15px / 600) and "Tue, Nov 17, 9:00 to 10:00am · 1h" (12px `--text-muted`).
+  2. **Did you do it?** A segmented choice: "Yes", "Partly", "No". Nothing is picked at first, except the earlier answer when changing one.
+  3. **How much did you get done?** (Partly only): a length input like Estimate, placeholder "30m", with "The rest counts as missed." under it. It must be shorter than the session.
+  4. **The time you missed** (No), or **The rest** (Partly): a segmented choice of "Reschedule", "Catch up", "Skip" (no Reschedule for a fixed block), starting on the item's If missed choice, or on nothing for Ask me. The line under it says what the choice does, as in the Add item dialog.
+- **Errors:** at their field, like the Add item dialog: "Pick Yes, Partly or No.", "Use a length shorter than the session's 1h, like 30m.", "Pick what happens to the time you missed." A refusal from the server (the missed time can't go anywhere) shows in the banner at the top of the body, "Couldn't save it", and the form stays, so another choice can be picked.
+- **Fewer sessions:** when the answer would leave an "N times a week" item with fewer sessions, the server asks first. The dialog shows a banner, "Fewer sessions", with the server's sentence ("Workout gets 2 of 3 sessions this week: only Wed and Fri are left.") and "Save anyway to accept it.", and the primary button reads "Save anyway". Changing the answer takes the question away.
+- **Done:** the dialog closes, the grid shows the re-planned week, and the banner drops the session.
 
 ## Repeat (Milestone 6)
 

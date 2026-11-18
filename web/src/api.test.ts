@@ -11,6 +11,7 @@ const WEEK: Week = {
   frames: [],
   unscheduled: [],
   series: [],
+  shortfalls: [],
 }
 
 function respond(status: number, body: unknown): Response {

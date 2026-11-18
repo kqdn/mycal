@@ -130,6 +130,42 @@ a.tab {
   color: var(--attention-text);
 }
 
+/* Check-ins waiting for an answer (DESIGN.md, Check-ins) */
+
+.check-in-banner {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.check-in-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.check-in-row {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.check-in-row + .check-in-row {
+  border-top: 1px solid var(--attention-ring);
+}
+
+.check-in-session {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.popover-check-in {
+  font-size: 13px;
+  color: var(--text);
+}
+
 /* Week grid card */
 
 .week-card {
@@ -338,6 +374,36 @@ a.tab {
   line-height: 11px;
 }
 
+/* Check-ins (DESIGN.md, Blocks): finished work is grey and struck through, missed work is
+   dashed, and a block waiting for its check-in gets an orange border (it needs you). */
+
+.block.done {
+  background: var(--block-done-bg);
+  border-color: var(--block-done-border);
+}
+
+.block.done .block-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.block.done .block-time,
+.block.missed .block-title,
+.block.missed .block-time {
+  color: var(--text-muted);
+}
+
+.block.missed {
+  background: var(--bg);
+  border-style: dashed;
+  border-color: var(--block-done-border);
+}
+
+.block.needs-check-in {
+  border-width: 2px;
+  border-color: var(--attention-border);
+}
+
 /* A block split at midnight: square off the edges that continue. */
 
 .block.cont-before {
@@ -383,6 +449,17 @@ a.tab {
 .swatch.placed {
   background: var(--block-flex-bg);
   border-color: var(--block-flex-border);
+}
+
+.swatch.done {
+  background: var(--block-done-bg);
+  border-color: var(--block-done-border);
+}
+
+.swatch.missed {
+  background: var(--bg);
+  border-style: dashed;
+  border-color: var(--block-done-border);
 }
 
 .swatch.work-hours {

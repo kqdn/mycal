@@ -12,6 +12,7 @@ export interface UnscheduledItem {
   sessions: number
   editable: boolean
   series_id?: string | null // set on an occurrence of a stored series
+  history?: boolean // it has check-in history, so deleting it archives it
 }
 
 /** "Tue, Nov 17, 2:00 to 2:30pm", or "... (ends the next day)" for a block that runs past midnight. */
@@ -43,6 +44,11 @@ export function kindLine(block: Block, now: string): string {
 export function unscheduledLine(item: UnscheduledItem): string {
   const why = item.reason ?? 'Not scheduled: it has no times to go in yet'
   return item.estimate_min === null ? why : `${why} · ${estimateLabel(item.estimate_min)}`
+}
+
+/** What archiving an item with check-in history does. */
+export function archiveLine(): string {
+  return 'Its finished sessions stay as history. The ones ahead go.'
 }
 
 /** What a delete takes with it. */

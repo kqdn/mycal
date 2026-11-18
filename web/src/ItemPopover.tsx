@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Block, RepeatOut } from './api'
-import { confirmLine, kindLine, popoverPosition, unscheduledLine, whenLine, type UnscheduledItem } from './itemDetails'
+import { canCheckIn, checkInLine } from './checkIn'
+import { archiveLine, confirmLine, kindLine, popoverPosition, unscheduledLine, whenLine, type UnscheduledItem } from './itemDetails'
 import { repeatLine } from './repeatForm'
 import { pointedBlock, useShortcuts } from './useShortcuts'
 
@@ -27,6 +28,7 @@ interface Props {
   openError: string | null
   onEdit: (scope: Scope) => void
   onDelete: (scope: Scope) => void
+  onCheckIn: (block: Block) => void
   onClose: () => void
 }
 
@@ -37,7 +39,7 @@ interface Props {
  * after the popover closes. Mount it with a key per target so the confirm step
  * starts fresh.
  */
-export function ItemPopover({ target, timezone, repeat, deleting, error, opening, openError, onEdit, onDelete, onClose }: Props) {
+export function ItemPopover({ target, timezone, repeat, deleting, error, opening, openError, onEdit, onDelete, onCheckIn, onClose }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   // The actions row, or in its place: confirming a delete, or (for a series) picking what Edit changes.
@@ -80,6 +82,10 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
 
   const sessions = target.kind === 'block' ? target.block.sessions : target.item.sessions
   const editable = target.kind === 'block' ? target.block.editable : target.item.editable
+  // An item with check-in history is archived, not deleted (it keeps its finished sessions).
+  const history = target.kind === 'block' ? target.block.history : target.item.history
+  const checkInText = target.kind === 'block' ? checkInLine(target.block, openedAt) : ''
+  const checkIn = target.kind === 'block' && canCheckIn(target.block, openedAt) ? target.block : null
 
   // E and Delete do what the Edit and Delete item buttons do, from any step, so you can switch
   // between "Edit which?" and the delete confirm without starting over. Not while a delete or an
@@ -109,10 +115,16 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
       </p>
 
       {repeat && <p className="popover-kind">{repeatLine(repeat)}</p>}
+      {checkInText && <p className="popover-check-in">{checkInText}</p>}
 
       {step === 'actions' && (
         <>
           <div className="popover-actions">
+            {checkIn && (
+              <button type="button" className="secondary-button" disabled={opening} onClick={() => onCheckIn(checkIn)}>
+                {checkIn.status === 'planned' ? 'Check in' : 'Change answer'}
+              </button>
+            )}
             <button
               type="button"
               className="secondary-button"
@@ -122,7 +134,7 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
               {opening ? 'Opening...' : 'Edit'}
             </button>
             <button type="button" className="secondary-button" disabled={opening} onClick={() => setStep('confirm')}>
-              Delete item
+              {history ? 'Archive item' : 'Delete item'}
             </button>
           </div>
           {!editable && <p className="hint">Change Custom items in their week file.</p>}
@@ -154,15 +166,15 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
       {step === 'confirm' && !repeat && (
         <div className="popover-confirm">
           <div>
-            <p className="confirm-question">Delete this item?</p>
-            <p className="confirm-detail">{confirmLine(sessions)}</p>
+            <p className="confirm-question">{history ? 'Archive this item?' : 'Delete this item?'}</p>
+            <p className="confirm-detail">{history ? archiveLine() : confirmLine(sessions)}</p>
           </div>
           <div className="popover-actions">
             <button ref={cancel} type="button" className="secondary-button" disabled={deleting} onClick={() => setStep('actions')}>
               Cancel
             </button>
             <button type="button" className="secondary-button danger" disabled={deleting} onClick={() => onDelete('one')}>
-              {deleting ? 'Deleting...' : 'Delete'}
+              {history ? (deleting ? 'Archiving...' : 'Archive') : deleting ? 'Deleting...' : 'Delete'}
             </button>
           </div>
           {error && <p className="field-error">Couldn't delete it: {error}</p>}
@@ -174,7 +186,8 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
           <div>
             <p className="confirm-question">Delete which?</p>
             <p className="confirm-detail">
-              This skips only this date. All stops it repeating: dates that haven't started go, and past ones stay.
+              This skips only this date{history ? ', keeping its finished sessions as history' : ''}. All stops it repeating:
+              dates that haven't started go, and past ones stay.
             </p>
           </div>
           <div className="popover-actions">
