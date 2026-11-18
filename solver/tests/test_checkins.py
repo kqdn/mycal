@@ -398,3 +398,46 @@ def test_deleting_an_item_without_history_deletes_it(client: TestClient, clock: 
     client.delete(f"/api/items/{work.id}?week={WEEK}")
 
     assert store.get_item(store.connect(store.db_path()), work.id) is None
+
+
+# Check-in fields in the item dialog
+
+
+ESSAY = {
+    "week_start": WEEK, "title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-20",
+    "deadline_time": "17:00", "estimate_min": 120,
+}
+MEETING = {"week_start": WEEK, "title": "Meeting", "preset": "exact", "day": "2026-11-17", "start_time": "10:00", "end_time": "11:00"}
+
+
+def added_form(client: TestClient, request: dict) -> dict:
+    response = client.post("/api/items", json=request)
+    assert response.status_code == 201, response.text
+    [block] = [b for b in response.json()["blocks"] if b["title"] == request["title"]][:1]
+    return client.get(f"/api/items/{block['item_id']}").json()
+
+
+@pytest.mark.parametrize(("request_", "checkable", "on_miss"), [(ESSAY, True, "reschedule"), (MEETING, False, "skip")])
+def test_new_items_check_in_unless_they_are_exact(client: TestClient, request_: dict, checkable: bool, on_miss: str) -> None:
+    form = added_form(client, request_)
+    assert (form["checkable"], form["on_miss"]) == (checkable, on_miss)
+
+
+def test_an_exact_item_cant_be_rescheduled(client: TestClient) -> None:
+    response = client.post("/api/items", json=MEETING | {"checkable": True, "on_miss": "reschedule"})
+    assert response.status_code == 422
+    assert "Catch up" in response.json()["detail"]
+
+
+def test_editing_changes_the_check_in_fields_or_keeps_them_when_left_out(client: TestClient) -> None:
+    form = added_form(client, MEETING | {"checkable": True, "on_miss": "catch_up"})
+    body = {k: v for k, v in form.items() if k not in ("id", "source", "editable", "series_id", "checkable", "on_miss")}
+
+    kept = client.put(f"/api/items/{form['id']}?week={WEEK}", json=body | {"title": "Seminar"})
+    assert kept.status_code == 200, kept.text
+    assert client.get(f"/api/items/{form['id']}").json()["on_miss"] == "catch_up"
+
+    changed = client.put(f"/api/items/{form['id']}?week={WEEK}", json=body | {"checkable": False, "on_miss": "ask"})
+    assert changed.status_code == 200, changed.text
+    after = client.get(f"/api/items/{form['id']}").json()
+    assert (after["checkable"], after["on_miss"]) == (False, "ask")

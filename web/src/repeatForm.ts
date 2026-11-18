@@ -205,6 +205,8 @@ export function formFromSeries(series: SeriesFormOut, today: DateString): ItemFo
     longestSession: length(series.max_chunk_min),
     oneSessionPerDay: series.one_block_per_day,
     eachDay: length(series.session_min),
+    checkIn: series.checkable,
+    onMiss: series.on_miss,
     repeat: series.freq,
     interval: String(series.interval),
     repeatDays: series.repeat_weekdays,

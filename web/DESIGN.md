@@ -149,6 +149,15 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
    - **Text:** the title "One session per day" (15px / 600), with "Puts each session on a different day." under it (12px, `--text-muted`).
    - **When it shows:** only when Longest session is set and shorter than Estimate, because otherwise there's only one session.
 
+5. **Check in when it ends (Milestone 7):** a switch row like One session per day, always shown.
+   - **Text:** the title "Check in when it ends" (15px / 600), with "Asks Yes, Partly or No after each session." under it (12px, `--text-muted`).
+   - **Default:** on, except for Exact time, where it starts off (meetings and appointments). A lecture can be switched on. Once switched by hand, changing the preset doesn't change it.
+   - **If missed:** shown under the switch while it is on, 8px below it. A label "If missed", then a segmented choice like Repeats: "Reschedule", "Catch up", "Skip", "Ask me". Default: Reschedule. Exact time has no Reschedule, since it can't move, and Skip is selected in its place. A 12px `--text-muted` line under the choice says what it does:
+     - Reschedule: "The missed time goes back into the plan."
+     - Catch up: "Adds a catch-up item, due before the next one."
+     - Skip: "Nothing moves. It's only logged."
+     - Ask me: "You choose each time."
+
 ### States
 
 - **Add button:** enabled except while saving. Pressing it with errors sends nothing: every error shows at its field, and the first one in the form scrolls into view and gets focus. While saving, it reads "Adding..." and the whole form is disabled. Saving re-plans the weeks the item touches. That usually takes a second or two, and can take longer on busy weeks, up to the planner's work limit.

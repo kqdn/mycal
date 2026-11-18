@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { ItemFormOut } from './api'
 import {
+  checksIn,
   emptyForm,
   firstError,
   formFrom,
+  missChoices,
+  missHint,
+  missPolicy,
   openDays,
   outsideWorkHours,
   parseDuration,
@@ -106,6 +110,8 @@ describe('toRequest', () => {
       estimate_min: 180,
       max_chunk_min: 60,
       one_block_per_day: true,
+      checkable: true,
+      on_miss: 'reschedule',
     })
   })
 
@@ -121,6 +127,8 @@ describe('toRequest', () => {
       start_time: '09:00',
       end_time: '10:00',
       one_block_per_day: false,
+      checkable: false, // an exact-time item doesn't check in by default
+      on_miss: 'skip', // and can't be rescheduled
     })
   })
 
@@ -236,6 +244,8 @@ describe('every one of these days', () => {
       end_time: '20:00',
       session_min: 30,
       one_block_per_day: false,
+      checkable: true,
+      on_miss: 'reschedule',
     })
   })
 })
@@ -342,10 +352,12 @@ describe('formFrom', () => {
     max_chunk_min: null,
     one_block_per_day: false,
     session_min: null,
+    checkable: true,
+    on_miss: 'reschedule',
     ...changes,
   })
   const cases: [string, Partial<ItemFormOut>][] = [
-    ['exact, overnight', { preset: 'exact', day: '2026-11-19', start_time: '23:00:00', end_time: '01:00:00' }],
+    ['exact, overnight', { preset: 'exact', day: '2026-11-19', start_time: '23:00:00', end_time: '01:00:00', on_miss: 'skip' }],
     ['day, off the grid', { preset: 'day', day: '2026-11-18', estimate_min: 20 }],
     ['day_range', { preset: 'day_range', day: '2026-11-17', start_time: '17:00:00', end_time: '19:00:00', estimate_min: 30 }],
     ['days', { preset: 'days', weekdays: [1, 3], estimate_min: 90, max_chunk_min: 45, one_block_per_day: true }],
@@ -372,6 +384,8 @@ describe('formFrom', () => {
         max_chunk_min: item.max_chunk_min,
         one_block_per_day: item.one_block_per_day,
         session_min: item.session_min,
+        checkable: item.checkable,
+        on_miss: item.on_miss,
       }).filter(([, value]) => value !== null && value !== undefined),
     )
     expect(request).toEqual(expected)
@@ -402,5 +416,26 @@ describe('editing a past item', () => {
     expect(whenKey({ ...due, title: 'Essay draft', estimate: '2h' })).toBe(whenKey(due))
     expect(whenKey({ ...due, dueTime: '18:00' })).not.toBe(whenKey(due))
     expect(whenKey({ ...due, preset: 'days' })).not.toBe(whenKey(due))
+  })
+})
+
+describe('check-in fields', () => {
+  it('checks in by default unless the item is exact-time', () => {
+    expect(checksIn(form({ preset: 'days' }))).toBe(true)
+    expect(checksIn(form({ preset: 'exact' }))).toBe(false)
+    expect(checksIn(form({ preset: 'exact', checkIn: true }))).toBe(true)
+    expect(checksIn(form({ preset: 'days', checkIn: false }))).toBe(false)
+  })
+
+  it("offers no Reschedule for an exact-time item, and sends Skip instead", () => {
+    const exact = form({ preset: 'exact', checkIn: true })
+    expect(missChoices(exact).map((c) => c.value)).toEqual(['catch_up', 'skip', 'ask'])
+    expect(missPolicy(exact)).toBe('skip')
+    expect(missPolicy(form({ preset: 'days' }))).toBe('reschedule')
+    expect(missPolicy(form({ preset: 'exact', onMiss: 'catch_up' }))).toBe('catch_up')
+  })
+
+  it('says what each choice does', () => {
+    expect(missHint('catch_up')).toBe('Adds a catch-up item, due before the next one.')
   })
 })

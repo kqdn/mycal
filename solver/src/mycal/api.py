@@ -260,6 +260,10 @@ class ItemIn(BaseModel):
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
     session_min: int | None = None
+    # Check-ins (Milestone 7). Left out: checkable unless it is an exact-time item, and Reschedule
+    # (Skip for an exact-time item, which can't move). Left out when editing: kept as stored.
+    checkable: bool | None = None
+    on_miss: Literal["reschedule", "catch_up", "skip", "ask"] | None = None
     # Set when sending again after a 409 that said an "N times a week" item gets fewer sessions.
     accept_shortfall: bool = False
 
@@ -288,6 +292,8 @@ class ItemFormOut(BaseModel):
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
     session_min: int | None = None
+    checkable: bool = False
+    on_miss: Literal["reschedule", "catch_up", "skip", "ask"] = "reschedule"
 
 
 class Invalid(ValueError):
@@ -385,8 +391,8 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
     """Change an item, re-plan the weeks its old and new sessions touch, and return the viewed `week`.
 
     Like adding, it's all or nothing: 422 if the change doesn't fit, and then
-    nothing changes. Fields the dialog doesn't show (dependencies, checkable,
-    on_miss, parent, series, source) are kept. Sessions that already started
+    nothing changes. Fields the dialog doesn't show (dependencies, parent,
+    series, source) are kept, and so are checkable and on_miss when left out. Sessions that already started
     or are done stay and count toward the work.
     """
     with database() as (conn, settings):
@@ -401,6 +407,10 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         try:
             # A changed time must still lie ahead; an unchanged one may have passed (fix a past item's title).
             new = _edited(old, to_item(request, settings, moment, check_past=moved))
+            if request.checkable is None:
+                new.checkable = old.checkable
+            if request.on_miss is None:
+                new.on_miss = old.on_miss
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         if moved and old.flex_preset is FlexPreset.EXACT and any(b.start <= moment for b in blocks):
@@ -647,6 +657,8 @@ class SeriesFormOut(BaseModel):
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
     session_min: int | None = None
+    checkable: bool = False
+    on_miss: Literal["reschedule", "catch_up", "skip", "ask"] = "reschedule"
     freq: Literal["daily", "weekly"]
     interval: int
     repeat_weekdays: list[int]
@@ -887,6 +899,8 @@ def to_series(request: SeriesIn, settings: SolverSettings, moment: datetime, che
         deadline_time=request.deadline_time if item.flex_preset is FlexPreset.BEFORE_DEADLINE else None,
         max_chunk_min=item.max_chunk_min,
         one_block_per_day=item.one_block_per_day,
+        checkable=item.checkable,
+        on_miss=item.on_miss,
     )
     return Series(title, rule, settings.timezone, start, template, request.end_date)
 
@@ -906,6 +920,8 @@ def from_series(series: Series, source: str | None) -> SeriesFormOut:
         "estimate_min": t.estimate_min,
         "max_chunk_min": t.max_chunk_min,
         "one_block_per_day": t.one_block_per_day,
+        "checkable": t.checkable,
+        "on_miss": t.on_miss.value,
         "freq": series.rule.freq,
         "interval": series.rule.interval,
         "repeat_weekdays": series.rule.weekdays,
@@ -1404,6 +1420,8 @@ def _change_and_plan(
 def _edited(old: Item, new: Item) -> Item:
     """The changed item: the dialog's fields from `new`, everything the dialog doesn't show from `old`.
 
+    Check-in and If missed come from `new`; the caller keeps the old ones when the request left them out.
+
     A deadline is the dialog's for "before a deadline". On other presets the
     dialog has no deadline field, so an imported item's deadline is kept, unless
     it came from the "before a deadline" preset being changed away.
@@ -1416,10 +1434,8 @@ def _edited(old: Item, new: Item) -> Item:
         new,
         id=old.id,
         deadline=deadline,
-        checkable=old.checkable,
         parent_id=old.parent_id,
         depends_on=old.depends_on,
-        on_miss=old.on_miss,
         catch_up_of=old.catch_up_of,
         series_id=old.series_id,
         occurrence_date=old.occurrence_date,
@@ -1517,6 +1533,7 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime, check_p
         if check_past and deadline <= moment:
             raise Invalid("That deadline has already passed.")
 
+    checkable, on_miss = _check_in_fields(request, exact)
     return Item(
         title=title,
         flex_preset=preset,
@@ -1525,7 +1542,19 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime, check_p
         deadline=deadline,
         max_chunk_min=request.max_chunk_min,
         one_block_per_day=request.one_block_per_day,
+        checkable=checkable,
+        on_miss=on_miss,
     )
+
+
+def _check_in_fields(request: ItemIn, exact: bool) -> tuple[bool, OnMiss]:
+    """Whether it asks for check-ins and what a miss does, with the defaults for its preset."""
+    checkable = request.checkable if request.checkable is not None else not exact
+    default = OnMiss.SKIP if exact else OnMiss.RESCHEDULE
+    on_miss = OnMiss(request.on_miss) if request.on_miss is not None else default
+    if exact and on_miss is OnMiss.RESCHEDULE:
+        raise Invalid("An exact-time item can't move, so pick Catch up, Skip or Ask me if it's missed.")
+    return checkable, on_miss
 
 
 def _days_params(
@@ -1554,6 +1583,7 @@ def _every_day_item(request: ItemIn, title: str, params: dict[str, Any]) -> Item
     session = _need(request.session_min, "Add a length for each day, like 30m or 1h.")
     if session <= 0:
         raise Invalid("Use a length like 30m or 1h.")
+    checkable, on_miss = _check_in_fields(request, exact=False)
     return Item(
         title=title,
         flex_preset=FlexPreset.DAYS,
@@ -1561,6 +1591,8 @@ def _every_day_item(request: ItemIn, title: str, params: dict[str, Any]) -> Item
         estimate_min=session * len(params["weekdays"]),
         max_chunk_min=session,
         one_block_per_day=True,
+        checkable=checkable,
+        on_miss=on_miss,
     )
 
 
@@ -1586,6 +1618,8 @@ def from_item(item: Item, source: str | None, settings: SolverSettings) -> ItemF
         "estimate_min": item.estimate_min,
         "max_chunk_min": item.max_chunk_min,
         "one_block_per_day": item.one_block_per_day,
+        "checkable": item.checkable,
+        "on_miss": item.on_miss.value,
     }
     preset = item.flex_preset
     if preset is FlexPreset.EXACT:

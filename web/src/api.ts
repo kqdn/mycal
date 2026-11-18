@@ -2,7 +2,7 @@
 // All times are UTC ISO strings.
 
 import type { FrameOut, FrameRequest } from './frameForm'
-import type { ItemRequest, Preset } from './itemForm'
+import type { ItemRequest, OnMiss, Preset } from './itemForm'
 import type { SeriesRequest } from './repeatForm'
 import type { RuleOut, RuleRequest, TargetOut } from './ruleForm'
 import type { DateString } from './time'
@@ -67,6 +67,8 @@ export interface SeriesFormOut {
   max_chunk_min: number | null
   one_block_per_day: boolean
   session_min: number | null
+  checkable: boolean
+  on_miss: OnMiss
   freq: 'daily' | 'weekly'
   interval: number
   repeat_weekdays: number[]
@@ -93,6 +95,8 @@ export interface ItemFormOut {
   max_chunk_min: number | null
   one_block_per_day: boolean
   session_min: number | null
+  checkable: boolean
+  on_miss: OnMiss
 }
 
 /** Why a week could not be shown: nothing imported yet (404), or data the API could not use. */

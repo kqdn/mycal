@@ -1125,6 +1125,7 @@ def test_a_series_round_trips_through_the_edit_form(client: TestClient) -> None:
         "end_time": "09:00:00", "weekdays": None, "deadline_time": None, "estimate_min": None,
         "max_chunk_min": None, "one_block_per_day": False, "session_min": None, "freq": "weekly",
         "interval": 1, "repeat_weekdays": [1, 4], "start_date": "2026-11-16", "end_date": "2026-12-18",
+        "checkable": False, "on_miss": "skip",  # the defaults for an exact-time item
     }
 
 

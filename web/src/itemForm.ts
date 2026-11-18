@@ -19,6 +19,16 @@ export const PRESETS: { value: Preset; label: string }[] = [
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
+/** What a missed check-in does (the item's on_miss). */
+export type OnMiss = 'reschedule' | 'catch_up' | 'skip' | 'ask'
+
+export const MISS_CHOICES: { value: OnMiss; label: string }[] = [
+  { value: 'reschedule', label: 'Reschedule' },
+  { value: 'catch_up', label: 'Catch up' },
+  { value: 'skip', label: 'Skip' },
+  { value: 'ask', label: 'Ask me' },
+]
+
 /** Everything the form holds, as typed. Times are "HH:MM" from <input type="time">. */
 export interface ItemForm {
   title: string
@@ -33,6 +43,8 @@ export interface ItemForm {
   longestSession: string // same format; empty means no limit
   oneSessionPerDay: boolean
   eachDay: string // an every-day item's length on each day, same format as estimate
+  checkIn: boolean | null // null: the preset's default (on, except for exact-time items)
+  onMiss: OnMiss
   // Repeating (repeatForm.ts). Shown when adding, and when editing a series.
   repeat: 'never' | 'weekly' | 'daily'
   interval: string // every N weeks or days, as typed
@@ -119,6 +131,9 @@ export interface ItemRequest {
   max_chunk_min?: number
   one_block_per_day: boolean
   session_min?: number
+  checkable: boolean
+  on_miss: OnMiss
+  accept_shortfall?: boolean // set when sending again after the "fewer sessions" question
 }
 
 /**
@@ -144,6 +159,8 @@ export function formFrom(item: ItemFormOut, today: DateString): ItemForm {
     longestSession: length(item.max_chunk_min),
     oneSessionPerDay: item.one_block_per_day,
     eachDay: length(item.session_min),
+    checkIn: item.checkable,
+    onMiss: item.on_miss,
     // Made to repeat, it starts from its own date: its day, its due date, or its week.
     startDate: item.day ?? item.deadline_date ?? item.week_start,
   }
@@ -178,6 +195,8 @@ export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
     longestSession: '',
     oneSessionPerDay: false,
     eachDay: '',
+    checkIn: null,
+    onMiss: 'reschedule',
     repeat: 'never',
     interval: '1',
     repeatDays: [],
@@ -200,6 +219,35 @@ export const showsEstimate = (form: ItemForm) => form.preset !== 'exact' && form
 export const showsEachDay = (form: ItemForm) => form.preset === 'every_day'
 const picksDays = (form: ItemForm) => form.preset === 'days' || form.preset === 'every_day'
 export const usesTimes = (form: ItemForm) => form.preset === 'exact' || form.preset === 'day_range' || picksDays(form)
+
+/** Whether a check-in is asked when a session ends: as switched, else on unless it is an exact-time item. */
+export function checksIn(form: ItemForm): boolean {
+  return form.checkIn ?? form.preset !== 'exact'
+}
+
+/** The If missed choices: an exact-time item can't move, so it has no Reschedule. */
+export function missChoices(form: ItemForm): { value: OnMiss; label: string }[] {
+  return MISS_CHOICES.filter((c) => form.preset !== 'exact' || c.value !== 'reschedule')
+}
+
+/** The line under If missed, saying what the choice does. */
+export function missHint(policy: OnMiss): string {
+  switch (policy) {
+    case 'reschedule':
+      return 'The missed time goes back into the plan.'
+    case 'catch_up':
+      return 'Adds a catch-up item, due before the next one.'
+    case 'skip':
+      return "Nothing moves. It's only logged."
+    case 'ask':
+      return 'You choose each time.'
+  }
+}
+
+/** The If missed choice as sent: Reschedule turns into Skip for an exact-time item. */
+export function missPolicy(form: ItemForm): OnMiss {
+  return form.preset === 'exact' && form.onMiss === 'reschedule' ? 'skip' : form.onMiss
+}
 
 /** The one-session-per-day switch only matters when the work splits into more than one session. */
 export function showsOneSessionPerDay(form: ItemForm): boolean {
@@ -270,6 +318,8 @@ export function toRequest(form: ItemForm, weekStart: DateString): ItemRequest {
     title: form.title.trim(),
     preset: form.preset,
     one_block_per_day: showsOneSessionPerDay(form) && form.oneSessionPerDay,
+    checkable: checksIn(form),
+    on_miss: missPolicy(form),
   }
   if (form.preset === 'exact' || form.preset === 'day' || form.preset === 'day_range') request.day = form.day
   if (usesTimes(form) && form.startTime && form.endTime) {

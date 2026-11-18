@@ -754,6 +754,11 @@ html:has(.item-dialog[open]) .week-body {
   font-size: 14px;
 }
 
+/* If missed: under the check-in switch (DESIGN.md, Add item dialog) */
+.miss-field {
+  margin-top: 8px;
+}
+
 .repeat-panel {
   display: flex;
   flex-direction: column;

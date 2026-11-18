@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { addItem, addSeries, repeatItem, updateItem, updateSeries, WeekError, type Week } from './api'
 import {
+  checksIn,
   emptyForm,
   firstError,
+  missChoices,
+  missHint,
+  missPolicy,
   outsideWorkHours,
   plannedHint,
   PRESETS,
@@ -317,6 +321,8 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
                 </button>
               </div>
             )}
+
+            <CheckInField form={form} update={update} />
           </fieldset>
         </div>
       </form>
@@ -454,6 +460,58 @@ function PresetPanel({ form, weekStart, context, update, touch, shown, repeating
         </div>
       )}
       {line && <p className="summary">{line}</p>}
+    </div>
+  )
+}
+
+/** "Check in when it ends" and, when on, what a miss does (web/DESIGN.md, Add item dialog). */
+function CheckInField({ form, update }: { form: ItemForm; update: (changes: Partial<ItemForm>) => void }) {
+  const on = checksIn(form)
+  const policy = missPolicy(form)
+  return (
+    <div className="field">
+      <div className="switch-card">
+        <div className="switch-text">
+          <span className="row-title" id="check-in-label">
+            Check in when it ends
+          </span>
+          <span className="row-sub">Asks Yes, Partly or No after each session.</span>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-labelledby="check-in-label"
+          className="switch"
+          onClick={() => update({ checkIn: !on })}
+        >
+          <span className="switch-track">
+            <span className="switch-knob" />
+          </span>
+        </button>
+      </div>
+      {on && (
+        <div className="field miss-field">
+          <span className="field-label" id="miss-label">
+            If missed
+          </span>
+          <div className="segmented" role="radiogroup" aria-labelledby="miss-label">
+            {missChoices(form).map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={policy === value}
+                className={policy === value ? 'segment selected' : 'segment'}
+                onClick={() => update({ onMiss: value })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="hint">{missHint(policy)}</p>
+        </div>
+      )}
     </div>
   )
 }
