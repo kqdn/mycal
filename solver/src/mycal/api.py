@@ -23,6 +23,10 @@ Series (Milestone 6) are added, changed and deleted here too. A series
 reaches every week, so adding or changing one re-plans like a work frame
 change; the planner creates its occurrences in each week it plans.
 
+Check-ins (Milestone 7) are answered here, through checkins.py, all or
+nothing like adding an item. Viewing a week or listing check-ins first turns
+check-ins left too long into unanswered ones (checkins.CHECK_IN_GRACE).
+
 All times in responses are UTC. The page converts them to the week's
 timezone only for display.
 """
@@ -46,8 +50,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from mycal import store
-from mycal.model import BlockStatus, Constraint, FlexPreset, Item, ItemTemplate, Rule, Series, WorkFrame
+from mycal import checkins, store
+from mycal.model import Block, BlockStatus, Constraint, FlexPreset, Item, ItemTemplate, OnMiss, Rule, Series, WorkFrame
 from mycal.presets import every_day_session
 from mycal.recurrence import occurrence_dates, occurrence_on
 from mycal.planner import (
@@ -110,6 +114,35 @@ class BlockOut(BaseModel):
     estimate_min: int | None  # None for an exact-time item
     editable: bool  # whether the edit dialog can change the item (not Custom)
     series_id: UUID | None = None  # set on an occurrence of a stored series
+    # Check-ins (Milestone 7): planned, done, partial, missed or unanswered, the
+    # minutes done (partial or done), and the policy that ran on the missed part.
+    checkable: bool = False
+    status: str = BlockStatus.PLANNED.value
+    done_min: int | None = None
+    missed_action: str | None = None
+
+
+class CheckInOut(BaseModel):
+    """A block waiting for a check-in, or for a choice about its missed part (an Ask item)."""
+
+    block_id: UUID
+    item_id: UUID
+    title: str
+    start: datetime
+    end: datetime
+    fixed: bool
+    status: str  # planned (not answered yet) or the answer that waits for a choice
+    done_min: int | None
+    on_miss: str  # what a No does: the item's policy, with Reschedule as Skip for an exact item
+    choices: list[str]  # what the missed part can do instead
+
+
+class CheckInIn(BaseModel):
+    """An answer. `done_min` is for Partly; `action` is the choice for the missed part, needed for Ask items."""
+
+    answer: Literal["yes", "partly", "no"]
+    done_min: int | None = None
+    action: Literal["reschedule", "catch_up", "skip"] | None = None
 
 
 class SpanOut(BaseModel):
@@ -181,6 +214,7 @@ def get_week(week_start: date) -> WeekOut:
     """The week's stored plan, planning it first if it has none. A week that can't be planned is still 200."""
     with database() as (conn, settings):
         moment = now()
+        _expire_check_ins(conn, settings, moment)
         try:
             feasible = _status(conn, settings, week_start, moment)
         except PlannerTimeout as error:
@@ -363,6 +397,124 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
             store.mark_hand_edited(conn, new.id)  # a series edit leaves it alone from now on
         log.info("edited %r, re-planned %s", new.title, f"{min(weeks)} to {max(weeks)}" if weeks else "nothing")
         return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+# Check-ins (Milestone 7)
+
+
+BLOCK_GONE = "That session no longer exists."
+CHECK_IN_DOES_NOT_FIT = "There isn't room left for the time you missed. Pick Skip or Catch up instead."
+CATCH_UP_DOES_NOT_FIT = "There isn't room for a catch-up before it's due. Pick Skip instead."
+CHECK_IN_TIMED_OUT = "The planner ran out of time before finishing, so the answer wasn't saved. Try again."
+
+
+@app.get("/api/check-ins")
+def list_check_ins() -> list[CheckInOut]:
+    """Checkable blocks that ended without an answer, and Ask blocks waiting for a choice, earliest first."""
+    with database() as (conn, settings):
+        moment = now()
+        _expire_check_ins(conn, settings, moment)
+        return [_check_in_out(block, item) for block, item in checkins.pending(conn, moment)]
+
+
+@app.post("/api/blocks/{block_id}/check-in")
+def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
+    """Answer a check-in (or change an answer), run the on-miss policy, re-plan, and return the viewed `week`.
+
+    All or nothing, like adding an item: 422 with a sentence if the missed part
+    can't go anywhere, and then nothing is saved.
+    """
+    with database() as (conn, settings):
+        moment = now()
+        block = next((b for b in store.list_blocks(conn) if b.id == block_id), None)
+        if block is None:
+            raise HTTPException(status_code=404, detail=BLOCK_GONE)
+        item = store.get_item(conn, block.item_id)
+        assert item is not None  # blocks go with their item
+        chosen = None if request.action is None else OnMiss(request.action)
+        try:
+            resolution = checkins.resolve(
+                conn, settings, block, item, checkins.Answer(request.answer), moment, request.done_min, chosen
+            )
+        except checkins.Refused as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}")
+        log.info("checked in %r: %s", item.title, request.answer)
+        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> None:
+    """Count check-ins left unanswered too long as No. If their policies can't fit, they wait for a choice instead."""
+    resolutions = checkins.expire_all(conn, settings, moment)
+    if not resolutions:
+        return
+    try:
+        _save_check_ins(conn, settings, resolutions, moment, "unanswered check-ins")
+    except HTTPException:
+        checkins.apply(conn, [checkins.waiting(r) for r in resolutions])
+    log.info("%d check-in(s) went unanswered", len(resolutions))
+
+
+def _save_check_ins(
+    conn: sqlite3.Connection,
+    settings: SolverSettings,
+    resolutions: list[checkins.Resolution],
+    moment: datetime,
+    log_name: str,
+) -> None:
+    """Store answers and re-plan from this week on, all or nothing (HTTPException and nothing saved).
+
+    Refused if a week that fit stops fitting, a catch-up isn't placed in full,
+    or an item has more unplaced work than before.
+    """
+    items = {i.id: i for i in store.list_items(conn)}
+    answered = [items[r.block.item_id] for r in resolutions]
+    catch_ups = [r.catch_up for r in resolutions if r.catch_up is not None]
+    first = local_monday(moment, settings.timezone)
+    touched = [w for i in answered + catch_ups for w in weeks_touched(i, settings.timezone, moment)]
+    last = max([first + (MAX_SPAN_WEEKS - 1) * ONE_WEEK, *touched])
+
+    def unplaced(at: sqlite3.Connection, item: Item) -> int:
+        blocks = store.list_blocks(at)
+        return remaining_min(effective_item(item, blocks, store.list_work_frames(at), settings, moment), blocks)
+
+    before = {i.id: unplaced(conn, i) for i in answered}
+
+    def all_placed(trial: sqlite3.Connection, _after: dict[date, bool]) -> None:
+        if any(unplaced(trial, c) > 0 for c in catch_ups):
+            raise HTTPException(status_code=422, detail=CATCH_UP_DOES_NOT_FIT)
+        if any(unplaced(trial, i) > before[i.id] for i in answered):
+            raise HTTPException(status_code=422, detail=CHECK_IN_DOES_NOT_FIT)
+
+    _change_and_plan(
+        conn,
+        settings,
+        lambda trial: checkins.apply(trial, resolutions),
+        first,
+        last,
+        moment,
+        log_name=log_name,
+        timed_out=CHECK_IN_TIMED_OUT,
+        broke=lambda _weeks: CHECK_IN_DOES_NOT_FIT,
+        check=all_placed,
+    )
+
+
+def _check_in_out(block: Block, item: Item) -> CheckInOut:
+    policy = checkins.policy_for(item)
+    choices = [OnMiss.CATCH_UP, OnMiss.SKIP] if item.flex_preset is FlexPreset.EXACT else [OnMiss.RESCHEDULE, OnMiss.CATCH_UP, OnMiss.SKIP]
+    return CheckInOut(
+        block_id=block.id,
+        item_id=item.id,
+        title=item.title,
+        start=block.start,
+        end=block.end,
+        fixed=item.flex_preset is FlexPreset.EXACT,
+        status=block.status.value,
+        done_min=block.actual_min,
+        on_miss=policy.value,
+        choices=[c.value for c in choices],
+    )
 
 
 # Series
@@ -1412,6 +1564,10 @@ def week_out(
                 estimate_min=items[b.item_id].estimate_min,
                 editable=editable(items[b.item_id]),
                 series_id=_stored(items[b.item_id].series_id, stored_series),
+                checkable=items[b.item_id].checkable,
+                status=b.status.value,
+                done_min=b.actual_min if b.status in (BlockStatus.DONE, BlockStatus.PARTIAL) else None,
+                missed_action=None if b.missed_action is None else b.missed_action.value,
             )
             for b in blocks
         ],

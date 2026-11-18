@@ -150,7 +150,11 @@ def test_blocks_that_started_never_move_and_new_ones_go_after_now(
     plan_again(db, wednesday_noon, monkeypatch)
     week = get(client)
 
-    assert [b for b in store.list_blocks(store.connect(db)) if b.start < wednesday_noon] == started
+    def spots(blocks: list[Block]) -> list[tuple[UUID, datetime, datetime]]:
+        return [(b.id, b.start, b.end) for b in blocks]
+
+    # Checkable ones went unanswered by now (Milestone 7), but none moved.
+    assert spots([b for b in store.list_blocks(store.connect(db)) if b.start < wednesday_noon]) == spots(started)
     started_ids = {str(b.id) for b in started}
     new = [b for b in week["blocks"] if b["id"] not in started_ids]
     assert new and all(datetime.fromisoformat(b["start"]) >= wednesday_noon for b in new)

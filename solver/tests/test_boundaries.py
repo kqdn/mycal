@@ -1,4 +1,4 @@
-"""Rule 1: the core modules never import the callers (api, demo, importer, planner, store)."""
+"""Rule 1: the core modules never import the callers (api, checkins, demo, importer, planner, store)."""
 
 import ast
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 PACKAGE = Path(__file__).parent.parent / "src" / "mycal"
-CALLERS = {"api", "demo", "importer", "planner", "store"}
+CALLERS = {"api", "checkins", "demo", "importer", "planner", "store"}
 CORE = sorted(p for p in PACKAGE.glob("*.py") if p.stem not in CALLERS and p.stem != "__init__")
 
 
