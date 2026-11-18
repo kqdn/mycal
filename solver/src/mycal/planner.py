@@ -27,7 +27,8 @@ again. Items left waiting on a broken week are listed with a reason.
 Series (Milestone 6). Before planning, the missing occurrences of every stored
 series are created for the weeks being planned (create_occurrences), so a
 weekly class shows up in every week it repeats in. Occurrences are never
-created in the past: only ones with a day left from today on.
+created in the past: only ones with a day left from today on (for a days
+item, one of its weekdays).
 
 How blocks are passed to solve() for a span:
     - The span's planned, unlocked blocks that start at or after now, of items
@@ -123,8 +124,17 @@ def create_occurrences(conn: sqlite3.Connection, settings: SolverSettings, first
     for series in store.list_series(conn):
         source = store.series_source(conn, series.id)
         for item in expand_series(series, items, first, last + timedelta(days=6)):
-            if occurrence_last_day(item) >= today:
+            if occurrence_last_day(item) >= today and _has_a_day_left(item, today):
                 store.put_item(conn, item, source)
+
+
+def _has_a_day_left(occurrence: Item, today: date) -> bool:
+    """A days occurrence needs one of its weekdays from today on (a Mon/Wed/Fri Gym has none on Saturday)."""
+    if occurrence.flex_preset is not FlexPreset.DAYS:
+        return True
+    assert occurrence.occurrence_date is not None
+    week = monday(occurrence.occurrence_date)
+    return any(week + timedelta(days=d) >= today for d in occurrence.preset_params["weekdays"])
 
 
 def occurrence_last_day(occurrence: Item) -> date:
@@ -289,6 +299,7 @@ class Shortfall:
 
     item_id: UUID
     title: str
+    week: date  # the item's week (its Monday)
     sessions: int
     gets: int
     days_left: tuple[date, ...]
@@ -346,6 +357,7 @@ def _times_a_week_shortfall(
     return Shortfall(
         item_id=item.id,
         title=item.title,
+        week=item.preset_params["week"],
         sessions=-(-item.estimate_min // session),
         gets=held + len(days_left),
         days_left=tuple(sorted(days_left)),

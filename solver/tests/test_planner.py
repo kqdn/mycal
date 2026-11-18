@@ -190,6 +190,16 @@ def test_the_past_is_never_filled_in_but_this_weeks_gym_still_comes() -> None:
     assert occurrences(conn) == [("Gym", W1), ("Lecture", date(2026, 11, 19))]
 
 
+def test_a_days_occurrence_with_none_of_its_weekdays_left_is_not_created() -> None:
+    conn, _, _ = series_db()
+    saturday = pacific(11, 21, 12)
+
+    create_occurrences(conn, store.load_settings(conn), W1, W2, saturday)
+
+    # The Mon/Wed/Fri Gym has no day left this week, so only next week's comes.
+    assert [day for title, day in occurrences(conn) if title == "Gym"] == [W2]
+
+
 def test_skipped_dates_and_the_end_date_are_respected() -> None:
     conn, lecture, _ = series_db()
     lecture.skipped_dates = [date(2026, 11, 19)]

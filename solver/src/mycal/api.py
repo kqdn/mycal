@@ -71,6 +71,8 @@ from mycal.planner import (
     span_for_item,
     PlannerTimeout,
     placed_min,
+    Shortfall,
+    shortfalls,
     span_for_view,
     waiting_on_broken_weeks,
     week_horizon,
@@ -143,6 +145,7 @@ class CheckInIn(BaseModel):
     answer: Literal["yes", "partly", "no"]
     done_min: int | None = None
     action: Literal["reschedule", "catch_up", "skip"] | None = None
+    accept_shortfall: bool = False  # see ItemIn
 
 
 class SpanOut(BaseModel):
@@ -175,6 +178,16 @@ class RepeatOut(BaseModel):
     end_date: date | None
 
 
+class ShortfallOut(BaseModel):
+    """An "N times a week" item in the week that gets fewer sessions than it needs, not yet accepted."""
+
+    item_id: UUID
+    title: str
+    sessions: int
+    gets: int
+    message: str  # "Workout gets 2 of 3 sessions this week: only Wed and Fri are left."
+
+
 class WeekOut(BaseModel):
     week_start: date
     timezone: str
@@ -184,6 +197,7 @@ class WeekOut(BaseModel):
     frames: list[SpanOut]  # work-frame time inside the week, merged
     unscheduled: list[ItemRef]
     series: list[RepeatOut] = []  # how each series with an occurrence in the week repeats
+    shortfalls: list[ShortfallOut] = []
 
 
 
@@ -244,6 +258,8 @@ class ItemIn(BaseModel):
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
     session_min: int | None = None
+    # Set when sending again after a 409 that said an "N times a week" item gets fewer sessions.
+    accept_shortfall: bool = False
 
 
 class ItemFormOut(BaseModel):
@@ -319,7 +335,7 @@ def add_item(request: ItemIn) -> WeekOut:
                 raise HTTPException(status_code=422, detail=NO_DAY_LEFT)
 
         first, last = span_for_item(item, settings.timezone, moment)
-        _put_and_plan(conn, settings, item, first, last, moment, ADD_TIMED_OUT)
+        _put_and_plan(conn, settings, item, first, last, moment, ADD_TIMED_OUT, request.accept_shortfall)
         log.info("added %r, re-planned %s to %s", item.title, first, last)
         return week_out(conn, settings, request.week_start, _status_or_stored(conn, settings, request.week_start, moment), moment)
 
@@ -390,7 +406,7 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         if weeks_touched(new, settings.timezone, moment):
             weeks += span_for_item(new, settings.timezone, moment)
         if weeks:
-            _put_and_plan(conn, settings, new, min(weeks), max(weeks), moment, EDIT_TIMED_OUT)
+            _put_and_plan(conn, settings, new, min(weeks), max(weeks), moment, EDIT_TIMED_OUT, request.accept_shortfall)
         else:
             store.put_item(conn, new)  # nothing left to place, say a past item's new title
         if new.series_id is not None:
@@ -438,7 +454,7 @@ def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
             )
         except checkins.Refused as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}")
+        _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall)
         log.info("checked in %r: %s", item.title, request.answer)
         return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
 
@@ -461,11 +477,15 @@ def _save_check_ins(
     resolutions: list[checkins.Resolution],
     moment: datetime,
     log_name: str,
+    accept_shortfall: bool | None = None,
 ) -> None:
     """Store answers and re-plan from this week on, all or nothing (HTTPException and nothing saved).
 
     Refused if a week that fit stops fitting, a catch-up isn't placed in full,
-    or an item has more unplaced work than before.
+    or an item has more unplaced work than before. An answer that leaves an
+    "N times a week" item with fewer sessions needs accept_shortfall (else
+    409); None, for check-ins that went unanswered, asks nothing and leaves
+    it to the week's banner.
     """
     items = {i.id: i for i in store.list_items(conn)}
     answered = [items[r.block.item_id] for r in resolutions]
@@ -479,8 +499,11 @@ def _save_check_ins(
         return remaining_min(effective_item(item, blocks, store.list_work_frames(at), settings, moment), blocks)
 
     before = {i.id: unplaced(conn, i) for i in answered}
+    short_before = _shortfalls(conn, settings, moment)
 
     def all_placed(trial: sqlite3.Connection, _after: dict[date, bool]) -> None:
+        if accept_shortfall is not None:
+            _confirm_shortfalls(trial, settings, moment, short_before, accept_shortfall, {i.id for i in answered})
         if any(unplaced(trial, c) > 0 for c in catch_ups):
             raise HTTPException(status_code=422, detail=CATCH_UP_DOES_NOT_FIT)
         if any(unplaced(trial, i) > before[i.id] for i in answered):
@@ -498,6 +521,63 @@ def _save_check_ins(
         broke=lambda _weeks: CHECK_IN_DOES_NOT_FIT,
         check=all_placed,
     )
+
+
+# Fewer sessions for "N times a week" items
+
+
+@app.post("/api/shortfalls/{item_id}/accept")
+def accept_shortfall(item_id: UUID, week: date) -> WeekOut:
+    """Hide the banner for an item getting fewer sessions, until it drops further. Returns the viewed `week`."""
+    with database() as (conn, settings):
+        moment = now()
+        short = next((s for s in _shortfalls(conn, settings, moment) if s.item_id == item_id), None)
+        if short is not None:
+            store.acknowledge_shortfall(conn, item_id, short.gets)
+        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+def _shortfalls(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> list[Shortfall]:
+    return shortfalls(store.list_items(conn), store.list_blocks(conn), store.list_work_frames(conn), settings, moment)
+
+
+def _confirm_shortfalls(
+    trial: sqlite3.Connection,
+    settings: SolverSettings,
+    moment: datetime,
+    before: list[Shortfall],
+    accept: bool,
+    changed: set[UUID],
+) -> None:
+    """409 with the sentence to confirm if the change leaves a changed item with fewer sessions than before.
+
+    Only the changed items count: a shortfall depends on the item's own days,
+    so a change can't cause one in another item. Once accepted, the change
+    counts as acknowledged, so no banner follows it.
+    """
+    was = {s.item_id: s.gets for s in before}
+    found = _shortfalls(trial, settings, moment)
+    new = [s for s in found if s.item_id in changed and s.gets < was.get(s.item_id, s.sessions)]
+    if not new:
+        return
+    if not accept:
+        raise HTTPException(status_code=409, detail=" ".join(shortfall_message(s, settings, moment) for s in new))
+    for s in new:
+        store.acknowledge_shortfall(trial, s.item_id, s.gets)
+
+
+def shortfall_message(short: Shortfall, settings: SolverSettings, moment: datetime) -> str:
+    """"Workout gets 2 of 3 sessions this week: only Wed and Fri are left." """
+    this_week = short.week == local_monday(moment, settings.timezone)
+    when = "this week" if this_week else f"the week of {week_title(short.week)}"
+    names = [f"{day:%a}" for day in short.days_left]
+    if not names:
+        left = "none of its days are left"
+    elif len(names) == 1:
+        left = f"only {names[0]} is left"
+    else:
+        left = f"only {', '.join(names[:-1])} and {names[-1]} are left"
+    return f"{short.title} gets {short.gets} of {short.sessions} sessions {when}: {left}."
 
 
 def _check_in_out(block: Block, item: Item) -> CheckInOut:
@@ -1234,13 +1314,17 @@ def _put_and_plan(
     last: date,
     moment: datetime,
     timed_out: str,
+    accept_shortfall: bool = False,
 ) -> None:
     """Store the item (new or changed) and re-plan [first..last], or raise HTTPException and change nothing.
 
     Kept only if no week that fit before stops fitting and all of the item's work is placed.
+    An "N times a week" item it leaves with fewer sessions needs accept_shortfall (else 409).
     """
+    before = _shortfalls(conn, settings, moment)
 
     def all_placed(trial: sqlite3.Connection, after: dict[date, bool]) -> None:
+        _confirm_shortfalls(trial, settings, moment, before, accept_shortfall, {item.id})
         trial_blocks = store.list_blocks(trial)
         placed = effective_item(item, trial_blocks, store.list_work_frames(trial), settings, moment)
         if remaining_min(placed, trial_blocks) > 0:
@@ -1544,6 +1628,7 @@ def week_out(
         sessions.setdefault(b.item_id, []).append(b.id)
     placed = {item_id: placed_min(items[item_id], every_block) for item_id in sessions}
     stored_series = {s.id: s for s in store.list_series(conn)}
+    acks = store.shortfall_acks(conn)
     in_week = {items[b.item_id].series_id for b in blocks} | {i.series_id for i in items.values() if i.id in waiting}
     return WeekOut(
         week_start=week_start,
@@ -1591,6 +1676,17 @@ def week_out(
             if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
         ],
         series=[repeat_out(s) for s in stored_series.values() if s.id in in_week],
+        shortfalls=[
+            ShortfallOut(
+                item_id=s.item_id,
+                title=s.title,
+                sessions=s.sessions,
+                gets=s.gets,
+                message=shortfall_message(s, settings, moment),
+            )
+            for s in _shortfalls(conn, settings, moment)
+            if s.week == week_start and s.gets < acks.get(s.item_id, s.sessions)
+        ],
     )
 
 

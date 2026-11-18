@@ -156,6 +156,14 @@ MIGRATIONS = [
     """
     ALTER TABLE blocks ADD COLUMN missed_action TEXT;
     """,
+    # 7: "N times a week" items whose fewer sessions were accepted, and how
+    # many sessions that was, so the banner shows again if it drops further.
+    """
+    CREATE TABLE shortfall_acks (
+        item_id TEXT PRIMARY KEY REFERENCES items (id) ON DELETE CASCADE,
+        gets INTEGER NOT NULL
+    );
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -599,6 +607,17 @@ def _series(row: sqlite3.Row) -> Series:
 
 
 # Blocks
+
+
+def acknowledge_shortfall(conn: sqlite3.Connection, item_id: UUID, gets: int) -> None:
+    """Remember that an item getting `gets` sessions was accepted, so its banner hides."""
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO shortfall_acks (item_id, gets) VALUES (?, ?)", (str(item_id), gets))
+
+
+def shortfall_acks(conn: sqlite3.Connection) -> dict[UUID, int]:
+    """Accepted shortfalls: item id to the number of sessions that was accepted."""
+    return {UUID(row["item_id"]): row["gets"] for row in conn.execute("SELECT item_id, gets FROM shortfall_acks")}
 
 
 def put_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:

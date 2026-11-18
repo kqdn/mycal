@@ -309,3 +309,62 @@ def test_an_unanswered_reschedule_with_nowhere_to_go_waits_for_a_choice(client: 
 
     assert (waiting["block_id"], waiting["status"]) == (block["id"], "unanswered")
     assert stored_block(block["id"]).missed_action is None  # type: ignore[attr-defined]
+
+
+# Fewer sessions for "N times a week" items
+
+
+WORKOUT = {
+    "week_start": WEEK, "title": "Workout", "preset": "days", "weekdays": [0, 2, 4],
+    "estimate_min": 180, "max_chunk_min": 60, "one_block_per_day": True,
+}
+TUESDAY_MESSAGE = "Workout gets 2 of 3 sessions this week: only Wed and Fri are left."
+
+
+def test_adding_with_too_few_days_left_asks_first(client: TestClient, clock: Clock) -> None:
+    clock.moment = local(17, 12)
+
+    asked = client.post("/api/items", json=WORKOUT)
+    assert (asked.status_code, asked.json()["detail"]) == (409, TUESDAY_MESSAGE)
+    assert store.list_items(store.connect(store.db_path())) == []  # nothing saved
+
+    added = client.post("/api/items", json=WORKOUT | {"accept_shortfall": True})
+    assert added.status_code == 201, added.text
+    assert added.json()["shortfalls"] == []  # accepted, so no banner
+    assert sum(minutes(b) for b in added.json()["blocks"]) == 120
+
+
+def test_a_shortfall_from_viewing_shows_a_banner_until_accepted(client: TestClient, clock: Clock) -> None:
+    item = add(
+        Item("Workout", FlexPreset.DAYS, preset_params={"week": local(16, 0).astimezone(ZONE).date(), "weekdays": [0, 2, 4]},
+             estimate_min=180, max_chunk_min=60, one_block_per_day=True)
+    )
+    clock.moment = local(17, 12)
+
+    [banner] = week(client)["shortfalls"]
+    assert (banner["item_id"], banner["gets"], banner["message"]) == (str(item.id), 2, TUESDAY_MESSAGE)
+
+    accepted = client.post(f"/api/shortfalls/{item.id}/accept?week={WEEK}")
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["shortfalls"] == []
+    assert week(client)["shortfalls"] == []
+
+
+def test_a_missed_session_with_no_day_left_asks_first(client: TestClient, clock: Clock) -> None:
+    store_conn = store.connect(store.db_path())
+    store.put_item(
+        store_conn,
+        Item("Workout", FlexPreset.DAYS, preset_params={"week": local(16, 0).astimezone(ZONE).date(), "weekdays": [0, 2, 4]},
+             estimate_min=180, max_chunk_min=60, one_block_per_day=True, checkable=True),
+    )
+    store_conn.close()
+    monday = week(client)["blocks"][0]
+    clock.moment = local(16, 17, 30)  # Monday has no hour left for it, so only Wed and Fri remain
+
+    asked = client.post(f"/api/blocks/{monday['id']}/check-in?week={WEEK}", json={"answer": "no"})
+    assert asked.status_code == 409
+    assert asked.json()["detail"].startswith("Workout gets 2 of 3 sessions this week")
+    assert stored_block(monday["id"]).status is BlockStatus.PLANNED  # type: ignore[attr-defined]
+
+    shown = answered(client, monday["id"], "no", accept_shortfall=True)
+    assert shown["shortfalls"] == []
