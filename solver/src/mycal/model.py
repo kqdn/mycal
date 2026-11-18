@@ -102,9 +102,18 @@ class Item:
             raise ValueError("Item.series_id and Item.occurrence_date must be set together")
 
 
+MISSABLE = (BlockStatus.PARTIAL, BlockStatus.MISSED, BlockStatus.UNANSWERED)
+
+
 @dataclass(slots=True)
 class Block:
-    """One calendar slot for an item. `locked` means placed by hand: the solver keeps it."""
+    """One calendar slot for an item. `locked` means placed by hand: the solver keeps it.
+
+    `missed_action` is the on-miss policy that ran on the block's missed part
+    (all of a missed or unanswered block, the rest of a partial one). None
+    means none ran yet: an Ask still waiting for an answer. It is never ASK,
+    and only blocks with a missed part have one.
+    """
 
     item_id: UUID
     start: datetime
@@ -113,6 +122,7 @@ class Block:
     status: BlockStatus = BlockStatus.PLANNED
     completed_at: datetime | None = None
     actual_min: int | None = None
+    missed_action: OnMiss | None = None
     id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
@@ -121,6 +131,10 @@ class Block:
         _require_utc(self.completed_at, "Block.completed_at")
         if self.start >= self.end:
             raise ValueError("Block.start must be before Block.end")
+        if self.missed_action is OnMiss.ASK:
+            raise ValueError("Block.missed_action is the policy that ran, never ASK")
+        if self.missed_action is not None and self.status not in MISSABLE:
+            raise ValueError(f"A {self.status.value} block has no missed part, so no missed_action")
 
 
 @dataclass(slots=True)

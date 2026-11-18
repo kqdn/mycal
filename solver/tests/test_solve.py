@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, SolveResult, SolverSettings, Window, solve
-from mycal.problem import covered_min, is_kept
+from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, OnMiss, SolveResult, SolverSettings, Window, solve
+from mycal.problem import covered_min, is_kept, session_min
 
 LA = "America/Los_Angeles"
 SETTINGS = SolverSettings(timezone=LA)
@@ -88,7 +88,7 @@ def assert_valid(result: SolveResult, items: list[Item], blocks: list[Block], se
             for dep_block in (b for b in result.blocks if b.item_id == dep_id):
                 assert all(dep_block.end <= b.start for b in mine), "dependency violated"
         if item.one_block_per_day:
-            days = [b.start.astimezone(zone).date() for b in mine if b.id not in kept_ids or covered_min(b) > 0]
+            days = [b.start.astimezone(zone).date() for b in mine if b.id not in kept_ids or session_min(b) > 0]
             assert len(days) == len(set(days)), "two blocks on one day"
         if item.estimate_min is not None and item.windows:
             done = sum(covered_min(b) for b in kept if b.item_id == item.id)
@@ -190,6 +190,45 @@ def test_done_work_is_kept_and_reduces_what_is_placed() -> None:
     assert done in result.blocks
     [block] = placed_for(result, essay, [done])
     assert block.end - block.start == timedelta(hours=1)
+
+
+def test_rescheduled_missed_work_is_placed_again() -> None:
+    essay = task("Essay", 120, [window(16, 9, 12)])
+    missed = Block(essay.id, at(15, 9), at(15, 10), status=BlockStatus.MISSED, missed_action=OnMiss.RESCHEDULE)
+
+    [block] = placed_for(run([essay], [missed]), essay, [missed])
+
+    assert block.end - block.start == timedelta(hours=2)
+
+
+@pytest.mark.parametrize("action", [OnMiss.SKIP, OnMiss.CATCH_UP, None])
+def test_skipped_caught_up_or_waiting_work_is_not_placed_again(action: OnMiss | None) -> None:
+    essay = task("Essay", 120, [window(16, 9, 12)])
+    missed = Block(essay.id, at(15, 9), at(15, 10), status=BlockStatus.MISSED, missed_action=action)
+
+    [block] = placed_for(run([essay], [missed]), essay, [missed])
+
+    assert block.end - block.start == timedelta(hours=1)
+
+
+def test_a_partly_done_block_reschedules_only_the_rest() -> None:
+    essay = task("Essay", 120, [window(16, 9, 12)])
+    partly = Block(
+        essay.id, at(15, 9), at(15, 11), status=BlockStatus.PARTIAL, actual_min=45, missed_action=OnMiss.RESCHEDULE
+    )
+
+    [block] = placed_for(run([essay], [partly]), essay, [partly])
+
+    assert block.end - block.start == timedelta(minutes=75)
+
+
+def test_a_skipped_session_leaves_its_day_free() -> None:
+    gym = task("Gym", 120, [window(16, 9, 12), window(16, 14, 17)], max_chunk_min=60, one_block_per_day=True)
+    skipped = Block(gym.id, at(16, 9), at(16, 10), status=BlockStatus.MISSED, missed_action=OnMiss.SKIP)
+
+    [block] = placed_for(run([gym], [skipped]), gym, [skipped])
+
+    assert block.start.astimezone(ZoneInfo(LA)).day == 16
 
 
 def test_slot_size_is_a_setting() -> None:

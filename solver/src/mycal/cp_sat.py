@@ -61,10 +61,10 @@ from mycal.problem import (
     SearchResult,
     TimePreference,
     ceil_slot,
-    covered_min,
     day_limit_min,
     floor_slot,
     kept_minutes_by_day,
+    session_min,
     slot_start,
 )
 from mycal.windows import day_capacity_min, work_frame_windows
@@ -139,7 +139,7 @@ def build_model(problem: Problem) -> BuiltModel | None:
         interval = (floor_slot(block.start, slot_min), ceil_slot(block.end, slot_min))
         busy.append(interval)
         kept_by_item[block.item_id].append(interval)
-        if covered_min(block) > 0:
+        if session_min(block) > 0:
             kept_days[block.item_id].add(local_day(interval[0]))
 
     dependents: dict[UUID, list[UUID]] = defaultdict(list)
@@ -419,9 +419,9 @@ def _rest_penalties(
             if not rest.target.matches(problem.items[item_id]):
                 continue
             kept = [
-                (b.start.astimezone(zone).date(), max(1, covered_min(b) // slot_min))
+                (b.start.astimezone(zone).date(), max(1, session_min(b) // slot_min))
                 for b in problem.pinned
-                if b.item_id == item_id and covered_min(b) > 0
+                if b.item_id == item_id and session_min(b) > 0
             ]
             for a, i in enumerate(mine):
                 size_i = problem.chunks[i].size

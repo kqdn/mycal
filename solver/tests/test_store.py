@@ -232,6 +232,7 @@ def test_block_round_trips_with_its_history(conn: sqlite3.Connection) -> None:
         status=BlockStatus.PARTIAL,
         completed_at=MON_9AM + timedelta(minutes=50),
         actual_min=30,
+        missed_action=OnMiss.CATCH_UP,
     )
     store.put_blocks(conn, [done])
     [loaded] = store.list_blocks(conn)

@@ -1,9 +1,9 @@
 from datetime import UTC, datetime, time, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
-from mycal import Block, FlexPreset, Item, Window, WorkFrame
+from mycal import Block, BlockStatus, FlexPreset, Item, OnMiss, Window, WorkFrame
 
 MON_9AM = datetime(2026, 11, 16, 17, 0, tzinfo=UTC)
 
@@ -65,3 +65,16 @@ def test_work_frame_rejects_zero_length() -> None:
     with pytest.raises(ValueError):
         WorkFrame("Empty", [0], time(9), time(9), "America/Los_Angeles")
 
+
+
+def test_block_missed_action_is_never_ask() -> None:
+    start = datetime(2026, 11, 16, 17, tzinfo=UTC)
+    with pytest.raises(ValueError):
+        Block(uuid4(), start, start + timedelta(hours=1), status=BlockStatus.MISSED, missed_action=OnMiss.ASK)
+
+
+@pytest.mark.parametrize("status", [BlockStatus.PLANNED, BlockStatus.DONE])
+def test_block_without_a_missed_part_has_no_missed_action(status: BlockStatus) -> None:
+    start = datetime(2026, 11, 16, 17, tzinfo=UTC)
+    with pytest.raises(ValueError):
+        Block(uuid4(), start, start + timedelta(hours=1), status=status, missed_action=OnMiss.SKIP)

@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, SolverSettings, Window
-from mycal.problem import Target, build_problem, slot_start, split_slots
+from mycal import Block, BlockStatus, Constraint, FlexPreset, Item, OnMiss, SolverSettings, Window
+from mycal.problem import Target, build_problem, covered_min, session_min, slot_start, split_slots
 
 LA = "America/Los_Angeles"
 SETTINGS = SolverSettings(timezone=LA)
@@ -161,3 +161,28 @@ def test_rest_between_defaults_to_one_free_day() -> None:
 def test_bad_rest_between_rejected(constraint: Constraint) -> None:
     with pytest.raises(ValueError, match="rest_between"):
         build_problem([], [], [constraint], SETTINGS)
+
+
+HOUR_BLOCK = {"start": MON_9AM, "end": MON_9AM + timedelta(hours=1)}
+R, S, C = OnMiss.RESCHEDULE, OnMiss.SKIP, OnMiss.CATCH_UP
+
+
+@pytest.mark.parametrize(
+    ("fields", "session", "covered"),
+    [
+        ({}, 0, 0),  # planned: the solver places it
+        ({"locked": True}, 60, 60),
+        ({"status": BlockStatus.DONE}, 60, 60),
+        ({"status": BlockStatus.DONE, "actual_min": 75}, 75, 75),
+        ({"status": BlockStatus.MISSED, "missed_action": R}, 0, 0),
+        ({"status": BlockStatus.MISSED, "missed_action": S}, 0, 60),
+        ({"status": BlockStatus.MISSED, "missed_action": C}, 0, 60),
+        ({"status": BlockStatus.MISSED}, 0, 60),  # waiting on Ask: nothing moves
+        ({"status": BlockStatus.UNANSWERED, "missed_action": R}, 0, 0),
+        ({"status": BlockStatus.PARTIAL, "actual_min": 20, "missed_action": R}, 20, 20),
+        ({"status": BlockStatus.PARTIAL, "actual_min": 20, "missed_action": S}, 20, 60),
+    ],
+)
+def test_session_and_covered_minutes(fields: dict[str, Any], session: int, covered: int) -> None:
+    block = Block(uuid4(), **HOUR_BLOCK, **fields)
+    assert (session_min(block), covered_min(block)) == (session, covered)

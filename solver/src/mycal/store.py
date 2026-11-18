@@ -10,7 +10,7 @@ Storage rules:
     - Work-frame times stay local "HH:MM:SS" plus an IANA timezone (rule 4).
     - Item.windows is not stored: it is compiled from the preset whenever we
       solve (rule 6). Loaded items come back with no windows.
-    - Blocks keep completed_at and actual_min (rule 8).
+    - Blocks keep completed_at, actual_min and missed_action (rule 8).
     - Items and constraints remember their `source`: the week file they were
       imported from, or None if added in the app. Saving one again keeps its
       source, so re-importing that file still finds it. Source lives only in
@@ -150,6 +150,11 @@ MIGRATIONS = [
     );
     ALTER TABLE items ADD COLUMN hand_edited INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX items_by_series ON items (series_id);
+    """,
+    # 6: the on-miss policy that ran on a block's missed part (Milestone 7).
+    # NULL when there is no missed part, or an Ask is still waiting.
+    """
+    ALTER TABLE blocks ADD COLUMN missed_action TEXT;
     """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -605,8 +610,9 @@ def put_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:
 def _write_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:
     conn.executemany(
         """
-        INSERT OR REPLACE INTO blocks (id, item_id, start, "end", locked, status, completed_at, actual_min)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO blocks
+            (id, item_id, start, "end", locked, status, completed_at, actual_min, missed_action)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -618,6 +624,7 @@ def _write_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:
                 b.status.value,
                 _moment(b.completed_at),
                 b.actual_min,
+                None if b.missed_action is None else b.missed_action.value,
             )
             for b in blocks
         ],
@@ -643,6 +650,7 @@ def list_blocks(
             status=BlockStatus(row["status"]),
             completed_at=_from_moment(row["completed_at"]),
             actual_min=row["actual_min"],
+            missed_action=None if row["missed_action"] is None else OnMiss(row["missed_action"]),
         )
         for row in rows
     ]

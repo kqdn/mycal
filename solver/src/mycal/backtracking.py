@@ -22,10 +22,10 @@ from mycal.problem import (
     Problem,
     SearchResult,
     ceil_slot,
-    covered_min,
     day_limit_min,
     floor_slot,
     kept_minutes_by_day,
+    session_min,
     slot_start,
 )
 
@@ -50,7 +50,7 @@ def search(problem: Problem) -> SearchResult:
         interval = (floor_slot(block.start, slot_min), ceil_slot(block.end, slot_min))
         busy.append(interval)
         kept_by_item[block.item_id].append(interval)
-        if covered_min(block) > 0:
+        if session_min(block) > 0:
             kept_days[block.item_id].add(local_day(interval[0]))
 
     dependents: dict[UUID, list[UUID]] = defaultdict(list)

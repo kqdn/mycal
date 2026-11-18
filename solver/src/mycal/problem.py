@@ -19,7 +19,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from mycal.model import Block, BlockStatus, Constraint, Item, Window, WorkFrame
+from mycal.model import MISSABLE, Block, BlockStatus, Constraint, Item, OnMiss, Window, WorkFrame
 from mycal.settings import SolverSettings
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -165,14 +165,35 @@ def is_kept(block: Block) -> bool:
     return block.locked or block.status is not BlockStatus.PLANNED
 
 
+def _length_min(block: Block) -> int:
+    return int((block.end - block.start) / timedelta(minutes=1))
+
+
+def session_min(block: Block) -> int:
+    """Minutes of a session this kept block holds: work done, or a locked plan.
+
+    A missed part holds none, so a missed or skipped session doesn't use up its
+    day (one block per day) or count toward rest days.
+    """
+    length = _length_min(block)
+    if block.status is BlockStatus.PLANNED:
+        return length if block.locked else 0
+    if block.actual_min is not None:
+        return block.actual_min
+    return length if block.status in (BlockStatus.DONE, BlockStatus.PARTIAL) else 0
+
+
 def covered_min(block: Block) -> int:
-    """Minutes of an item's work this kept block already accounts for."""
-    length = int((block.end - block.start) / timedelta(minutes=1))
-    if block.status in (BlockStatus.DONE, BlockStatus.PARTIAL):
-        return block.actual_min if block.actual_min is not None else length
-    if block.locked and block.status is BlockStatus.PLANNED:
-        return length
-    return 0
+    """Minutes of an item's work this kept block accounts for, so they aren't placed again.
+
+    That is its session, plus its missed part unless the missed part was
+    rescheduled: a skipped part is dropped, a caught-up part moved to a
+    catch-up item, and a part waiting on Ask stays put until answered.
+    """
+    held = session_min(block)
+    if block.status not in MISSABLE or block.missed_action is OnMiss.RESCHEDULE:
+        return held
+    return max(held, _length_min(block))
 
 
 def build_problem(
