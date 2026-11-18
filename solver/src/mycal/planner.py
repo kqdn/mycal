@@ -120,7 +120,7 @@ def create_occurrences(conn: sqlite3.Connection, settings: SolverSettings, first
     removes it too. Running it twice creates nothing new.
     """
     today = now.astimezone(ZoneInfo(settings.timezone)).date()
-    items = store.list_items(conn)
+    items = store.list_items(conn, include_archived=True)  # an archived occurrence is never made again
     for series in store.list_series(conn):
         source = store.series_source(conn, series.id)
         for item in expand_series(series, items, first, last + timedelta(days=6)):

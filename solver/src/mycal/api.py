@@ -122,6 +122,7 @@ class BlockOut(BaseModel):
     status: str = BlockStatus.PLANNED.value
     done_min: int | None = None
     missed_action: str | None = None
+    history: bool = False  # it has check-in history, so deleting it archives it instead
 
 
 class CheckInOut(BaseModel):
@@ -161,6 +162,7 @@ class ItemRef(BaseModel):
     sessions: int = 0  # how many blocks it has in every week
     editable: bool = False  # whether the edit dialog can change the item (not Custom)
     series_id: UUID | None = None  # set on an occurrence of a stored series
+    history: bool = False  # it has check-in history, so deleting it archives it instead
 
 
 class RepeatOut(BaseModel):
@@ -342,14 +344,22 @@ def add_item(request: ItemIn) -> WeekOut:
 
 @app.delete("/api/items/{item_id}")
 def delete_item(item_id: UUID, week: date) -> WeekOut:
-    """Delete an item and its blocks, re-plan the weeks they were in, and return the viewed `week`."""
+    """Delete an item and its blocks, re-plan the weeks they were in, and return the viewed `week`.
+
+    An item with check-in history is archived instead: its finished blocks stay
+    as history, its sessions ahead are removed and it leaves the week view.
+    """
     with database() as (conn, settings):
-        if store.get_item(conn, item_id) is None:
+        if store.get_item(conn, item_id) is None or store.is_archived(conn, item_id):
             raise HTTPException(status_code=404, detail=ITEM_GONE)
         moment = now()
-        weeks = weeks_of_blocks([b for b in store.list_blocks(conn) if b.item_id == item_id], settings.timezone)
+        blocks = store.list_blocks(conn)
+        weeks = weeks_of_blocks([b for b in blocks if b.item_id == item_id], settings.timezone)
         _skip_occurrence(conn, item_id)
-        store.delete_item(conn, item_id)
+        if item_id in _with_history(blocks):
+            store.archive_item(conn, item_id, moment)
+        else:
+            store.delete_item(conn, item_id)
         try:
             if weeks:
                 plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
@@ -578,6 +588,11 @@ def shortfall_message(short: Shortfall, settings: SolverSettings, moment: dateti
     else:
         left = f"only {', '.join(names[:-1])} and {names[-1]} are left"
     return f"{short.title} gets {short.gets} of {short.sessions} sessions {when}: {left}."
+
+
+def _with_history(blocks: list[Block]) -> set[UUID]:
+    """Items with check-in history: a block that was answered (done, partial, missed or unanswered)."""
+    return {b.item_id for b in blocks if b.status is not BlockStatus.PLANNED}
 
 
 def _check_in_out(block: Block, item: Item) -> CheckInOut:
@@ -1629,6 +1644,7 @@ def week_out(
     placed = {item_id: placed_min(items[item_id], every_block) for item_id in sessions}
     stored_series = {s.id: s for s in store.list_series(conn)}
     acks = store.shortfall_acks(conn)
+    history = _with_history(every_block)
     in_week = {items[b.item_id].series_id for b in blocks} | {i.series_id for i in items.values() if i.id in waiting}
     return WeekOut(
         week_start=week_start,
@@ -1653,6 +1669,7 @@ def week_out(
                 status=b.status.value,
                 done_min=b.actual_min if b.status in (BlockStatus.DONE, BlockStatus.PARTIAL) else None,
                 missed_action=None if b.missed_action is None else b.missed_action.value,
+                history=b.item_id in history,
             )
             for b in blocks
         ],
@@ -1671,6 +1688,7 @@ def week_out(
                 sessions=len(sessions.get(i.id, [])),
                 editable=editable(i),
                 series_id=_stored(i.series_id, stored_series),
+                history=i.id in history,
             )
             for i in items.values()
             if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting

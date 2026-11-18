@@ -22,6 +22,9 @@ Storage rules:
     - Items remember whether they were edited by hand (hand_edited), so a
       series edit leaves an occurrence changed on its own alone. Like source,
       it lives only in the database.
+    - Items with check-in history are archived instead of deleted (Milestone
+      7). list_items and list_blocks skip archived items and their blocks
+      unless asked for them, so the app never plans or shows them.
     - preset_params and constraint params are JSON. Values JSON has no type
       for (datetimes, dates, times, UUIDs, windows) are tagged, for example
       {"$type": "date", "value": "2026-11-16"}, so they load back exactly.
@@ -163,6 +166,11 @@ MIGRATIONS = [
         item_id TEXT PRIMARY KEY REFERENCES items (id) ON DELETE CASCADE,
         gets INTEGER NOT NULL
     );
+    """,
+    # 8: archived items (Milestone 7): deleting an item with check-in history
+    # archives it instead, keeping its finished blocks.
+    """
+    ALTER TABLE items ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
     """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -437,8 +445,48 @@ def item_source(conn: sqlite3.Connection, item_id: UUID) -> str | None:
     return row["source"] if row else None
 
 
-def list_items(conn: sqlite3.Connection) -> list[Item]:
-    return [_item(conn, row) for row in conn.execute("SELECT * FROM items ORDER BY rowid")]
+def list_items(conn: sqlite3.Connection, include_archived: bool = False) -> list[Item]:
+    """Every item, in the order added. Archived items only with include_archived."""
+    where = "" if include_archived else " WHERE archived = 0"
+    return [_item(conn, row) for row in conn.execute(f"SELECT * FROM items{where} ORDER BY rowid")]
+
+
+def archive_item(conn: sqlite3.Connection, item_id: UUID, moment: datetime) -> list[Block]:
+    """Archive an item and its subtasks, keeping their history. Returns the blocks removed.
+
+    Archived items leave the app: list_items and list_blocks skip them and
+    their blocks, so nothing plans or shows them. Their planned blocks that
+    haven't started are deleted, other items stop depending on them, and
+    constraints stop naming them (see _drop_deleted_targets).
+    """
+    ids = _with_subtasks(conn, item_id)
+    removed = [
+        b for b in list_blocks(conn) if b.item_id in ids and b.status is BlockStatus.PLANNED and b.start > moment
+    ]
+    marks = [(str(i),) for i in ids]
+    with conn:
+        conn.executemany("UPDATE items SET archived = 1 WHERE id = ?", marks)
+        conn.executemany("DELETE FROM item_deps WHERE depends_on = ? OR item_id = ?", [(m[0], m[0]) for m in marks])
+        conn.executemany("DELETE FROM blocks WHERE id = ?", [(str(b.id),) for b in removed])
+        _drop_deleted_targets(conn)
+    return removed
+
+
+def is_archived(conn: sqlite3.Connection, item_id: UUID) -> bool:
+    row = conn.execute("SELECT archived FROM items WHERE id = ?", (str(item_id),)).fetchone()
+    return bool(row and row["archived"])
+
+
+def _with_subtasks(conn: sqlite3.Connection, item_id: UUID) -> set[UUID]:
+    ids, frontier = {item_id}, [item_id]
+    while frontier:
+        rows = conn.execute("SELECT id FROM items WHERE parent_id = ?", (str(frontier.pop()),)).fetchall()
+        for row in rows:
+            child = UUID(row["id"])
+            if child not in ids:
+                ids.add(child)
+                frontier.append(child)
+    return ids
 
 
 def delete_item(conn: sqlite3.Connection, item_id: UUID) -> None:
@@ -450,7 +498,7 @@ def delete_item(conn: sqlite3.Connection, item_id: UUID) -> None:
 
 
 def _drop_deleted_targets(conn: sqlite3.Connection) -> None:
-    """Remove ids of items and series that no longer exist from every constraint's targets.
+    """Remove ids of items and series that no longer exist (or are archived) from every constraint's targets.
 
     A series counts as existing while it is stored or any item still points to
     it, since occurrences imported before series were stored point to series
@@ -460,7 +508,7 @@ def _drop_deleted_targets(conn: sqlite3.Connection) -> None:
     without this, deleting an item a constraint names would stop every week
     from planning.
     """
-    items = {row["id"] for row in conn.execute("SELECT id FROM items")}
+    items = {row["id"] for row in conn.execute("SELECT id FROM items WHERE archived = 0")}
     series = {row["id"] for row in conn.execute("SELECT id FROM series")}
     series |= {row["series_id"] for row in conn.execute("SELECT series_id FROM items WHERE series_id IS NOT NULL")}
     for row in conn.execute("SELECT id, params FROM constraints").fetchall():
@@ -651,14 +699,24 @@ def _write_blocks(conn: sqlite3.Connection, blocks: list[Block]) -> None:
 
 
 def list_blocks(
-    conn: sqlite3.Connection, start: datetime | None = None, end: datetime | None = None
+    conn: sqlite3.Connection,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    include_archived: bool = False,
 ) -> list[Block]:
-    """Blocks by start time. With `start` and `end`, only blocks that overlap [start, end)."""
-    query, args = 'SELECT * FROM blocks', []
+    """Blocks by start time. With `start` and `end`, only blocks that overlap [start, end).
+
+    Blocks of archived items only with include_archived.
+    """
+    query = "SELECT blocks.* FROM blocks JOIN items ON items.id = blocks.item_id"
+    conditions: list[str] = [] if include_archived else ["items.archived = 0"]
+    args: list[str | None] = []
     if start is not None and end is not None:
-        query += ' WHERE start < ? AND "end" > ?'
+        conditions.append('blocks.start < ? AND blocks."end" > ?')
         args = [_moment(end), _moment(start)]
-    rows = conn.execute(query + " ORDER BY start, id", args)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    rows = conn.execute(query + " ORDER BY blocks.start, blocks.id", args)
     return [
         Block(
             id=UUID(row["id"]),

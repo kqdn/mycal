@@ -368,3 +368,33 @@ def test_a_missed_session_with_no_day_left_asks_first(client: TestClient, clock:
 
     shown = answered(client, monday["id"], "no", accept_shortfall=True)
     assert shown["shortfalls"] == []
+
+
+# Archiving
+
+
+def test_deleting_an_item_with_history_archives_it(client: TestClient, clock: Clock) -> None:
+    work = essay()
+    first, *ahead = blocks_of(client, work)
+    clock.moment = datetime.fromisoformat(first["end"])
+    shown = answered(client, first["id"], "yes")
+    assert all(b["history"] for b in shown["blocks"] if b["item_id"] == str(work.id))
+
+    response = client.delete(f"/api/items/{work.id}?week={WEEK}")
+
+    assert response.status_code == 200, response.text
+    assert all(b["item_id"] != str(work.id) for b in response.json()["blocks"])
+    conn = store.connect(store.db_path())
+    assert store.is_archived(conn, work.id) and store.get_item(conn, work.id) is not None
+    kept = [b for b in store.list_blocks(conn, include_archived=True) if b.item_id == work.id]
+    assert [str(b.id) for b in kept] == [first["id"]]  # the done session stays, the ones ahead are gone
+    assert client.delete(f"/api/items/{work.id}?week={WEEK}").status_code == 404
+
+
+def test_deleting_an_item_without_history_deletes_it(client: TestClient, clock: Clock) -> None:
+    work = essay()
+    week(client)
+
+    client.delete(f"/api/items/{work.id}?week={WEEK}")
+
+    assert store.get_item(store.connect(store.db_path()), work.id) is None

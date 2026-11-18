@@ -82,7 +82,8 @@ def test_a_week_is_planned_and_returned_in_utc(client: TestClient) -> None:
     assert blocks["Chemistry lab"]["fixed"] is False
     assert week["frames"][0] == {"start": "2026-11-16T17:00:00Z", "end": "2026-11-17T02:00:00Z"}  # Mon 9 to 6
     assert week["unscheduled"] == [
-        {"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0, "editable": False, "series_id": None}
+        {"id": week["unscheduled"][0]["id"], "title": "Email advisor", "estimate_min": 15, "reason": None, "sessions": 0, "editable": False, "series_id": None,
+         "history": False}
     ]
     stored = {s.title: s.id for s in store.list_series(store.connect(store.db_path()))}
     assert lecture["series_id"] == str(stored["Algorithms lecture"])

@@ -409,3 +409,27 @@ def test_a_rule_that_also_targets_a_series_keeps_it_when_its_item_goes(conn: sql
 
     [left] = store.list_constraints(conn)
     assert left.params == {"item_ids": [], "series_ids": [series_id]}
+
+
+def test_archiving_hides_an_item_and_frees_what_named_it(conn: sqlite3.Connection) -> None:
+    owner, other, sub = item(), item(), item()
+    sub.parent_id = owner.id
+    other.depends_on = [owner.id]
+    for i in (owner, sub, other):
+        store.put_item(conn, i)
+    rule = Constraint(kind="rest_between", params={"min_gap_days": 1, "item_ids": [owner.id, other.id]})
+    store.put_constraint(conn, rule)
+    hour = timedelta(hours=1)
+    done = Block(owner.id, MON_9AM, MON_9AM + hour, status=BlockStatus.DONE, actual_min=60)
+    ahead = Block(owner.id, MON_9AM + 48 * hour, MON_9AM + 49 * hour)
+    store.put_blocks(conn, [done, ahead])
+
+    removed = store.archive_item(conn, owner.id, MON_9AM + 2 * hour)
+
+    assert removed == [ahead]
+    assert [i.id for i in store.list_items(conn)] == [other.id]  # its subtask is archived too
+    assert {i.id for i in store.list_items(conn, include_archived=True)} == {owner.id, sub.id, other.id}
+    assert store.list_blocks(conn) == [] and store.list_blocks(conn, include_archived=True) == [done]
+    assert store.get_item(conn, other.id).depends_on == []  # type: ignore[union-attr]
+    [kept] = store.list_constraints(conn)
+    assert kept.params["item_ids"] == [other.id]
