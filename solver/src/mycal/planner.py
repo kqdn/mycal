@@ -45,6 +45,7 @@ How blocks are passed to solve() for a span:
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
@@ -54,7 +55,7 @@ from mycal import store
 from mycal.model import Block, BlockStatus, FlexPreset, Item, Window, WorkFrame
 from mycal.presets import compile_constraint, compile_windows, every_day_session
 from mycal.recurrence import expand_series
-from mycal.problem import ceil_slot, covered_min, floor_slot, slot_start
+from mycal.problem import ceil_slot, covered_min, floor_slot, session_min, slot_start
 from mycal.settings import SolverSettings
 from mycal.solve import SolveResult, solve
 from mycal.windows import merge_windows, work_frame_windows
@@ -254,32 +255,127 @@ def effective_item(
     without a session is simply missed, and no work moves to another day or
     week. max_chunk_min and one_block_per_day are set here too, so k sessions
     over k open days put exactly one on each.
+
+    An "N times a week" item (any of these days, one block per day) that has
+    more sessions left than days left in its week gets one session per day
+    left (see Shortfall), instead of making its week unplannable.
     """
     slot = settings.slot_min
     session = every_day_session(item.preset_params) if item.flex_preset is FlexPreset.DAYS else None
     if session is None:
-        return replace(
-            item,
-            estimate_min=None if item.estimate_min is None else planned_up(item.estimate_min, slot),
-            max_chunk_min=None if item.max_chunk_min is None else planned_down(item.max_chunk_min, slot),
-        )
+        rounded = _on_grid(item, slot)
+        shortfall = _times_a_week_shortfall(rounded, blocks, frames, settings, now)
+        if shortfall is None:
+            return rounded
+        return replace(rounded, estimate_min=shortfall.covered_min + shortfall.placeable_min)
     session = planned_up(session, slot)
 
-    zone = ZoneInfo(settings.timezone)
-    open_from = open_from_moment(now, slot)
-    kept = [_as_kept(b) for b in blocks if b.item_id == item.id and not _is_current_plan(b, open_from)]
+    kept = _kept_of(item, blocks, now, slot)
     covered = [(b, covered_min(b)) for b in kept]
-    kept_days = {b.start.astimezone(zone).date() for b, minutes in covered if minutes > 0}
+    kept_days = _days_of((b for b, minutes in covered if minutes > 0), settings.timezone)
+    open_days = _open_days(item, frames, settings, now, session) - kept_days
+    estimate = sum(minutes for _, minutes in covered) + session * len(open_days)
+    return replace(item, estimate_min=estimate, max_chunk_min=session, one_block_per_day=True)
 
+
+@dataclass(frozen=True, slots=True)
+class Shortfall:
+    """An "N times a week" item with fewer days left in its week than sessions to place.
+
+    It is planned with one session per day left (placeable_min) instead of
+    making the week unplannable. `sessions` is how many it would have had in
+    all, `gets` how many it has now: those already held plus one per day left.
+    """
+
+    item_id: UUID
+    title: str
+    sessions: int
+    gets: int
+    days_left: tuple[date, ...]
+    covered_min: int
+    placeable_min: int
+
+
+def shortfalls(
+    items: list[Item], blocks: list[Block], frames: list[WorkFrame], settings: SolverSettings, now: datetime
+) -> list[Shortfall]:
+    """The "N times a week" items that get fewer sessions than they need, by title."""
+    found = []
+    for item in items:
+        if item.flex_preset is FlexPreset.DAYS and every_day_session(item.preset_params) is not None:
+            continue  # every-day items already count only the days left
+        shortfall = _times_a_week_shortfall(_on_grid(item, settings.slot_min), blocks, frames, settings, now)
+        if shortfall is not None:
+            found.append(shortfall)
+    return sorted(found, key=lambda s: (s.title, str(s.item_id)))
+
+
+def _on_grid(item: Item, slot_min: int) -> Item:
+    """The item with its stored lengths rounded to the slot grid (see effective_item)."""
+    return replace(
+        item,
+        estimate_min=None if item.estimate_min is None else planned_up(item.estimate_min, slot_min),
+        max_chunk_min=None if item.max_chunk_min is None else planned_down(item.max_chunk_min, slot_min),
+    )
+
+
+def _times_a_week_shortfall(
+    item: Item, blocks: list[Block], frames: list[WorkFrame], settings: SolverSettings, now: datetime
+) -> Shortfall | None:
+    """For an "N times a week" item (lengths already on the slot grid): its shortfall, or None if it fits.
+
+    The sessions still to place need one day each, and a day is left when it
+    is one of the item's days, has room for a whole session after now and
+    holds no session of the item yet (the solver's one-block-per-day rule).
+    """
+    if item.flex_preset is not FlexPreset.DAYS or not item.one_block_per_day:
+        return None
+    if item.estimate_min is None or item.max_chunk_min is None:
+        return None
+    session = item.max_chunk_min
+    kept = _kept_of(item, blocks, now, settings.slot_min)
+    covered = sum(covered_min(b) for b in kept)
+    remaining = item.estimate_min - covered
+    if remaining <= 0:
+        return None
+    held_days = _days_of((b for b in kept if session_min(b) > 0), settings.timezone)
+    days_left = _open_days(item, frames, settings, now, session) - held_days
+    if -(-remaining // session) <= len(days_left):
+        return None
+    held = sum(1 for b in kept if session_min(b) > 0)
+    return Shortfall(
+        item_id=item.id,
+        title=item.title,
+        sessions=-(-item.estimate_min // session),
+        gets=held + len(days_left),
+        days_left=tuple(sorted(days_left)),
+        covered_min=covered,
+        placeable_min=session * len(days_left),
+    )
+
+
+def _kept_of(item: Item, blocks: list[Block], now: datetime, slot_min: int) -> list[Block]:
+    """The item's blocks the planner keeps as they are (see _solve_span), as it keeps them."""
+    open_from = open_from_moment(now, slot_min)
+    return [_as_kept(b) for b in blocks if b.item_id == item.id and not _is_current_plan(b, open_from)]
+
+
+def _open_days(item: Item, frames: list[WorkFrame], settings: SolverSettings, now: datetime, session: int) -> set[date]:
+    """A days item's local days in its week with room for one whole session after now."""
+    slot = settings.slot_min
+    zone = ZoneInfo(settings.timezone)
     week = week_horizon(item.preset_params["week"], settings.timezone)
-    windows = _windows(item, frames, settings.timezone, week, open_from)
-    open_days = {
+    windows = _windows(item, frames, settings.timezone, week, open_from_moment(now, slot))
+    return {
         w.start.astimezone(zone).date()
         for w in windows
         if floor_slot(w.end, slot) - ceil_slot(w.start, slot) >= session // slot
-    } - kept_days
-    estimate = sum(minutes for _, minutes in covered) + session * len(open_days)
-    return replace(item, estimate_min=estimate, max_chunk_min=session, one_block_per_day=True)
+    }
+
+
+def _days_of(blocks: Iterable[Block], timezone: str) -> set[date]:
+    zone = ZoneInfo(timezone)
+    return {b.start.astimezone(zone).date() for b in blocks}
 
 
 def planned_up(minutes: int, slot_min: int) -> int:
