@@ -136,6 +136,7 @@ export interface SeriesFormOut {
   repeat_weekdays: number[]
   start_date: DateString
   end_date: DateString | null
+  skipped_dates?: DateString[] // from today on: dates whose occurrence was deleted
 }
 
 /** GET /api/items/{id}: a stored item in the dialog's terms. Lengths are as typed; times are "HH:MM:SS". */

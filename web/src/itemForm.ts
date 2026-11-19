@@ -51,6 +51,8 @@ export interface ItemForm {
   repeatDays: number[] // a weekly series' days, 0 = Monday (not used by days items)
   startDate: DateString
   endDate: DateString // '' for no end
+  // Editing a series: its skipped dates from today on (null otherwise). Taking one out brings it back.
+  skippedDates: DateString[] | null
 }
 
 export type Field =
@@ -202,6 +204,7 @@ export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
     repeatDays: [],
     startDate: day,
     endDate: '',
+    skippedDates: null,
   }
 }
 

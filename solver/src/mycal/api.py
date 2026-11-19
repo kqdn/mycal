@@ -721,6 +721,9 @@ class SeriesIn(ItemIn):
     repeat_weekdays: list[int] = []
     start_date: date
     end_date: date | None = None
+    # Editing: the skipped dates from today on to keep. Leaving one out brings it back; a
+    # date can't be added here (deleting that date's occurrence skips it). None keeps them all.
+    skipped_dates: list[date] | None = None
 
 
 class SeriesFormOut(BaseModel):
@@ -745,6 +748,7 @@ class SeriesFormOut(BaseModel):
     repeat_weekdays: list[int]
     start_date: date
     end_date: date | None = None
+    skipped_dates: list[date] = []  # dates from today on that were skipped (an occurrence deleted)
 
 
 SERIES_GONE = "That repeating item no longer exists."
@@ -834,7 +838,9 @@ def get_series(series_id: UUID) -> SeriesFormOut:
         series = store.get_series(conn, series_id)
         if series is None:
             raise HTTPException(status_code=404, detail=SERIES_GONE)
-        return from_series(series, store.series_source(conn, series_id))
+        form = from_series(series, store.series_source(conn, series_id))
+        today = now().astimezone(ZoneInfo(settings.timezone)).date()
+        return form.model_copy(update={"skipped_dates": [d for d in series.skipped_dates if d >= today]})
 
 
 @app.put("/api/series/{series_id}")
@@ -851,7 +857,11 @@ def update_series(series_id: UUID, request: SeriesIn, week: date) -> WeekOut:
             new = to_series(request, settings, moment, check_past=request.start_date != old.start_date)
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        new = replace(new, id=old.id, skipped_dates=old.skipped_dates)
+        try:
+            skipped = _kept_skips(old, request.skipped_dates, moment.astimezone(ZoneInfo(settings.timezone)).date())
+        except Invalid as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        new = replace(new, id=old.id, skipped_dates=skipped)
 
         def change(trial: sqlite3.Connection) -> None:
             store.put_series(trial, new)
@@ -860,6 +870,22 @@ def update_series(series_id: UUID, request: SeriesIn, week: date) -> WeekOut:
                     store.delete_item(trial, occurrence.id)  # the planner creates it again from the new template
 
         return _change_everywhere(conn, settings, change, week, repr(new.title))
+
+
+NOT_SKIPPED = "Only a skipped date can be brought back here. To skip a date, delete it from its week."
+
+
+def _kept_skips(old: Series, requested: list[date] | None, today: date) -> list[date]:
+    """The series' skipped dates after an edit: past ones stay, and of those from today on, the ones requested.
+
+    A date left out of `requested` comes back (the planner creates its occurrence again).
+    Raises Invalid for a requested date that wasn't skipped.
+    """
+    if requested is None:
+        return old.skipped_dates
+    if set(requested) - set(old.skipped_dates):
+        raise Invalid(NOT_SKIPPED)
+    return sorted({d for d in old.skipped_dates if d < today} | set(requested))
 
 
 @app.delete("/api/series/{series_id}")

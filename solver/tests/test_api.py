@@ -1131,7 +1131,7 @@ def test_a_series_round_trips_through_the_edit_form(client: TestClient) -> None:
         "end_time": "09:00:00", "weekdays": None, "deadline_time": None, "estimate_min": None,
         "max_chunk_min": None, "one_block_per_day": False, "session_min": None, "freq": "weekly",
         "interval": 1, "repeat_weekdays": [1, 4], "start_date": "2026-11-16", "end_date": "2026-12-18",
-        "checkable": False, "on_miss": "skip",  # the defaults for an exact-time item
+        "checkable": False, "on_miss": "skip", "skipped_dates": [],  # the defaults for an exact-time item
     }
 
 
@@ -1228,6 +1228,26 @@ def test_deleting_one_occurrence_skips_its_date(client: TestClient, db: Path) ->
     store.clear_plans(store.connect(db))  # plan again from scratch: it must not come back
     assert local_starts(get(client), "Office hours") == ["Fri 08:00"]
     assert local_starts(get(client, "2026-11-23"), "Office hours") == ["Tue 08:00", "Fri 08:00"]
+
+
+def test_a_skipped_date_shows_in_the_series_and_can_be_brought_back(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    sid = series_id(week, "Office hours")
+    tuesday = sorted(blocks_titled(week, "Office hours"), key=lambda b: b["start"])[0]
+    client.delete(f"/api/items/{tuesday['item_id']}", params={"week": WEEK})
+    assert client.get(f"/api/series/{sid}").json()["skipped_dates"] == ["2026-11-17"]
+
+    edit = {"week_start": WEEK, **OFFICE_HOURS}
+    refused = client.put(f"/api/series/{sid}", params={"week": WEEK}, json=edit | {"skipped_dates": ["2026-11-17", "2026-11-24"]})
+    assert refused.status_code == 422 and refused.json()["detail"].startswith("Only a skipped date can be brought back")
+    kept = client.put(f"/api/series/{sid}", params={"week": WEEK}, json=edit)  # left out: skips stay as they are
+    assert local_starts(kept.json(), "Office hours") == ["Fri 08:00"]
+
+    back = client.put(f"/api/series/{sid}", params={"week": WEEK}, json=edit | {"skipped_dates": []})
+
+    assert back.status_code == 200, back.text
+    assert local_starts(back.json(), "Office hours") == ["Tue 08:00", "Fri 08:00"]
+    assert client.get(f"/api/series/{sid}").json()["skipped_dates"] == []
 
 
 def test_deleting_the_series_keeps_what_already_happened(client: TestClient, db: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -942,6 +942,26 @@ html:has(.item-dialog[open]) .week-body {
   gap: 8px;
 }
 
+/* Skipped dates of a series being edited, each with "Bring back" */
+
+.skipped-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.skipped-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 15px;
+  color: var(--text);
+}
+
 .interval-input {
   width: 72px;
 }
