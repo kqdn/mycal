@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from test_solve import LA, assert_valid, at, task, window
 
-from mycal import Block, BlockStatus, Constraint, Item, SolveResult, SolverSettings, Window, WorkFrame, solve
+from mycal import Block, BlockStatus, Constraint, Item, OnMiss, SolveResult, SolverSettings, Window, WorkFrame, solve
 from mycal.cp_sat import build_model, tier_weights
 from mycal.problem import build_problem, floor_slot
 from ortools.sat.python import cp_model
@@ -84,6 +84,18 @@ def test_stability_beats_balance() -> None:
     current = Block(essay.id, at(16, 10), at(16, 11))
     result = run([lab, essay], [current])
     assert current in result.blocks
+
+
+def test_two_kept_blocks_on_a_day_still_leave_room_for_more_that_day() -> None:
+    # A partly done session and one already started, both today: the rest has to go today too.
+    catch_up = task("Catch up", 180, [window(16, 9, 13)])
+    partial = Block(catch_up.id, at(16, 9), at(16, 10), status=BlockStatus.PARTIAL, actual_min=45, missed_action=OnMiss.RESCHEDULE)
+    started = Block(catch_up.id, at(16, 10), at(16, 11), locked=True)
+
+    result = run([catch_up], [partial, started])
+
+    [new] = [b for b in result.blocks if b.id not in (partial.id, started.id)]
+    assert (new.start, new.end) == (at(16, 11), at(16, 12, 15))
 
 
 def test_kept_blocks_count_toward_a_days_load() -> None:

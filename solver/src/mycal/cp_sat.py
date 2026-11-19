@@ -243,7 +243,10 @@ def _add_score(
         model.add(starts[i] == chunk.previous_start).only_enforce_if(~is_moved)
         moved.append(is_moved)
 
-    # 2. Spread: per item and day, blocks beyond the first (kept blocks count too).
+    # 2. Spread: per item and day, new blocks beyond the first. A day that already
+    #    has a kept block of the item makes every new block there an extra; the
+    #    kept blocks' own extras are a constant, so they're left out. That keeps
+    #    `extra` within 0..len(on_day), which the tier weights assume.
     kept_count: dict[tuple[UUID, date], int] = defaultdict(int)
     for block in problem.pinned:
         kept_count[(block.item_id, block.start.astimezone(zone).date())] += 1
@@ -253,11 +256,11 @@ def _add_score(
             continue  # already at most one per day
         for day in {d for i in mine for d in day_vars[i]}:
             on_day = [day_vars[i][day] for i in mine if day in day_vars[i]]
-            existing = kept_count[(item_id, day)]
-            if len(on_day) + existing < 2:
+            free = 0 if kept_count[(item_id, day)] else 1  # new blocks allowed before one is extra
+            if len(on_day) <= free:
                 continue
             extra = model.new_int_var(0, len(on_day), f"extra_{item_id}_{day}")
-            model.add(extra >= sum(on_day) + existing - 1)
+            model.add(extra >= sum(on_day) - free)
             extras.append(extra)
 
     # 3. Preferences: weighted soft constraints.
