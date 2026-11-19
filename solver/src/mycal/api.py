@@ -358,9 +358,11 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
 
     An item with check-in history is archived instead: its finished blocks stay
     as history, its sessions ahead are removed and it leaves the week view.
+    Deleting a catch-up item marks its missed block as skipped.
     """
     with database() as (conn, settings):
-        if store.get_item(conn, item_id) is None or store.is_archived(conn, item_id):
+        item = store.get_item(conn, item_id)
+        if item is None or store.is_archived(conn, item_id):
             raise HTTPException(status_code=404, detail=ITEM_GONE)
         moment = now()
         blocks = store.list_blocks(conn)
@@ -369,6 +371,7 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
         if item_id in _with_history(blocks):
             store.archive_item(conn, item_id, moment)
         else:
+            checkins.skip_deleted_catch_up(conn, item)
             store.delete_item(conn, item_id)
         try:
             if weeks:

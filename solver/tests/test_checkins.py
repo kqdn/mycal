@@ -273,6 +273,21 @@ def test_changing_a_catch_up_answer_drops_the_catch_up(client: TestClient, clock
     assert [i for i in store.list_items(store.connect(store.db_path())) if i.catch_up_of is not None] == []
 
 
+def test_deleting_a_catch_up_item_marks_the_missed_block_skipped(client: TestClient, clock: Clock) -> None:
+    lecture()
+    week(client)
+    clock.moment = local(16, 12)
+    [asking] = pending(client)
+    answered(client, asking["block_id"], "no")
+    [catch_up] = [i for i in store.list_items(store.connect(store.db_path())) if i.catch_up_of is not None]
+
+    response = client.delete(f"/api/items/{catch_up.id}?week={WEEK}")
+
+    assert response.status_code == 200, response.text
+    [missed] = [b for b in response.json()["blocks"] if b["id"] == asking["block_id"]]
+    assert (missed["status"], missed["missed_action"]) == ("missed", "skip")
+
+
 # Unanswered
 
 

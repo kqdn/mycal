@@ -185,6 +185,17 @@ def _undo(conn: sqlite3.Connection, block: Block, moment: datetime) -> list[UUID
     return [i.id for i in made]
 
 
+def skip_deleted_catch_up(conn: sqlite3.Connection, item: Item) -> None:
+    """A deleted catch-up item means the missed time is skipped, so its missed block says so.
+
+    Nothing in the plan changes: catch-up and skip both leave the missed minutes covered.
+    """
+    if item.catch_up_of is None:
+        return
+    missed = [b for b in store.list_blocks(conn) if b.id == item.catch_up_of and b.missed_action is OnMiss.CATCH_UP]
+    store.put_blocks(conn, [replace(b, missed_action=OnMiss.SKIP) for b in missed])
+
+
 def _length(block: Block) -> int:
     return (block.end - block.start) // timedelta(minutes=1)
 
