@@ -1130,6 +1130,22 @@ kbd {
   justify-content: center;
 }
 
+/* Check in on its own full-width row; Edit and Delete under it, half each */
+.popover-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.item-popover .popover-wide {
+  width: 100%;
+}
+
+.item-popover .popover-halves {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
 .popover-confirm {
   display: flex;
   flex-direction: column;

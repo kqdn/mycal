@@ -124,23 +124,26 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
 
       {step === 'actions' && !deleted && (
         <>
-          <div className="popover-actions">
+          {/* Check in gets its own full-width row; Edit and Delete share the row under it, half each. */}
+          <div className="popover-buttons">
             {checkIn && (
-              <button type="button" className="secondary-button" disabled={opening} onClick={() => onCheckIn(checkIn)}>
+              <button type="button" className="secondary-button popover-wide" disabled={opening} onClick={() => onCheckIn(checkIn)}>
                 {checkIn.status === 'planned' ? 'Check in' : 'Change answer'}
               </button>
             )}
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={!editable || opening}
-              onClick={() => (repeat ? setStep('pickEdit') : onEdit('one'))}
-            >
-              {opening ? 'Opening...' : 'Edit'}
-            </button>
-            <button type="button" className="secondary-button" disabled={opening} onClick={() => setStep('confirm')}>
-              Delete item
-            </button>
+            <div className="popover-actions popover-halves">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!editable || opening}
+                onClick={() => (repeat ? setStep('pickEdit') : onEdit('one'))}
+              >
+                {opening ? 'Opening...' : 'Edit'}
+              </button>
+              <button type="button" className="secondary-button" disabled={opening} onClick={() => setStep('confirm')}>
+                Delete item
+              </button>
+            </div>
           </div>
           {!editable && <p className="hint">Change Custom items in their week file.</p>}
           {openError && <p className="field-error">Couldn't open it: {openError}</p>}
