@@ -288,6 +288,16 @@ def test_an_unanswered_check_in_counts_as_no(client: TestClient, clock: Clock) -
     assert sum(minutes(b) for b in later) == 240
 
 
+def test_a_week_viewed_first_after_the_grace_counts_its_old_check_ins_as_no(client: TestClient, clock: Clock) -> None:
+    lecture()
+    clock.moment = local(16, 11) + CHECK_IN_GRACE  # the week was never viewed while the lecture was on
+
+    talk = [b for b in week(client)["blocks"] if b["title"] == "Lecture"]
+
+    assert [(b["status"], b["missed_action"]) for b in talk] == [("unanswered", "catch_up")]
+    assert any(b["title"] == "Catch up: Lecture" for b in week(client)["blocks"])
+
+
 def test_an_unanswered_ask_keeps_waiting_and_can_still_be_answered(client: TestClient, clock: Clock) -> None:
     work = essay(OnMiss.ASK)
     first = blocks_of(client, work)[0]

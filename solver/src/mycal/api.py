@@ -237,6 +237,9 @@ def get_week(week_start: date) -> WeekOut:
         except PlannerTimeout as error:
             log.warning("%s: %s", week_start, error)
             raise HTTPException(status_code=503, detail=VIEW_TIMED_OUT) from error
+        # Planning a week for the first time can place blocks that ended long ago (a past lecture).
+        if _expire_check_ins(conn, settings, moment):
+            feasible = _status_or_stored(conn, settings, week_start, moment)
         return week_out(conn, settings, week_start, feasible, moment)
 
 
@@ -480,16 +483,20 @@ def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
         return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
 
 
-def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> None:
-    """Count check-ins left unanswered too long as No. If their policies can't fit, they wait for a choice instead."""
+def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> bool:
+    """Count check-ins left unanswered too long as No. If their policies can't fit, they wait for a choice instead.
+
+    Returns whether any expired.
+    """
     resolutions = checkins.expire_all(conn, settings, moment)
     if not resolutions:
-        return
+        return False
     try:
         _save_check_ins(conn, settings, resolutions, moment, "unanswered check-ins")
     except HTTPException:
         checkins.apply(conn, [checkins.waiting(r) for r in resolutions])
     log.info("%d check-in(s) went unanswered", len(resolutions))
+    return True
 
 
 def _save_check_ins(
