@@ -78,6 +78,14 @@ Blocks are positioned absolutely in their day column, inset 12px from the column
 
 Each block also gets an accessible name with the full details, for example `aria-label="Call home, Thu 6:00 to 6:30pm"`.
 
+### Click to add (between Milestones 7 and 8)
+
+- **Click:** a click on an empty part of a day column (anything but a block, including work-frame shading and hour lines) opens the New item dialog on Exact time for that day, from the start of the slot under the click (the slot size setting) to an hour later, or to the start of the next block that day when that comes sooner, ending at 11:59pm at the latest. Everything else starts as in an empty New item dialog.
+- **Hover:** over a slot that can take a click, the cursor is a pointer and a dashed outline shows the time it would add (the same length as the click): `left: 12px; right: 4px` like blocks, 1px dashed `--accent-tint-border`, radius `--radius-block`, no fill, with its start time ("3:15pm") in 12px `--text-muted` at the top left. Too short for that (a 15-minute outline), the time is 11px and centered with no top padding, as a 15-minute block shows its title. It never takes clicks itself.
+- **Past slots:** a slot that has begun takes no click and shows no outline, since an item can't be added there.
+- **Open popover:** a click that only closes an open block popover doesn't also open the dialog.
+- Only a click counts, so Milestone 9's dragging can share the columns.
+
 ### Legend
 
 Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver", "Done", "Missed", then "Work hours" (an `--surface` swatch with a 1px `--border`, for the white time inside work frames). Add "Locked by you" when that exists.

@@ -337,6 +337,33 @@ button.miss-tile:hover {
 
 /* Now line: today only */
 
+/* Click to add: the hour a click on an empty slot would add, while the mouse is over it */
+.day-column.can-add {
+  cursor: pointer;
+}
+
+.day-column .add-ghost {
+  position: absolute;
+  left: 12px; /* lined up with blocks */
+  right: 4px;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  border: 1px dashed var(--accent-tint-border);
+  border-radius: var(--radius-block);
+  color: var(--text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* Too short for 12px with padding: 11px, centered, as a 15-minute block's title */
+.day-column .add-ghost.title-only {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 11px;
+}
+
 .now-line {
   position: absolute;
   left: 0;

@@ -74,6 +74,18 @@ export function minutesToPx(minutes: number): number {
   return (minutes * HOUR_HEIGHT) / 60
 }
 
+/** The start of the slot under a point `offsetPx` below a day column's top, in minutes after midnight. */
+export function slotAt(offsetPx: number, slotMin: number): number {
+  const minutes = (offsetPx * 60) / HOUR_HEIGHT
+  const slot = Math.floor(minutes / slotMin) * slotMin
+  return Math.min(Math.max(slot, 0), 24 * 60 - slotMin)
+}
+
+/** Whether a slot starting at a local date and minute has already begun, so nothing can be added there. */
+export function slotHasBegun(date: DateString, minutes: number, now: { date: DateString; minutes: number }): boolean {
+  return date < now.date || (date === now.date && minutes < now.minutes)
+}
+
 export type TextMode = 'two-line' | 'one-line' | 'title-only'
 
 /**

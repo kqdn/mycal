@@ -1,17 +1,42 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import type { Block, Week } from './api'
 import { awaitsCheckIn, blockKind } from './checkIn'
-import { initialScrollMinute, minutesToPx, pieces, textMode, weekDates, type Piece } from './layout'
-import { hourLabel, range12, time12, toLocal, weekdayShort } from './time'
+import { clickedLength } from './itemForm'
+import { initialScrollMinute, minutesToPx, pieces, slotAt, slotHasBegun, textMode, weekDates, type Piece } from './layout'
+import { hourLabel, range12, time12, toLocal, weekdayShort, type DateString } from './time'
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
 
 /** A read-only week, styled per web/DESIGN.md: 7 local days, 24 hours, work frames as paper. */
-export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, opener: HTMLElement) => void }) {
-  const { week_start: weekStart, timezone } = week
+interface WeekGridProps {
+  week: Week
+  onOpen: (block: Block, opener: HTMLElement) => void
+  onAdd: (date: DateString, minutes: number, lengthMin: number) => void // a click on an empty slot that hasn't begun
+}
+
+export function WeekGrid({ week, onOpen, onAdd }: WeekGridProps) {
+  const { week_start: weekStart, timezone, slot_min: slotMin } = week
   const scroller = useRef<HTMLDivElement>(null)
   const dates = weekDates(weekStart)
   const now = useNow(timezone)
+  // The empty slot under the mouse, for the outline of what a click would add.
+  const [hover, setHover] = useState<{ date: DateString; minutes: number } | null>(null)
+  // A click that starts while a popover is open only closes it (the browser does that on release).
+  const closingPopover = useRef(false)
+
+  /** The slot under the pointer in a day column, or null over a block or a slot that has begun. */
+  function slotUnder(event: MouseEvent<HTMLDivElement>, date: DateString): number | null {
+    if ((event.target as HTMLElement).closest('.block')) return null
+    const offset = event.clientY - event.currentTarget.getBoundingClientRect().top
+    const minutes = slotAt(offset, slotMin)
+    return slotHasBegun(date, minutes, now) ? null : minutes
+  }
+
+  /** How long a click at a slot makes its item: an hour, or up to the next block that day. */
+  function lengthAt(day: number, minutes: number): number {
+    const later = blocks.filter(({ piece }) => piece.day === day && piece.startMin > minutes).map(({ piece }) => piece.startMin)
+    return clickedLength(minutes, later.length > 0 ? Math.min(...later) : null)
+  }
 
   useLayoutEffect(() => {
     if (scroller.current) scroller.current.scrollTop = minutesToPx(initialScrollMinute(week))
@@ -52,7 +77,23 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
               ))}
             </div>
             {dates.map((date, day) => (
-              <div key={date} className="day-column">
+              <div
+                key={date}
+                className={hover?.date === date ? 'day-column can-add' : 'day-column'}
+                onMouseMove={(event) => {
+                  const minutes = slotUnder(event, date)
+                  setHover(minutes === null ? null : { date, minutes })
+                }}
+                onMouseLeave={() => setHover(null)}
+                onPointerDown={() => {
+                  closingPopover.current = document.querySelector(':popover-open') !== null
+                }}
+                onClick={(event) => {
+                  const minutes = slotUnder(event, date)
+                  if (minutes !== null && !closingPopover.current) onAdd(date, minutes, lengthAt(day, minutes))
+                  closingPopover.current = false
+                }}
+              >
                 {frames
                   .filter((p) => p.day === day)
                   .map((p) => (
@@ -73,6 +114,7 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
                       onOpen={onOpen}
                     />
                   ))}
+                {hover?.date === date && <AddGhost minutes={hover.minutes} lengthMin={lengthAt(day, hover.minutes)} />}
                 {date === now.date && (
                   <div className="now-line" style={{ top: minutesToPx(now.minutes) }} aria-hidden="true" />
                 )}
@@ -105,6 +147,20 @@ export function WeekGrid({ week, onOpen }: { week: Week; onOpen: (block: Block, 
         </span>
       </div>
     </section>
+  )
+}
+
+/** The outline of what a click would add. Short ones fit their time like a 15-minute block fits its title. */
+function AddGhost({ minutes, lengthMin }: { minutes: number; lengthMin: number }) {
+  const height = minutesToPx(lengthMin)
+  return (
+    <div
+      className={`add-ghost ${textMode(height)}`}
+      style={{ top: minutesToPx(minutes), height }}
+      aria-hidden="true"
+    >
+      {time12(minutes)}
+    </div>
   )
 }
 

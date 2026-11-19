@@ -205,6 +205,42 @@ export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
   }
 }
 
+/** How long an item made by clicking an empty slot lasts at first, when nothing comes sooner. */
+export const CLICKED_LENGTH_MIN = 60
+
+/**
+ * How long a click on an empty slot at `minutes` makes its item: an hour, or up to the
+ * next block that day (`nextStart`, minutes after midnight) when that comes sooner.
+ */
+export function clickedLength(minutes: number, nextStart: number | null): number {
+  const room = nextStart === null || nextStart <= minutes ? CLICKED_LENGTH_MIN : nextStart - minutes
+  return Math.min(CLICKED_LENGTH_MIN, room, 24 * 60 - minutes)
+}
+
+/**
+ * The New item form for a click on an empty slot: an Exact time item on that day,
+ * from the slot for `lengthMin`, ending at 11:59pm at the latest.
+ */
+export function formAt(
+  date: DateString,
+  minutes: number,
+  lengthMin: number,
+  weekStart: DateString,
+  today: DateString,
+): ItemForm {
+  const clock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+  const end = Math.min(minutes + lengthMin, 24 * 60 - 1)
+  return {
+    ...emptyForm(weekStart, today),
+    preset: 'exact',
+    day: date,
+    dueDate: date,
+    startDate: date,
+    startTime: clock(minutes),
+    endTime: clock(end),
+  }
+}
+
 /** Minutes from "45m", "2h", "1h 30m", "1h30m" or a plain number of minutes; null if it isn't a length. */
 export function parseDuration(text: string): number | null {
   const s = text.trim().toLowerCase()
