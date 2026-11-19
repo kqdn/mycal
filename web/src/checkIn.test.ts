@@ -46,6 +46,8 @@ function block(changes: Partial<Block>): Block {
     done_min: null,
     missed_action: null,
     history: false,
+    kept: 0,
+    deleted: false,
     on_miss: 'reschedule',
     ...changes,
   }

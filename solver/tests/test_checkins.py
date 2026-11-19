@@ -403,12 +403,15 @@ def test_deleting_an_item_with_history_archives_it(client: TestClient, clock: Cl
     first, *ahead = blocks_of(client, work)
     clock.moment = datetime.fromisoformat(first["end"])
     shown = answered(client, first["id"], "yes")
-    assert all(b["history"] for b in shown["blocks"] if b["item_id"] == str(work.id))
+    assert all(b["history"] and b["kept"] == 1 for b in shown["blocks"] if b["item_id"] == str(work.id))
 
     response = client.delete(f"/api/items/{work.id}?week={WEEK}")
 
     assert response.status_code == 200, response.text
-    assert all(b["item_id"] != str(work.id) for b in response.json()["blocks"])
+    left = [b for b in response.json()["blocks"] if b["item_id"] == str(work.id)]
+    assert [(b["id"], b["status"], b["deleted"], b["editable"]) for b in left] == [(first["id"], "done", True, False)]
+    assert all(u["id"] != str(work.id) for u in response.json()["unscheduled"])
+    assert all(p["block_id"] != first["id"] for p in pending(client))
     conn = store.connect(store.db_path())
     assert store.is_archived(conn, work.id) and store.get_item(conn, work.id) is not None
     kept = [b for b in store.list_blocks(conn, include_archived=True) if b.item_id == work.id]

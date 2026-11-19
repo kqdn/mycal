@@ -28,6 +28,8 @@ export interface Block {
   missed_action: MissedAction | null // what ran on the missed part; null while an Ask waits
   history: boolean // the item has check-in history, so deleting it archives it
   on_miss: OnMiss // what a No does (an exact item's Reschedule comes as Skip)
+  kept: number // the item's sessions that started, in every week: deleting it keeps them when it has history
+  deleted: boolean // a kept session of a deleted item, shown as a record only
 }
 
 export type BlockStatus = 'planned' | 'done' | 'partial' | 'missed' | 'unanswered'
@@ -91,6 +93,7 @@ export interface Week {
     editable: boolean
     series_id: string | null
     history: boolean
+    kept: number
   }[]
   series: RepeatOut[] // how each series with an occurrence in the week repeats
   shortfalls: Shortfall[] // not yet accepted

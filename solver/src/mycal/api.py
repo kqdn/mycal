@@ -124,6 +124,9 @@ class BlockOut(BaseModel):
     missed_action: str | None = None
     history: bool = False  # it has check-in history, so deleting it archives it instead
     on_miss: str = "reschedule"  # what a No does (Skip for an exact item set to Reschedule)
+    # Deleting an item with history keeps its sessions that started: how many, in every week.
+    kept: int = 0
+    deleted: bool = False  # a kept session of a deleted (archived) item, shown as a record only
 
 
 class CheckInOut(BaseModel):
@@ -164,6 +167,7 @@ class ItemRef(BaseModel):
     editable: bool = False  # whether the edit dialog can change the item (not Custom)
     series_id: UUID | None = None  # set on an occurrence of a stored series
     history: bool = False  # it has check-in history, so deleting it archives it instead
+    kept: int = 0  # its sessions that started, which deleting keeps when it has history
 
 
 class RepeatOut(BaseModel):
@@ -1677,12 +1681,19 @@ def week_out(
 ) -> WeekOut:
     """The week's stored blocks and frames as a response. Estimates are the work items have as of `moment`."""
     week = week_horizon(week_start, settings.timezone)
-    blocks = store.list_blocks(conn, week.start, week.end) if feasible else []
+    # Deleted (archived) items' kept sessions show too, as a record of what happened.
+    blocks = store.list_blocks(conn, week.start, week.end, include_archived=True) if feasible else []
     waiting = waiting_on_broken_weeks(conn, settings, week_start, moment)
     # Sessions are counted across every week, so look at all blocks, in start order.
-    every_block = store.list_blocks(conn)
+    every_block = store.list_blocks(conn, include_archived=True)
     frames = store.list_work_frames(conn)
-    items = {item.id: item for item in effective_items(store.list_items(conn), every_block, frames, settings, moment)}
+    live = {item.id for item in store.list_items(conn)}
+    every_item = store.list_items(conn, include_archived=True)
+    items = {item.id: item for item in effective_items(every_item, every_block, frames, settings, moment)}
+    kept: dict[UUID, int] = {}
+    for b in every_block:
+        if b.status is not BlockStatus.PLANNED or b.start <= moment:  # what archive_item keeps
+            kept[b.item_id] = kept.get(b.item_id, 0) + 1
     sessions: dict[UUID, list[UUID]] = {}
     for b in every_block:
         sessions.setdefault(b.item_id, []).append(b.id)
@@ -1708,7 +1719,7 @@ def week_out(
                 sessions=len(sessions[b.item_id]),
                 placed_min=placed[b.item_id],
                 estimate_min=items[b.item_id].estimate_min,
-                editable=editable(items[b.item_id]),
+                editable=b.item_id in live and editable(items[b.item_id]),
                 series_id=_stored(items[b.item_id].series_id, stored_series),
                 checkable=items[b.item_id].checkable,
                 status=b.status.value,
@@ -1716,6 +1727,8 @@ def week_out(
                 missed_action=None if b.missed_action is None else b.missed_action.value,
                 history=b.item_id in history,
                 on_miss=checkins.policy_for(items[b.item_id]).value,
+                kept=kept.get(b.item_id, 0),
+                deleted=b.item_id not in live,
             )
             for b in blocks
         ],
@@ -1735,9 +1748,11 @@ def week_out(
                 editable=editable(i),
                 series_id=_stored(i.series_id, stored_series),
                 history=i.id in history,
+                kept=kept.get(i.id, 0),
             )
             for i in items.values()
-            if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
+            if i.id in live
+            and ((i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting)
         ],
         series=[repeat_out(s) for s in stored_series.values() if s.id in in_week],
         shortfalls=[

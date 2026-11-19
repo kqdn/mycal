@@ -284,7 +284,9 @@ export default function App() {
     const block = state.week.blocks.find((b) => b.id === element.dataset.blockId)
     if (!block) return false
     const target: PopoverTarget = { kind: 'block', itemId: block.item_id, title: block.title, block, opener: element }
-    if (action === 'delete') {
+    if (block.deleted) {
+      setOpen(target) // a deleted item's kept session: says so, with nothing to do
+    } else if (action === 'delete') {
       setOpen({ ...target, startAt: 'confirm' })
     } else if (!block.editable) {
       setOpen(target) // says why it can't be edited

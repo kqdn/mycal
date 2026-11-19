@@ -200,7 +200,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
    - "Edit", a secondary button, left of "Delete item", also secondary. Edit opens the item in the edit dialog (see Editing). While the item loads it reads "Opening..." and both buttons are disabled. If loading fails, a 12px `--attention-strong` line under the actions says "Couldn't open it:" and the server's message.
    - For a Custom item, Edit is disabled, and a 12px `--text-muted` line under the actions says "Change Custom items in their week file."
    - For a checkable block that has started, "Check in" (or "Change answer" once answered) comes first in the row. It closes the popover and opens the check-in dialog (see Check-ins).
-   - For an item with check-in history, "Delete item" reads "Archive item" (see Deleting).
+   - A kept session of a deleted item (see Deleting) shows its lines and "Deleted. This session stays as a record." in hint text, with no buttons. E and Delete do nothing on it.
 5. **Check-in line (Milestone 7):** under the kind line, 13px `--text`, when there is something to say: "Waiting for a check-in", "Done", "Partly done: 30m of 1h · The rest is rescheduled", "Missed · Caught up later", "No answer · Skipped", or "Missed · Waiting for your choice" while an Ask waits.
 
 ### Deleting
@@ -216,7 +216,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 - **If the planner runs out of time:** the item is still deleted, and the weeks it was in re-plan when next viewed. The popover closes as when it's done.
 - **If it fails:** if the popover is still open, the confirm row stays, and a line under it in 12px `--attention-strong` says what went wrong, using the server's message, for example "Couldn't delete it: Can't reach the planner." The buttons are enabled again so it can be retried. If the popover was already closed, the page's attention banner shows the same message instead.
 - **If the item was already gone** (a 404, say it was deleted from another tab): the popover closes and the week reloads, without an error.
-- **Archiving (Milestone 7):** an item with check-in history is archived instead, to keep that history. The button reads "Archive item", the confirm asks "Archive this item?" with "Its finished sessions stay as history. The ones ahead go.", and its button reads "Archive" ("Archiving..."). The item then leaves the week. For a series, This adds ", keeping its finished sessions as history" to its line.
+- **Items with check-in history (Milestone 7):** they are archived, not deleted, but the page still says Delete everywhere: "Delete item", "Delete this item?", "Delete" ("Deleting..."). The confirm's detail says what stays instead of "All 4 sessions go": "The 2 sessions ahead go. The 3 sessions that already started stay on your calendar." (or "The one session ahead goes.", "The session that already started stays on your calendar.", and only the second sentence when nothing is ahead). The sessions that started stay in the grid as they were, as a record. For a series, This adds ", keeping its sessions that started on your calendar" to its line.
 
 ### Editing (Milestone 4)
 
@@ -229,7 +229,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 
 ### Past blocks
 
-Blocks that already started can be opened like any other, with the "Already started" line as the reminder. A checkable one can be checked in from its popover. An item with check-in history is archived instead of deleted (see Deleting); one without is deleted as before.
+Blocks that already started can be opened like any other, with the "Already started" line as the reminder. A checkable one can be checked in from its popover. Deleting an item with check-in history keeps its sessions that started (see Deleting); one without is deleted as before.
 
 ### Exception to the 44px rule
 
