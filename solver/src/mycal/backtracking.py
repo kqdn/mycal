@@ -6,9 +6,10 @@ against the hard constraints, and the search backs up when a chunk has no
 start left. It returns the first valid arrangement and ignores soft
 constraints, apart from trying each block's previous start first.
 
-Partial placement is greedy, with no backing up: in the same order, each
-chunk takes the start that holds the most of it (its previous start, then
-the earliest, on a tie), shrinking from the end, or is left out. That is a
+Partial placement is greedy, with no backing up: chunks with a current block
+first, then in the same order, each chunk takes the start that holds the most
+of it (its previous start, then the earliest, on a tie), shrinking from the
+end, or is left out. That is a
 best effort; finding the plan that leaves out the least would take a full
 branch-and-bound search.
 """
@@ -147,7 +148,8 @@ def search(problem: Problem, partial: bool = False) -> SearchResult:
         return False
 
     def place_greedily() -> None:
-        for i in order:
+        # Current blocks first, so new work never pushes out work that already has its place.
+        for i in sorted(order, key=lambda i: chunks[i].previous_start is None):
             chunk = chunks[i]
             caps = shrink_caps(items[chunk.item_id], chunk.size, slot_min)
             best: tuple[int, int] | None = None  # (start, size)

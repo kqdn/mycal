@@ -36,7 +36,9 @@ best plan:
 Partial placement (only when the full model is infeasible) takes two solves,
 most important goal first (a lexicographic solve):
     1. Shrink: a separate model where each chunk also gets a size variable
-       from 0 to its full size, and the only score is the slots left out.
+       from 0 to its full size. The score is the slots left out, and on a
+       tie the current blocks moved or cut (stability), so new work doesn't
+       push out work that already has its place.
        A block keeps its start and loses slots from the end, and size 0
        leaves it out (an optional interval, whose `present` boolean is true
        when size is at least 1). For each start slot a table gives the most
@@ -358,7 +360,21 @@ def build_model(problem: Problem, partial: bool = False) -> BuiltModel | None:
             model.add(slot_min * placed <= max(0, limit - kept_min[day]))
 
     if partial:
-        model.minimize(sum(chunk.size - size for chunk, size in zip(chunks, sizes)))
+        # Fewest slots left out, and on a tie, fewest current blocks moved or cut,
+        # so new work never pushes out work that already has its place. Weighting
+        # unplaced slots by (blocks that could move + 1) keeps them first.
+        moved = []
+        for i, chunk in enumerate(chunks):
+            if chunk.previous_start is None:
+                continue
+            model.add_hint(starts[i], chunk.previous_start)
+            model.add_hint(sizes[i], chunk.size)
+            stays = model.new_bool_var(f"stays_{i}")
+            model.add(starts[i] == chunk.previous_start).only_enforce_if(stays)
+            model.add(sizes[i] == chunk.size).only_enforce_if(stays)
+            moved.append(1 - stays)
+        unplaced = sum(chunk.size - size for chunk, size in zip(chunks, sizes))
+        model.minimize((len(moved) + 1) * unplaced + sum(moved))
         return BuiltModel(model, starts, 0, chunks, sizes)
     slack = _add_score(model, problem, starts, day_vars, chunks_of, busy, local_day)
     return BuiltModel(model, starts, slack, chunks)

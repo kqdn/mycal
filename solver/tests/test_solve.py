@@ -220,6 +220,18 @@ def test_partial_plan_keeps_out_of_kept_blocks_and_deadlines() -> None:
     assert unplaced_of(result, [lecture, pset]) == {"Problem set": 90}
 
 
+def test_new_work_does_not_push_out_a_current_block() -> None:
+    # Read already sits at 9 to 10. Essay needs the whole morning, so 1h is left out
+    # either way; it comes out of Essay, not Read.
+    read = task("Read", 60, [window(16, 9, 11)])
+    essay = task("Essay", 120, [window(16, 9, 11)])
+    current = Block(read.id, at(16, 9), at(16, 10))
+    result = run([read, essay], [current])
+    [block] = placed_for(result, read)
+    assert (block.id, block.start, block.end) == (current.id, at(16, 9), at(16, 10))
+    assert unplaced_of(result, [read, essay]) == {"Essay": 60}
+
+
 def test_partial_plan_respects_a_daily_limit() -> None:
     essay = task("Essay", 120, [window(16, 9, 12)])
     result = run([essay], constraints=[daily_limit(60)])
