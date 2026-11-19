@@ -33,6 +33,25 @@ best plan:
     6. earlier in the frame: slots from the start of the work-frame
        occurrence (else the item window) holding each block's start
 
+Partial placement (only when the full model is infeasible) takes two solves,
+most important goal first (a lexicographic solve):
+    1. Shrink: a separate model where each chunk also gets a size variable
+       from 0 to its full size, and the only score is the slots left out.
+       A block keeps its start and loses slots from the end, and size 0
+       leaves it out (an optional interval, whose `present` boolean is true
+       when size is at least 1). For each start slot a table gives the most
+       slots that fit there before the window closes, the deadline or a kept
+       block, and the size stays within it. The day booleans add up to
+       `present` instead of to one, and a chunk's slots on a day become a
+       "size on day d" variable that is 0 unless the chunk starts on d,
+       which keeps daily limits linear.
+    2. Place: the ordinary model above, on the chunks cut to the sizes the
+       first solve chose (left-out chunks dropped), with its plan as a hint.
+The first solve settles how much fits, the second scores where it goes.
+Putting "slots left out" on top of the six tiers in one model makes its
+weight so large that the gap limit never stops the search: on an overfull
+sample week that ran out the work limit twice over and still left out more.
+
 Stopping is deterministic: one worker, a fixed seed, no wall-clock limit.
 CP-SAT stops when it proves its plan is within `slack` of the best (the gap
 limit), where slack is earliness_slack_min per flexible block, in slots.
@@ -46,7 +65,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from functools import cache
 from uuid import UUID
@@ -65,7 +84,9 @@ from mycal.problem import (
     floor_slot,
     kept_minutes_by_day,
     session_min,
+    shrink_caps,
     slot_start,
+    start_candidates,
 )
 from mycal.windows import day_capacity_min, work_frame_windows
 
@@ -74,40 +95,45 @@ Interval = tuple[int, int]
 
 @dataclass(slots=True)
 class BuiltModel:
-    """The CP-SAT model for a problem: one start variable per chunk, and the slack in slots."""
+    """The CP-SAT model for a problem: one start variable per chunk, and the slack in slots.
+
+    `chunks` are the chunks in the model, in the order of `starts`. A partial
+    model leaves out chunks with no room at all and has a size variable per chunk.
+    """
 
     model: cp_model.CpModel
     starts: list[cp_model.IntVar]
     slack: int
+    chunks: list[Chunk] = field(default_factory=list)
+    sizes: list[cp_model.IntVar] = field(default_factory=list)
 
 
-def search(problem: Problem) -> SearchResult:
+def search(problem: Problem, partial: bool = False) -> SearchResult:
     """Return new blocks for every chunk, or no blocks if CP-SAT proves no arrangement fits.
+
+    With `partial`, return blocks for as much of the work as fits, in two
+    solves (see the module docstring), each with the full work limit. The
+    status is FEASIBLE if either solve stopped before proving its answer.
 
     Raises RuntimeError if the work limit runs out before any arrangement is
     found, since that is not a proof of infeasibility.
     """
+    hints: list[int] = []
+    shrink_status = "OPTIMAL"
+    if partial:
+        problem, hints, shrink_status = _shrink(problem)
     built = build_model(problem)
     if built is None:
         return SearchResult(None, "INFEASIBLE")
-    settings = problem.settings
+    if hints:
+        built.model.clear_hints()  # stage 1's plan replaces the previous-start hints
+        for start, hint in zip(built.starts, hints):
+            built.model.add_hint(start, hint)
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_deterministic_time = settings.work_limit
-    solver.parameters.absolute_gap_limit = built.slack
-    solver.parameters.num_workers = 1  # deterministic: same week, same schedule
-    solver.parameters.random_seed = 0
-    status = solver.solve(built.model)
-
-    if status == cp_model.INFEASIBLE:
+    solver, status = _run(built.model, problem.settings.work_limit, built.slack)
+    if status == "INFEASIBLE":
         return SearchResult(None, "INFEASIBLE")
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise RuntimeError(
-            f"CP-SAT found no arrangement within work_limit {settings.work_limit} "
-            f"(status {solver.status_name(status)})"
-        )
-
-    slot_min = settings.slot_min
+    slot_min = problem.settings.slot_min
     blocks = [
         Block(
             item_id=chunk.item_id,
@@ -115,13 +141,64 @@ def search(problem: Problem) -> SearchResult:
             end=slot_start(solver.value(built.starts[i]) + chunk.size, slot_min),
             id=chunk.block_id,
         )
-        for i, chunk in enumerate(problem.chunks)
+        for i, chunk in enumerate(built.chunks)
     ]
-    return SearchResult(blocks, solver.status_name(status))
+    return SearchResult(blocks, "FEASIBLE" if shrink_status == "FEASIBLE" else status)
 
 
-def build_model(problem: Problem) -> BuiltModel | None:
-    """Variables, hard constraints and score for a problem, or None if a chunk has nowhere to go."""
+def _shrink(problem: Problem) -> tuple[Problem, list[int], str]:
+    """Stage 1 of a partial search: the problem with each chunk cut to the length that fits, each start, and the status.
+
+    Left-out chunks are dropped. Equal-length chunks of one item get their
+    starts in index order, which the full model's symmetry breaking requires.
+    """
+    built = build_model(problem, partial=True)
+    assert built is not None  # a partial model always exists
+    solver, status = _run(built.model, problem.settings.work_limit, gap=0)
+    slot_min = problem.settings.slot_min
+
+    placed: list[tuple[Chunk, int]] = []
+    for i, chunk in enumerate(built.chunks):
+        size = solver.value(built.sizes[i])
+        if size:
+            item = problem.items[chunk.item_id]
+            resized = replace(chunk, size=size, candidates=start_candidates(item, size, slot_min))
+            placed.append((resized, solver.value(built.starts[i])))
+    groups: dict[tuple[UUID, int], list[int]] = defaultdict(list)
+    for k, (chunk, _) in enumerate(placed):
+        groups[(chunk.item_id, chunk.size)].append(k)
+    starts = [start for _, start in placed]
+    for members in groups.values():
+        for k, start in zip(members, sorted(starts[k] for k in members)):
+            starts[k] = start
+    return replace(problem, chunks=[chunk for chunk, _ in placed]), starts, status
+
+
+def _run(model: cp_model.CpModel, work_limit: float, gap: int) -> tuple[cp_model.CpSolver, str]:
+    """Solve deterministically (one worker, fixed seed, work limit); return the solver and its status name.
+
+    Raises RuntimeError when it stops with no arrangement and no proof that none exists.
+    """
+    solver = cp_model.CpSolver()
+    solver.parameters.max_deterministic_time = work_limit
+    solver.parameters.absolute_gap_limit = gap
+    solver.parameters.num_workers = 1  # deterministic: same week, same schedule
+    solver.parameters.random_seed = 0
+    status = solver.solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE, cp_model.INFEASIBLE):
+        raise RuntimeError(
+            f"CP-SAT found no arrangement within work_limit {work_limit} (status {solver.status_name(status)})"
+        )
+    return solver, solver.status_name(status)
+
+
+def build_model(problem: Problem, partial: bool = False) -> BuiltModel | None:
+    """Variables, hard constraints and score for a problem, or None if a chunk has nowhere to go.
+
+    A partial model (stage 1 of a partial search) is never None, since a
+    chunk with no room is left out of it, and its only score is the slots
+    left unplaced.
+    """
     chunks = problem.chunks
     items = problem.items
     settings = problem.settings
@@ -147,9 +224,9 @@ def build_model(problem: Problem) -> BuiltModel | None:
         for dep in item.depends_on:
             dependents[dep].append(item.id)
 
-    def allowed(chunk: Chunk, start: int) -> bool:
+    def allowed(chunk: Chunk, start: int, size: int | None = None) -> bool:
         """Checks against fixed things only: kept blocks and their days."""
-        end = start + chunk.size
+        end = start + (chunk.size if size is None else size)
         item = items[chunk.item_id]
         if any(a < end and start < b for a, b in busy):
             return False
@@ -159,18 +236,62 @@ def build_model(problem: Problem) -> BuiltModel | None:
             return False
         return not (item.one_block_per_day and local_day(start) in kept_days[chunk.item_id])
 
+    def room(chunk: Chunk, start: int, cap: int) -> int:
+        """Partial: the most slots, up to `cap`, the chunk can hold from `start` around kept blocks."""
+        if not allowed(chunk, start, 1):
+            return 0
+        end = start + cap
+        for a, _ in busy:
+            if start < a < end:
+                end = a
+        for later in dependents[chunk.item_id]:
+            for a, _ in kept_by_item[later]:
+                end = min(end, max(a, start))
+        return end - start
+
+    # Start slots per chunk. A partial model also knows the most slots each start can hold.
+    domains: list[list[int]] = []
+    caps: list[dict[int, int]] = []
+    if partial:
+        for chunk in chunks:
+            fit = shrink_caps(items[chunk.item_id], chunk.size, slot_min)
+            caps.append({s: r for s, cap in fit.items() if (r := room(chunk, s, cap)) > 0})
+        chunks = [chunk for chunk, cap in zip(chunks, caps) if cap]
+        caps = [cap for cap in caps if cap]
+        domains = [list(cap) for cap in caps]
+    else:
+        for chunk in chunks:
+            values = [s for s in chunk.candidates if allowed(chunk, s)]
+            if not values:
+                return None
+            domains.append(values)
+
     model = cp_model.CpModel()
     starts: list[cp_model.IntVar] = []
+    sizes: list[cp_model.IntVar] = []  # partial only
+    present: list[cp_model.IntVar] = []  # partial only
     intervals: list[cp_model.IntervalVar] = []
     day_vars: list[dict[date, cp_model.IntVar]] = []
+    loads: list[dict[date, cp_model.LinearExprT]] = []  # slots each chunk puts on each day
 
     for i, chunk in enumerate(chunks):
-        values = [s for s in chunk.candidates if allowed(chunk, s)]
-        if not values:
-            return None
+        values = domains[i]
         start = model.new_int_var_from_domain(cp_model.Domain.from_values(values), f"start_{i}")
         starts.append(start)
-        intervals.append(model.new_fixed_size_interval_var(start, chunk.size, f"block_{i}"))
+        if partial:
+            size = model.new_int_var(0, chunk.size, f"size_{i}")
+            cap = model.new_int_var(1, chunk.size, f"cap_{i}")
+            model.add_allowed_assignments([start, cap], list(caps[i].items()))
+            model.add(size <= cap)
+            is_present = model.new_bool_var(f"present_{i}")
+            model.add(size >= 1).only_enforce_if(is_present)
+            model.add(size == 0).only_enforce_if(~is_present)
+            sizes.append(size)
+            present.append(is_present)
+            end = model.new_int_var(min(values), max(values) + chunk.size, f"end_{i}")
+            intervals.append(model.new_optional_interval_var(start, size, end, is_present, f"block_{i}"))
+        else:
+            intervals.append(model.new_fixed_size_interval_var(start, chunk.size, f"block_{i}"))
 
         by_day: dict[date, list[int]] = defaultdict(list)
         for s in values:
@@ -182,10 +303,28 @@ def build_model(problem: Problem) -> BuiltModel | None:
                 start, cp_model.Domain.from_values(day_values)
             ).only_enforce_if(on_day)
             days[day] = on_day
-        model.add_exactly_one(days.values())
+        day_load: dict[date, cp_model.LinearExprT] = {}
+        if partial:
+            model.add(sum(days.values()) == present[i])  # a left-out chunk is on no day
+            for day, on_day in days.items():
+                on_day_size = model.new_int_var(0, chunk.size, f"chunk_{i}_size_on_{day}")
+                model.add(on_day_size <= chunk.size * on_day)
+                day_load[day] = on_day_size
+            model.add(sum(day_load.values()) == sizes[i])
+        else:
+            model.add_exactly_one(days.values())
+            day_load = {day: chunk.size * on_day for day, on_day in days.items()}
         day_vars.append(days)
+        loads.append(day_load)
 
     model.add_no_overlap(intervals)
+
+    def length(j: int) -> cp_model.LinearExprT:
+        return sizes[j] if partial else chunks[j].size
+
+    def when_present(*indexes: int) -> list[cp_model.IntVar]:
+        """Enforcement literals: a constraint between chunks holds only if all of them are placed."""
+        return [present[k] for k in indexes] if partial else []
 
     chunks_of: dict[UUID, list[int]] = defaultdict(list)
     for i, chunk in enumerate(chunks):
@@ -197,11 +336,14 @@ def build_model(problem: Problem) -> BuiltModel | None:
         for dep in item.depends_on:
             for i in mine:
                 for j in chunks_of.get(dep, []):
-                    model.add(starts[i] >= starts[j] + chunks[j].size)
-        # Symmetry breaking: equal-size chunks of one item start in index order.
+                    model.add(starts[i] >= starts[j] + length(j)).only_enforce_if(when_present(i, j))
+        # Symmetry breaking: equal-size chunks of one item start in index order
+        # (and in a partial model, an earlier one is placed if a later one is).
         for i, j in zip(mine, mine[1:]):
             if chunks[i].size == chunks[j].size:
-                model.add(starts[i] < starts[j])
+                model.add(starts[i] < starts[j]).only_enforce_if(when_present(i, j))
+                if partial:
+                    model.add_implication(present[j], present[i])
         if item.one_block_per_day:
             for day in {d for i in mine for d in day_vars[i]}:
                 model.add_at_most_one(day_vars[i][day] for i in mine if day in day_vars[i])
@@ -212,11 +354,14 @@ def build_model(problem: Problem) -> BuiltModel | None:
     for day in {d for vars_ in day_vars for d in vars_}:
         limit = day_limit_min(problem.daily_limits, day)
         if limit is not None:
-            placed = sum(chunks[i].size * vars_[day] for i, vars_ in enumerate(day_vars) if day in vars_)
+            placed = sum(load[day] for load in loads if day in load)
             model.add(slot_min * placed <= max(0, limit - kept_min[day]))
 
+    if partial:
+        model.minimize(sum(chunk.size - size for chunk, size in zip(chunks, sizes)))
+        return BuiltModel(model, starts, 0, chunks, sizes)
     slack = _add_score(model, problem, starts, day_vars, chunks_of, busy, local_day)
-    return BuiltModel(model, starts, slack)
+    return BuiltModel(model, starts, slack, chunks)
 
 
 def _add_score(

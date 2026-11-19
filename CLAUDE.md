@@ -6,7 +6,7 @@ Full spec: `docs/PRD.md`. Read it before changing the data model or the solver.
 
 ## Current milestone
 
-Milestone 8: preview and accept re-plans. Every change makes a proposed plan that the week shows with Accept and Discard, instead of saving one. See Milestones in `docs/PRD.md` and its Nov 18 Milestone 8 plan in the decision log. Build order: double booking (done), partial placement in both engines, API proposals with Accept and Discard, then the compare view. Until it's done, changes keep re-planning and saving right away. Milestone 9, dragging blocks to move them, builds on it.
+Milestone 8: preview and accept re-plans. Every change makes a proposed plan that the week shows with Accept and Discard, instead of saving one. See Milestones in `docs/PRD.md` and its Nov 18 Milestone 8 plan in the decision log. Build order: double booking (done), partial placement in both engines (done; the planner still passes `partial=False`), API proposals with Accept and Discard, then the compare view. Until it's done, changes keep re-planning and saving right away. Milestone 9, dragging blocks to move them, builds on it.
 
 Milestones 1 (solver package), 2 (read-only week view), 3 (storage, adding and deleting items), 4 (editing items), 5 (work frames and rules in the app), 6 (recurrence in the app) and 7 (check-ins and on-miss policies) are done, and so are keyboard shortcuts and click to add (an empty slot opens the New item dialog), both specced in `web/DESIGN.md`. The backtracking and CP-SAT engines both sit behind the same `solve()` interface, and the API calls `solve()` like any other caller. The full milestone order is in `docs/PRD.md` under Milestones.
 

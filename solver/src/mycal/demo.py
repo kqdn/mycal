@@ -230,10 +230,7 @@ def plan_week(week: Week) -> tuple[list[Item], SolveResult]:
 
 
 def format_schedule(items: list[Item], result: SolveResult, timezone: str) -> str:
-    """The schedule as text: one heading per local day, then unscheduled items."""
-    if not result.feasible:
-        return "No arrangement fits this week: some deadline, window or dependency can't be met."
-
+    """The schedule as text: one heading per local day, then unscheduled items and work that didn't fit."""
     zone = ZoneInfo(timezone)
     titles = {item.id: item.title for item in items}
     lines: list[str] = []
@@ -250,7 +247,10 @@ def format_schedule(items: list[Item], result: SolveResult, timezone: str) -> st
     unscheduled = [item.title for item in items if not item.windows]
     if unscheduled:
         lines += ["", "Unscheduled"] + [f"  {title}" for title in unscheduled]
-    return "\n".join(lines)
+    if result.unplaced:
+        lines += ["", "Didn't fit (a deadline, window, limit or dependency can't be met)"]
+        lines += [f"  {titles[u.item_id]}: {u.minutes} min" for u in result.unplaced]
+    return "\n".join(lines).lstrip("\n")
 
 
 def main(argv: list[str] | None = None) -> int:

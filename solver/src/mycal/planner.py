@@ -210,7 +210,9 @@ def _solve_span(
     ]
     constraints = [compile_constraint(c, settings.timezone, span.start, span.end) for c in store.list_constraints(conn)]
     try:
-        result = solve(planned, kept + current, frames, constraints, settings)
+        # No partial plans yet: a span that doesn't fit is shortened instead (see
+        # _plan_span). Proposals (Milestone 8) will show partial plans.
+        result = solve(planned, kept + current, frames, constraints, settings, partial=False)
     except RuntimeError as error:  # the engine's "no arrangement within the work limit"
         raise PlannerTimeout(str(error)) from error
     return _Attempt(result, current, kept)
