@@ -126,6 +126,7 @@ The MVP is "plan my week and show my progress"; the smarter re-planning comes ri
 | Add pinned, day-locked and flexible items | MVP | Manual input first; Google Calendar import later |
 | Solver places flexible blocks | MVP | Windows, no overlap, deadlines, order |
 | Drag a block to move it; moved blocks lock | MVP | Solver plans around locked blocks |
+| Click an empty slot to add an item there | MVP | Opens the New item dialog on Exact time for that day and slot, an hour long or up to the next block; past slots take no click |
 | Today view with daily progress bar | MVP | Completed blocks stay visible, crossed out |
 | Calendar view of the planned week | MVP | Read-only is fine at first |
 | Projects with subtask items, estimates, deadline | MVP | Split into blocks across days |

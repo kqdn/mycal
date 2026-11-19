@@ -15,7 +15,7 @@ import {
 import { CheckInDialog } from './CheckInDialog'
 import { bannerTitle, pendingKey, targetFromBlock, type CheckInTarget } from './checkIn'
 import { weekAfterDelete, whenLine } from './itemDetails'
-import { formFrom, type ItemForm } from './itemForm'
+import { formAt, formFrom, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
 import { formFromSeries } from './repeatForm'
@@ -51,6 +51,8 @@ export default function App() {
   // Each result remembers which week it is for; a newer week shows as loading.
   const [result, setResult] = useState<{ for: DateString } & Result>()
   const [adding, setAdding] = useState(false)
+  // The New item form a click on an empty slot starts from (its day and time); null for an empty one.
+  const [addStart, setAddStart] = useState<ItemForm | null>(null)
   const [reload, setReload] = useState(0) // bump to fetch the viewed week again
   // The item details popover, and deletes started from it. A delete keeps
   // running after the popover closes, so its state lives here.
@@ -358,7 +360,11 @@ export default function App() {
           timezone={state.week.timezone}
           frames={state.week.frames}
           slotMin={state.week.slot_min}
-          onClose={() => setAdding(false)}
+          start={addStart ?? undefined}
+          onClose={() => {
+            setAdding(false)
+            setAddStart(null)
+          }}
           onSaved={showSaved}
         />
       )}
@@ -447,6 +453,11 @@ export default function App() {
               <WeekGrid
                 week={state.week}
                 onOpen={(block, opener) => setOpen({ kind: 'block', itemId: block.item_id, title: block.title, block, opener })}
+                onAdd={(date, minutes, lengthMin) => {
+                  setOpen(null)
+                  setAddStart(formAt(date, minutes, lengthMin, weekStart, today()))
+                  setAdding(true)
+                }}
               />
               {state.week.unscheduled.length > 0 && (
                 <section aria-labelledby="unscheduled-label">

@@ -54,6 +54,8 @@ interface Props {
     form: ItemForm
     weekStart: DateString
   }
+  // A new item's starting form, when it isn't empty (a click on an empty slot fills in its time).
+  start?: ItemForm
   // Set to change a catch-up item before it is made, from the check-in dialog's tile. Saving
   // sends the check-in answer with the item (`save`), so nothing is saved until then.
   catchUp?: {
@@ -69,12 +71,12 @@ interface Props {
  * The Add item dialog (web/DESIGN.md, "Add item dialog"), which also edits an item
  * ("Item details popover", Editing). Mounted while open.
  */
-export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, catchUp, onClose, onSaved }: Props) {
+export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, start, catchUp, onClose, onSaved }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleInput = useRef<HTMLInputElement>(null)
   // A days or every-day item belongs to its own week; the response shows the viewed one.
   const formWeek = editing?.weekStart ?? catchUp?.weekStart ?? weekStart
-  const [form, setForm] = useState<ItemForm>(() => editing?.form ?? catchUp?.form ?? emptyForm(weekStart, today()))
+  const [form, setForm] = useState<ItemForm>(() => editing?.form ?? catchUp?.form ?? start ?? emptyForm(weekStart, today()))
   const [touched, setTouched] = useState<Set<Field>>(new Set())
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)

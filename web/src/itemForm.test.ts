@@ -4,6 +4,8 @@ import {
   checksIn,
   emptyForm,
   firstError,
+  clickedLength,
+  formAt,
   formFrom,
   missChoices,
   missHint,
@@ -437,5 +439,27 @@ describe('check-in fields', () => {
 
   it('says what each choice does', () => {
     expect(missHint('catch_up')).toBe('Adds a catch-up item, due before the next one.')
+  })
+})
+
+describe('formAt', () => {
+  it('starts an Exact time item on the clicked day, an hour long', () => {
+    expect(formAt('2026-11-19', 14 * 60 + 15, 60, WEEK, '2026-11-18')).toMatchObject({
+      preset: 'exact',
+      day: '2026-11-19',
+      startTime: '14:15',
+      endTime: '15:15',
+    })
+  })
+
+  it('ends at 11:59pm at the latest', () => {
+    expect(formAt('2026-11-19', 23 * 60 + 30, 30, WEEK, '2026-11-18')).toMatchObject({ startTime: '23:30', endTime: '23:59' })
+  })
+
+  it('stops at the next block when it comes within the hour', () => {
+    expect(clickedLength(14 * 60 + 45, 15 * 60)).toBe(15)
+    expect(clickedLength(14 * 60, 17 * 60)).toBe(60)
+    expect(clickedLength(14 * 60, null)).toBe(60)
+    expect(clickedLength(23 * 60 + 30, null)).toBe(30)
   })
 })

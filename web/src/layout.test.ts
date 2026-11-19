@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Week } from './api'
-import { initialScrollMinute, minutesToPx, pieces, textMode } from './layout'
+import { initialScrollMinute, minutesToPx, pieces, slotAt, slotHasBegun, textMode } from './layout'
 
 const LA = 'America/Los_Angeles'
 const WEEK = '2026-11-16' // Mon; PST is UTC-8 all week
@@ -115,5 +115,22 @@ describe('textMode', () => {
 
   it('switches at 20px and 40px', () => {
     expect([19, 20, 39, 40].map(textMode)).toEqual(['title-only', 'one-line', 'one-line', 'two-line'])
+  })
+})
+
+describe('slotAt and slotHasBegun', () => {
+  it('snaps a click down to the start of its slot, inside the day', () => {
+    expect(slotAt(minutesToPx(14 * 60 + 20), 15)).toBe(14 * 60 + 15)
+    expect(slotAt(minutesToPx(14 * 60 + 20), 30)).toBe(14 * 60)
+    expect(slotAt(-5, 15)).toBe(0)
+    expect(slotAt(minutesToPx(24 * 60) + 5, 15)).toBe(23 * 60 + 45)
+  })
+
+  it('treats slots before now as begun', () => {
+    const now = { date: '2026-11-18', minutes: 18 * 60 + 30 }
+    expect(slotHasBegun('2026-11-18', 18 * 60 + 15, now)).toBe(true)
+    expect(slotHasBegun('2026-11-18', 18 * 60 + 45, now)).toBe(false)
+    expect(slotHasBegun('2026-11-17', 23 * 60, now)).toBe(true)
+    expect(slotHasBegun('2026-11-19', 0, now)).toBe(false)
   })
 })
