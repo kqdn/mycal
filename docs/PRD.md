@@ -337,8 +337,10 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 5. Work frames and rules in the app: view, add, edit and delete work frames and constraints (daily_limit, time_preference, rest_between) from the page, then re-plan. Settles how imports treat these app edits. Week files stay for importing. Done.
 6. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package. Done.
 Between 6 and 7: keyboard shortcuts in the app (see the decision log, Nov 17). Done.
-7. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask. Also fewer sessions for an "N times a week" item short of days, archiving items with history, and the check-in fields in the item dialogs. See How check-ins work. Changes still re-plan and save right away.
+7. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask. Also fewer sessions for an "N times a week" item short of days, archiving items with history, and the check-in fields in the item dialogs. See How check-ins work. Done.
+Between 7 and 8: click an empty slot in the week grid to open the New item dialog with that day and time filled in (see the decision log, Nov 18).
 8. Preview and accept re-plans: every change (adding, editing or deleting an item, a check-in, a frame or rule edit) makes a proposed plan instead of saving one. The week shows it in the compare view (see Previewing an arrangement) with Accept and Discard. Discard keeps the old plan, and a new item or rescheduled work stays unscheduled until a plan with it is accepted. A week planned for the first time needs no Accept.
+9. Drag to move: drag a block to another time; a moved block locks, and the solver plans around it (see Manual moves lock blocks). A drop is a change like any other, so it shows its re-plan in the preview from Milestone 8. Unlocking hands the block back to the solver.
 
 ## Open questions and decision log
 
@@ -358,6 +360,7 @@ Between 6 and 7: keyboard shortcuts in the app (see the decision log, Nov 17). D
 
 | Date | Decision |
 | --- | --- |
+| Nov 18, 2026 | Milestone 7 (check-ins and on-miss policies) is done: Kaden checked it on the real week. Next, before Milestone 8: clicking an empty slot in the grid opens the New item dialog with that day and time filled in (page only). Dragging blocks to move them, already an MVP feature, becomes Milestone 9, after preview, so a drop shows how the rest of the week shifts and can be accepted or discarded instead of saving right away. Free-move push stays v2 |
 | Nov 18, 2026 | The check-in dialog shows what an answer does to the missed time in a tile, from a new preview endpoint, as in the prototype's Check-in screen. A catch-up's tile opens the New item dialog filled in, and the answer is saved with the changed item, all or nothing. A catch-up's 1.25x estimate and its "a week from now" deadline are rounded up to whole slots, so the dialog shows 45m and 7:30pm, not 38m and 7:24pm. The check-in dialog's layout can now change before the Today view; placing the catch-up in the week is left to Milestone 8's preview |
 | Nov 18, 2026 | Archiving is called Delete on the page, and the confirm says which sessions go and which stay. An archived item's blocks that started stay in the week view, read-only and marked deleted, instead of disappearing, so "stays as history" is something you can see. Each block and unscheduled item carries kept (its sessions that started) for the confirm |
 | Nov 18, 2026 | Deleting a catch-up item sets its missed block's missed_action to skip, so the popover says Skipped instead of "caught up later" for work that won't be caught up. The plan doesn't change. A catch-up with finished sessions is archived and keeps catch_up |
