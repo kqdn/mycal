@@ -1161,6 +1161,20 @@ def test_a_weekly_deadline_series_is_due_on_each_date(client: TestClient) -> Non
     assert all(end <= due[items[i]] for i, end in ends.items())
 
 
+def test_blocks_say_which_date_and_deadline_they_belong_to(client: TestClient) -> None:
+    # Two weeks' Reading responses can share a week, so each block names its own date and deadline.
+    week = add_series(
+        client, title="Reading response", preset="before_deadline", estimate_min=60, deadline_time="17:00",
+        repeat_weekdays=[2], start_date="2026-11-16",
+    )
+    blocks = blocks_titled(week, "Reading response") + blocks_titled(get(client, "2026-11-23"), "Reading response")
+    by_date = {b["occurrence_date"]: b["due"] for b in blocks}
+    assert by_date["2026-11-18"] == "2026-11-19T01:00:00Z"  # Wed 5pm PST
+    assert by_date["2026-11-25"] == "2026-11-26T01:00:00Z"
+    errand = add(client, title="Errand", preset="day", day="2026-11-19", estimate_min=60)
+    assert {(b["occurrence_date"], b["due"]) for b in blocks_titled(errand, "Errand")} == {(None, None)}
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [

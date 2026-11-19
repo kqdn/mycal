@@ -21,6 +21,8 @@ export interface Block {
   estimate_min: number | null // null for an exact-time item
   editable: boolean // whether the edit dialog can change the item (not Custom)
   series_id: string | null // set on an occurrence of a stored series
+  occurrence_date?: DateString | null // an occurrence's date, so two of one series can be told apart
+  due?: string | null // a "before a deadline" item's deadline (UTC ISO)
   // Check-ins (Milestone 7)
   checkable: boolean
   status: BlockStatus

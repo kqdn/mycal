@@ -117,6 +117,8 @@ class BlockOut(BaseModel):
     estimate_min: int | None  # None for an exact-time item
     editable: bool  # whether the edit dialog can change the item (not Custom)
     series_id: UUID | None = None  # set on an occurrence of a stored series
+    occurrence_date: date | None = None  # an occurrence's date, so two of one series can be told apart
+    due: datetime | None = None  # a "before a deadline" item's deadline
     # Check-ins (Milestone 7): planned, done, partial, missed or unanswered, the
     # minutes done (partial or done), and the policy that ran on the missed part.
     checkable: bool = False
@@ -1787,6 +1789,8 @@ def week_out(
                 estimate_min=items[b.item_id].estimate_min,
                 editable=b.item_id in live and editable(items[b.item_id]),
                 series_id=_stored(items[b.item_id].series_id, stored_series),
+                occurrence_date=items[b.item_id].occurrence_date,
+                due=items[b.item_id].deadline if items[b.item_id].flex_preset is FlexPreset.BEFORE_DEADLINE else None,
                 checkable=items[b.item_id].checkable,
                 status=b.status.value,
                 done_min=b.actual_min if b.status in (BlockStatus.DONE, BlockStatus.PARTIAL) else None,

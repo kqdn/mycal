@@ -1,7 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Block, RepeatOut } from './api'
 import { canCheckIn, checkInLine } from './checkIn'
-import { confirmLine, keepLine, kindLine, popoverPosition, unscheduledLine, whenLine, type UnscheduledItem } from './itemDetails'
+import {
+  confirmLine,
+  dueLine,
+  keepLine,
+  kindLine,
+  popoverPosition,
+  skipLine,
+  unscheduledLine,
+  whenLine,
+  type UnscheduledItem,
+} from './itemDetails'
 import { repeatLine } from './repeatForm'
 import { pointedBlock, useShortcuts } from './useShortcuts'
 
@@ -116,6 +126,9 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
       <p className="popover-kind">
         {target.kind === 'block' ? kindLine(target.block, openedAt) : unscheduledLine(target.item)}
       </p>
+      {target.kind === 'block' && dueLine(target.block, timezone) && (
+        <p className="popover-kind">{dueLine(target.block, timezone)}</p>
+      )}
 
       {repeat && <p className="popover-kind">{repeatLine(repeat)}</p>}
       {checkInText && <p className="popover-check-in">{checkInText}</p>}
@@ -194,7 +207,8 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
           <div>
             <p className="confirm-question">Delete which?</p>
             <p className="confirm-detail">
-              This skips only this date{history ? ', keeping its sessions that started on your calendar' : ''}. All stops it repeating:
+              {skipLine(target.kind === 'block' ? target.block.occurrence_date : null)}
+              {history ? ', keeping its sessions that started on your calendar' : ''}. All stops it repeating:
               dates that haven't started go, and past ones stay.
             </p>
           </div>
