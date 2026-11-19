@@ -151,6 +151,26 @@ class CheckInIn(BaseModel):
     done_min: int | None = None
     action: Literal["reschedule", "catch_up", "skip"] | None = None
     accept_shortfall: bool = False  # see ItemIn
+    # The catch-up item as changed in the item dialog, in place of the one the policy makes.
+    # Only when the missed part is caught up. Its week_start is the viewed week.
+    catch_up: ItemIn | None = None
+
+
+class CheckInPreviewOut(BaseModel):
+    """What an answer would do to the missed time, for the check-in dialog. Nothing is saved.
+
+    `action` is the policy that would run (None for Yes, or an Ask with no choice yet).
+    A catch-up comes as the item dialog's fields, with its deadline's reason ("next
+    session", "Project 3 is due", "a week from now") and whether its estimate is the
+    missed time times RECORDING_FACTOR (for an exact-time item).
+    """
+
+    action: Literal["reschedule", "catch_up", "skip"] | None
+    missed_min: int
+    item_title: str
+    catch_up: ItemFormOut | None = None
+    due_reason: str | None = None
+    recording: bool = False
 
 
 class SpanOut(BaseModel):
@@ -478,16 +498,64 @@ def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
             raise HTTPException(status_code=404, detail=BLOCK_GONE)
         item = store.get_item(conn, block.item_id)
         assert item is not None  # blocks go with their item
+        resolution = _resolve(conn, settings, block, item, request, moment)
+        if request.catch_up is not None:
+            if resolution.catch_up is None:
+                raise HTTPException(status_code=422, detail="Only a catch-up item can be changed when answering.")
+            try:
+                custom = to_item(request.catch_up, settings, moment)
+            except Invalid as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            resolution = replace(resolution, catch_up=replace(custom, catch_up_of=block.id))
+        _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall)
+        log.info("checked in %r: %s", item.title, request.answer)
+        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+
+
+@app.post("/api/blocks/{block_id}/check-in/preview")
+def preview_check_in(block_id: UUID, request: CheckInIn) -> CheckInPreviewOut:
+    """What answering would do to the missed time, worked out without saving or planning. 422 if it would be refused."""
+    with database() as (conn, settings):
+        moment = now()
+        block = next((b for b in store.list_blocks(conn) if b.id == block_id), None)
+        if block is None:
+            raise HTTPException(status_code=404, detail=BLOCK_GONE)
+        item = store.get_item(conn, block.item_id)
+        assert item is not None  # blocks go with their item
         chosen = None if request.action is None else OnMiss(request.action)
         try:
             resolution = checkins.resolve(
                 conn, settings, block, item, checkins.Answer(request.answer), moment, request.done_min, chosen
             )
+        except checkins.NeedsChoice:
+            return CheckInPreviewOut(action=None, missed_min=0, item_title=item.title)  # an Ask with no choice yet
         except checkins.Refused as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall)
-        log.info("checked in %r: %s", item.title, request.answer)
-        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+        new = resolution.block
+        if new.missed_action is None:
+            return CheckInPreviewOut(action=None, missed_min=0, item_title=item.title)
+        length = (block.end - block.start) // timedelta(minutes=1)
+        missed = length - (new.actual_min or 0)
+        preview = CheckInPreviewOut(action=new.missed_action.value, missed_min=missed, item_title=item.title)
+        if resolution.catch_up is not None:
+            _, why = checkins.catch_up_due(conn, settings, block, item, moment)
+            preview.catch_up = from_item(resolution.catch_up, None, settings)
+            preview.due_reason = why
+            preview.recording = item.flex_preset is FlexPreset.EXACT
+        return preview
+
+
+def _resolve(
+    conn: sqlite3.Connection, settings: SolverSettings, block: Block, item: Item, request: CheckInIn, moment: datetime
+) -> checkins.Resolution:
+    """The answer's result, without saving it. 422 with the sentence if it can't be recorded."""
+    chosen = None if request.action is None else OnMiss(request.action)
+    try:
+        return checkins.resolve(
+            conn, settings, block, item, checkins.Answer(request.answer), moment, request.done_min, chosen
+        )
+    except checkins.Refused as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> bool:

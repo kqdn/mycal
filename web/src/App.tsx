@@ -369,6 +369,8 @@ export default function App() {
           target={checkingIn}
           timezone={state.week.timezone}
           weekStart={weekStart}
+          frames={state.week.frames}
+          slotMin={state.week.slot_min}
           onClose={() => setCheckingIn(null)}
           onSaved={showSaved}
         />

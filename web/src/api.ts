@@ -55,6 +55,20 @@ export interface CheckInRequest {
   done_min?: number
   action?: MissedAction
   accept_shortfall?: boolean
+  catch_up?: ItemRequest // the catch-up item as changed in the item dialog
+}
+
+/**
+ * POST /api/blocks/{id}/check-in/preview: what an answer would do to the missed time.
+ * Nothing is saved. A catch-up comes as the item dialog's fields, with why it is due then.
+ */
+export interface CheckInPreview {
+  action: MissedAction | null // null for Yes, or an Ask with no choice yet
+  missed_min: number
+  item_title: string
+  catch_up: ItemFormOut | null
+  due_reason: string | null // "next session", "Project 3 is due", "a week from now"
+  recording: boolean // its estimate is the missed time × 1.25 (an exact-time item)
 }
 
 /** An "N times a week" item in the week that gets fewer sessions than it needs. */
@@ -378,6 +392,17 @@ export async function listCheckIns(): Promise<CheckIn[]> {
 /** Answer a check-in. A 422 says the missed time can't go anywhere; a 409 asks to accept fewer sessions. */
 export async function answerCheckIn(blockId: string, request: CheckInRequest, week: DateString): Promise<Week> {
   return sendForWeek(`/api/blocks/${blockId}/check-in?week=${week}`, 'POST', request)
+}
+
+/** What an answer would do, without saving it. Throws WeekError with the server's sentence on a 422. */
+export async function previewCheckIn(blockId: string, request: CheckInRequest): Promise<CheckInPreview> {
+  const response = await fetch(`/api/blocks/${blockId}/check-in/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) throw await failure(response)
+  return response.json()
 }
 
 /** Accept that an "N times a week" item gets fewer sessions, hiding its banner. */

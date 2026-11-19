@@ -17,6 +17,7 @@ an Ask item keeps waiting (missed_action None) until it is answered.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -26,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from mycal import store
 from mycal.model import MISSABLE, Block, BlockStatus, FlexPreset, Item, OnMiss
+from mycal.planner import open_from_moment
 from mycal.recurrence import occurrence_dates, occurrence_on
 from mycal.settings import SolverSettings
 
@@ -206,8 +208,13 @@ def _length(block: Block) -> int:
 def catch_up_item(
     conn: sqlite3.Connection, settings: SolverSettings, block: Block, item: Item, missed_min: int, moment: datetime
 ) -> Item:
-    """A flexible item to make up for a missed part, placed in the normal work frames before its deadline."""
-    estimate = round(missed_min * RECORDING_FACTOR) if item.flex_preset is FlexPreset.EXACT else missed_min
+    """A flexible item to make up for a missed part, placed in the normal work frames before its deadline.
+
+    A missed exact-time item takes RECORDING_FACTOR longer, rounded up to whole slots.
+    """
+    estimate = missed_min
+    if item.flex_preset is FlexPreset.EXACT:
+        estimate = math.ceil(missed_min * RECORDING_FACTOR / settings.slot_min) * settings.slot_min
     title = item.title.removeprefix(CATCH_UP_PREFIX)
     return Item(
         title=f"{CATCH_UP_PREFIX}{title}",
@@ -224,17 +231,27 @@ def catch_up_item(
 def catch_up_deadline(
     conn: sqlite3.Connection, settings: SolverSettings, block: Block, item: Item, moment: datetime
 ) -> datetime:
-    """Before the series' next occurrence, else before the earliest item that depends on it, else a week on.
+    return catch_up_due(conn, settings, block, item, moment)[0]
 
+
+def catch_up_due(
+    conn: sqlite3.Connection, settings: SolverSettings, block: Block, item: Item, moment: datetime
+) -> tuple[datetime, str]:
+    """A catch-up's deadline and why, for the page: "next session", "<item> is due" or "a week from now".
+
+    Before the series' next occurrence, else before the earliest item that depends on it, else a week on.
     A choice less than MIN_CATCH_UP_LEAD away leaves too little room, so the next one is used.
     """
-    choices = [_next_occurrence_start(conn, settings, item)]
-    dependents = [i.deadline for i in store.list_items(conn) if item.id in i.depends_on and i.deadline is not None]
-    choices.append(min(dependents, default=None))
-    for choice in choices:
+    choices: list[tuple[datetime | None, str]] = [(_next_occurrence_start(conn, settings, item), "next session")]
+    dependents = [i for i in store.list_items(conn) if item.id in i.depends_on and i.deadline is not None]
+    if dependents:
+        first = min(dependents, key=lambda i: i.deadline or moment)
+        choices.append((first.deadline, f"{first.title} is due"))
+    for choice, why in choices:
         if choice is not None and choice >= moment + MIN_CATCH_UP_LEAD:
-            return choice
-    return max(block.end, moment) + CATCH_UP_FALLBACK
+            return choice, why
+    # Up to a slot boundary, so the item dialog shows 7:30pm rather than 7:24pm.
+    return open_from_moment(max(block.end, moment) + CATCH_UP_FALLBACK, settings.slot_min), "a week from now"
 
 
 def _next_occurrence_start(conn: sqlite3.Connection, settings: SolverSettings, item: Item) -> datetime | None:

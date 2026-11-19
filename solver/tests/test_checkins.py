@@ -288,6 +288,81 @@ def test_deleting_a_catch_up_item_marks_the_missed_block_skipped(client: TestCli
     assert (missed["status"], missed["missed_action"]) == ("missed", "skip")
 
 
+def preview(client: TestClient, block_id: str, answer: str, **fields: object) -> dict:
+    response = client.post(f"/api/blocks/{block_id}/check-in/preview", json={"answer": answer, **fields})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_preview_shows_the_catch_up_item_and_saves_nothing(client: TestClient, clock: Clock) -> None:
+    lecture()
+    week(client)
+    clock.moment = local(16, 12)
+    [asking] = pending(client)
+
+    shown = preview(client, asking["block_id"], "no")
+
+    assert (shown["action"], shown["missed_min"], shown["recording"], shown["due_reason"]) == ("catch_up", 60, True, "a week from now")
+    form = shown["catch_up"]
+    assert (form["title"], form["preset"], form["estimate_min"]) == ("Catch up: Lecture", "before_deadline", 75)
+    assert (form["deadline_date"], form["deadline_time"]) == ("2026-11-23", "12:00:00")
+    assert [p["block_id"] for p in pending(client)] == [asking["block_id"]]
+    assert all(i.catch_up_of is None for i in store.list_items(store.connect(store.db_path())))
+
+
+def test_a_preview_of_a_reschedule_or_an_ask_without_a_choice(client: TestClient, clock: Clock) -> None:
+    work = essay(OnMiss.ASK)
+    first = blocks_of(client, work)[0]
+    clock.moment = datetime.fromisoformat(first["end"])
+
+    assert preview(client, first["id"], "no")["action"] is None
+    shown = preview(client, first["id"], "partly", done_min=20, action="reschedule")
+    assert (shown["action"], shown["missed_min"], shown["catch_up"]) == ("reschedule", 40, None)
+
+
+def test_a_missed_recording_rounds_up_to_whole_slots(client: TestClient, clock: Clock) -> None:
+    params = {"start": local(16, 10), "end": local(16, 10, 30)}
+    add(Item("Seminar", FlexPreset.EXACT, preset_params=params, checkable=True, on_miss=OnMiss.CATCH_UP))
+    week(client)
+    clock.moment = local(16, 12)
+    [asking] = pending(client)
+
+    assert preview(client, asking["block_id"], "no")["catch_up"]["estimate_min"] == 45  # 37.5m, up to 15m slots
+
+
+def test_answering_with_a_changed_catch_up_item_uses_it(client: TestClient, clock: Clock) -> None:
+    lecture()
+    week(client)
+    clock.moment = local(16, 12)
+    [asking] = pending(client)
+    form = preview(client, asking["block_id"], "no")["catch_up"]
+    changed = {**form, "week_start": WEEK, "title": "Watch the recording", "estimate_min": 90}
+    changed = {k: v for k, v in changed.items() if k not in ("id", "source", "editable", "series_id")}
+
+    answered(client, asking["block_id"], "no", action="catch_up", catch_up=changed)
+
+    conn = store.connect(store.db_path())
+    [catch_up] = [i for i in store.list_items(conn) if i.catch_up_of == UUID(asking["block_id"])]
+    assert (catch_up.title, catch_up.estimate_min) == ("Watch the recording", 90)
+    answered(client, asking["block_id"], "yes")
+    assert [i for i in store.list_items(store.connect(store.db_path())) if i.catch_up_of is not None] == []
+
+
+def test_a_changed_catch_up_is_refused_when_nothing_is_caught_up(client: TestClient, clock: Clock) -> None:
+    lecture()
+    week(client)
+    clock.moment = local(16, 12)
+    [asking] = pending(client)
+    item = {"week_start": WEEK, "title": "Watch", "preset": "before_deadline", "deadline_date": "2026-11-20",
+            "deadline_time": "17:00", "estimate_min": 60}
+
+    response = client.post(f"/api/blocks/{asking['block_id']}/check-in?week={WEEK}",
+                           json={"answer": "no", "action": "skip", "catch_up": item})
+
+    assert response.status_code == 422
+    assert stored_block(asking["block_id"]).status is BlockStatus.PLANNED  # type: ignore[attr-defined]
+
+
 # Unanswered
 
 

@@ -161,6 +161,68 @@ a.tab {
   gap: 2px;
 }
 
+/* What happens to the missed time (Check-ins, Dialog): a dashed tile, a button for a catch-up. */
+.miss-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px dashed var(--text-muted);
+  border-radius: var(--radius-input);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.miss-tile {
+  cursor: pointer;
+  min-height: var(--tap);
+}
+
+button.miss-tile:hover {
+  border-color: var(--text);
+}
+
+.miss-tile-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.miss-tile-edit {
+  color: var(--accent);
+}
+
+.miss-tile-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.miss-tile-text,
+.miss-tile-row {
+  font-size: 13px;
+}
+
+.miss-tile-row {
+  display: flex;
+  gap: 8px;
+}
+
+.miss-tile-key {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.check-in-grace {
+  text-align: center;
+}
+
 .popover-check-in {
   font-size: 13px;
   color: var(--text);

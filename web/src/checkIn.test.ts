@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Block } from './api'
+import type { Block, CheckInPreview } from './api'
 import {
+  answerQuestion,
   awaitsCheckIn,
   bannerTitle,
   blockKind,
@@ -8,6 +9,9 @@ import {
   checkInLine,
   checkInRequest,
   emptyCheckIn,
+  graceLine,
+  missTile,
+  previewRequest,
   pendingKey,
   targetFromBlock,
   validateCheckIn,
@@ -19,6 +23,7 @@ const ESSAY: CheckInTarget = {
   title: 'Essay',
   start: '2026-11-17T17:00:00Z', // Tue 9am PST
   end: '2026-11-17T18:00:00Z', // a 1h session
+  fixed: false,
   status: 'planned',
   done_min: null,
   on_miss: 'reschedule',
@@ -129,5 +134,55 @@ describe('check-in lines and looks', () => {
   it('notices when the server changed the pending list', () => {
     const one = [{ block_id: 'b1', status: 'planned' as const }]
     expect(pendingKey(one)).not.toBe(pendingKey([{ block_id: 'b1', status: 'unanswered' as const }]))
+  })
+})
+
+describe('the check-in dialog tile', () => {
+  const lecture = { ...ESSAY, title: 'Lecture', fixed: true }
+  const form = { answer: 'no' as const, done: '', action: 'catch_up' as const }
+  const caughtUp: CheckInPreview = {
+    action: 'catch_up',
+    missed_min: 30,
+    item_title: 'Lecture',
+    due_reason: 'next session',
+    recording: true,
+    catch_up: {
+      id: 'c1', source: null, editable: true, series_id: null, week_start: '2026-11-16', title: 'Catch up: Lecture',
+      preset: 'before_deadline', day: null, start_time: null, end_time: null, weekdays: null,
+      deadline_date: '2026-11-19', deadline_time: '11:00:00', estimate_min: 45, max_chunk_min: null,
+      one_block_per_day: false, session_min: null, checkable: true, on_miss: 'reschedule',
+    },
+  }
+
+  it('asks a fixed event whether you went', () => {
+    expect([answerQuestion(lecture), answerQuestion(ESSAY)]).toEqual(['Did you go?', 'Did you do it?'])
+  })
+
+  it('previews only a complete Partly or No', () => {
+    expect(previewRequest(form, ESSAY)).toEqual({ answer: 'no', action: 'catch_up' })
+    expect(previewRequest({ ...form, answer: 'partly', done: '' }, ESSAY)).toBeNull()
+    expect(previewRequest({ ...form, answer: 'yes' }, ESSAY)).toBeNull()
+  })
+
+  it('shows the catch-up item it makes, with the rounding and why it is due then', () => {
+    expect(missTile(caughtUp, 15)).toEqual({
+      label: 'Creates a catch-up item',
+      title: 'Catch up: Lecture',
+      rows: [
+        ['Estimate', '45m (30m missed × 1.25 for a recording, rounded up to 15m)'],
+        ['Due', 'Before Thu, Nov 19, 11:00am (next session)'],
+        ['Placed in', 'Your usual work frames'],
+      ],
+    })
+    expect(missTile({ ...caughtUp, action: 'skip', catch_up: null }, 15)?.text).toBe(
+      'The 30m is only logged. Nothing is placed again.',
+    )
+  })
+
+  it('says when an unanswered session counts as missed', () => {
+    expect(graceLine(ESSAY, 'America/Los_Angeles', AFTER)).toBe(
+      'No answer by 2:00pm counts as missed. You can change it later.',
+    )
+    expect(graceLine({ ...ESSAY, status: 'done' }, 'America/Los_Angeles', AFTER)).toBeNull()
   })
 })
