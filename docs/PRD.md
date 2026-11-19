@@ -339,7 +339,7 @@ The solver takes tasks, blocks, frames and constraints and returns placements. I
 6. Recurrence in the app: series stored and created or edited in the app. The Series model and its expansion are already built in the solver package. Done.
 Between 6 and 7: keyboard shortcuts in the app (see the decision log, Nov 17). Done.
 7. Check-ins and on-miss policies: Yes / Partly / No when a checkable block ends, then reschedule, catch-up, skip or ask. Also fewer sessions for an "N times a week" item short of days, archiving items with history, and the check-in fields in the item dialogs. See How check-ins work. Done.
-Between 7 and 8: click an empty slot in the week grid to open the New item dialog with that day and time filled in (see the decision log, Nov 18).
+Between 7 and 8: click an empty slot in the week grid to open the New item dialog with that day and time filled in (see the decision log, Nov 18). Done.
 8. Preview and accept re-plans: every change (adding, editing or deleting an item, a check-in, a frame or rule edit) makes a proposed plan instead of saving one. The week shows it in the compare view (see Previewing an arrangement) with Accept and Discard. Discard keeps the old plan, and a new item or rescheduled work stays unscheduled until a plan with it is accepted. A week planned for the first time needs no Accept.
 9. Drag to move: drag a block to another time; a moved block locks, and the solver plans around it (see Manual moves lock blocks). A drop is a change like any other, so it shows its re-plan in the preview from Milestone 8. Unlocking hands the block back to the solver.
 
