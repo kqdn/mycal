@@ -70,6 +70,12 @@ describe('the check-in form', () => {
     expect(emptyCheckIn({ ...ESSAY, status: 'unanswered' }).answer).toBeNull()
   })
 
+  it('starts from the earlier choice for the missed time, even for an Ask item', () => {
+    const earlier = { ...ESSAY, status: 'partial' as const, done_min: 45, on_miss: 'ask' as const, missed_action: 'reschedule' as const }
+    expect(emptyCheckIn(earlier).action).toBe('reschedule')
+    expect(emptyCheckIn({ ...earlier, on_miss: 'catch_up', missed_action: 'skip' }).action).toBe('skip')
+  })
+
   it('needs an answer, a part of the session for Partly, and a choice for the missed time', () => {
     expect(validateCheckIn({ answer: null, done: '', action: null }, ESSAY)).toHaveProperty('answer')
     expect(validateCheckIn({ answer: 'yes', done: '', action: null }, ESSAY)).toEqual({})

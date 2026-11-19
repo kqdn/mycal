@@ -8,11 +8,14 @@ import { parseDuration } from './itemForm'
 
 export type Answer = CheckInRequest['answer']
 
-/** What the check-in dialog is about: a pending check-in, or a past block whose answer can change. */
+/**
+ * What the check-in dialog is about: a pending check-in, or a past block whose answer can change.
+ * `missed_action` is the choice made by the earlier answer, if any.
+ */
 export type CheckInTarget = Pick<
   CheckIn,
   'block_id' | 'title' | 'start' | 'end' | 'fixed' | 'status' | 'done_min' | 'on_miss' | 'choices'
->
+> & { missed_action?: MissedAction | null }
 
 export const ANSWERS: { value: Answer; label: string }[] = [
   { value: 'yes', label: 'Yes' },
@@ -45,15 +48,16 @@ export function targetFromBlock(block: Block): CheckInTarget {
     fixed: block.fixed,
     status: block.status,
     done_min: block.done_min,
+    missed_action: block.missed_action,
     on_miss: block.on_miss,
     choices: block.fixed ? ['catch_up', 'skip'] : ['reschedule', 'catch_up', 'skip'],
   }
 }
 
-/** A fresh form: the earlier answer, if any, and the item's own policy for the missed time. */
+/** A fresh form: the earlier answer and its choice for the missed time, if any, else the item's own policy. */
 export function emptyCheckIn(target: CheckInTarget): CheckInForm {
   const answers: Partial<Record<CheckInTarget['status'], Answer>> = { done: 'yes', partial: 'partly', missed: 'no' }
-  const policy = target.on_miss === 'ask' ? null : target.on_miss
+  const policy = target.missed_action ?? (target.on_miss === 'ask' ? null : target.on_miss)
   return {
     answer: answers[target.status] ?? null,
     done: target.status === 'partial' && target.done_min !== null ? estimateLabel(target.done_min) : '',
