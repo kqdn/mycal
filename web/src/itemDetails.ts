@@ -12,6 +12,8 @@ export interface UnscheduledItem {
   sessions: number
   editable: boolean
   series_id?: string | null // set on an occurrence of a stored series
+  history?: boolean // it has check-in history, so deleting it keeps the sessions that started
+  kept?: number // its sessions that started, in every week
 }
 
 /** "Tue, Nov 17, 2:00 to 2:30pm", or "... (ends the next day)" for a block that runs past midnight. */
@@ -43,6 +45,17 @@ export function kindLine(block: Block, now: string): string {
 export function unscheduledLine(item: UnscheduledItem): string {
   const why = item.reason ?? 'Not scheduled: it has no times to go in yet'
   return item.estimate_min === null ? why : `${why} · ${estimateLabel(item.estimate_min)}`
+}
+
+/** What deleting an item with check-in history does: the sessions ahead go, the ones that started stay. */
+export function keepLine(sessions: number, kept: number): string {
+  const ahead = sessions - kept
+  const stays =
+    kept === 1
+      ? 'The session that already started stays on your calendar.'
+      : `The ${kept} sessions that already started stay on your calendar.`
+  if (ahead <= 0) return stays
+  return `${ahead === 1 ? 'The one session ahead goes.' : `The ${ahead} sessions ahead go.`} ${stays}`
 }
 
 /** What a delete takes with it. */

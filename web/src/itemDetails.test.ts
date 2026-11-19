@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Block, Week } from './api'
-import { confirmLine, kindLine, popoverPosition, unscheduledLine, weekAfterDelete, whenLine } from './itemDetails'
+import { confirmLine, keepLine, kindLine, popoverPosition, unscheduledLine, weekAfterDelete, whenLine } from './itemDetails'
 
 const LA = 'America/Los_Angeles'
 
@@ -18,6 +18,14 @@ function block(changes: Partial<Block>): Block {
     estimate_min: 30,
     editable: true,
     series_id: null,
+    checkable: false,
+    status: 'planned',
+    done_min: null,
+    missed_action: null,
+    history: false,
+    kept: 0,
+    deleted: false,
+    on_miss: 'reschedule',
     ...changes,
   }
 }
@@ -81,6 +89,12 @@ describe('unscheduledLine and confirmLine', () => {
       'Its one session goes.',
       'All 4 sessions go, in every week.',
     ])
+  })
+
+  it('says which sessions a delete keeps when the item has check-in history', () => {
+    expect(keepLine(5, 3)).toBe('The 2 sessions ahead go. The 3 sessions that already started stay on your calendar.')
+    expect(keepLine(2, 1)).toBe('The one session ahead goes. The session that already started stays on your calendar.')
+    expect(keepLine(1, 1)).toBe('The session that already started stays on your calendar.')
   })
 })
 

@@ -21,6 +21,7 @@ import {
   type Errors,
   type Field,
   type ItemForm,
+  type ItemRequest,
   type Preset,
 } from './itemForm'
 import { fieldProps } from './fieldProps'
@@ -53,6 +54,13 @@ interface Props {
     form: ItemForm
     weekStart: DateString
   }
+  // Set to change a catch-up item before it is made, from the check-in dialog's tile. Saving
+  // sends the check-in answer with the item (`save`), so nothing is saved until then.
+  catchUp?: {
+    form: ItemForm
+    weekStart: DateString
+    save: (request: ItemRequest) => Promise<Week>
+  }
   onClose: () => void
   onSaved: (week: Week) => void
 }
@@ -61,12 +69,12 @@ interface Props {
  * The Add item dialog (web/DESIGN.md, "Add item dialog"), which also edits an item
  * ("Item details popover", Editing). Mounted while open.
  */
-export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, onClose, onSaved }: Props) {
+export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, catchUp, onClose, onSaved }: Props) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleInput = useRef<HTMLInputElement>(null)
   // A days or every-day item belongs to its own week; the response shows the viewed one.
-  const formWeek = editing?.weekStart ?? weekStart
-  const [form, setForm] = useState<ItemForm>(() => editing?.form ?? emptyForm(weekStart, today()))
+  const formWeek = editing?.weekStart ?? catchUp?.weekStart ?? weekStart
+  const [form, setForm] = useState<ItemForm>(() => editing?.form ?? catchUp?.form ?? emptyForm(weekStart, today()))
   const [touched, setTouched] = useState<Set<Field>>(new Set())
   const [saving, setSaving] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
@@ -87,7 +95,7 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
   // Editing without changing when the item is: a passed day or deadline is fine, as on the server.
   const unmoved = editing !== undefined && whenKey(form) === whenKey(editing.form)
   const editingSeries = editing?.kind === 'series'
-  const showsRepeat = editing === undefined || editingSeries || editing.repeatable === true
+  const showsRepeat = catchUp === undefined && (editing === undefined || editingSeries || editing.repeatable === true)
   const errors: Errors = validateWithRepeat(
     form,
     openedAt,
@@ -133,7 +141,8 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
     setServerError(null)
     try {
       let week: Week
-      if (editingSeries) week = await updateSeries(editing.id, toSeriesRequest(form, formWeek), weekStart)
+      if (catchUp) week = await catchUp.save(toRequest(form, formWeek))
+      else if (editingSeries) week = await updateSeries(editing.id, toSeriesRequest(form, formWeek), weekStart)
       else if (editing && repeats(form)) week = await repeatItem(editing.id, toSeriesRequest(form, formWeek), weekStart)
       else if (editing) week = await updateItem(editing.id, toRequest(form, formWeek), weekStart)
       else if (repeats(form)) week = await addSeries(toSeriesRequest(form, weekStart))
@@ -160,10 +169,10 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, o
             Cancel
           </button>
           <h2 id="new-item-title" className="dialog-title">
-            {editingSeries ? 'Edit repeating item' : editing ? 'Edit item' : 'New item'}
+            {catchUp ? 'Catch-up item' : editingSeries ? 'Edit repeating item' : editing ? 'Edit item' : 'New item'}
           </h2>
           <button type="submit" className="primary-button" disabled={saving}>
-            {editing ? (saving ? 'Saving...' : 'Save') : saving ? 'Adding...' : 'Add'}
+            {catchUp ? (saving ? 'Saving...' : 'Save and plan') : editing ? (saving ? 'Saving...' : 'Save') : saving ? 'Adding...' : 'Add'}
           </button>
         </header>
 

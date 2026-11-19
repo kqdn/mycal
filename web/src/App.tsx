@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clearWeekCache, deleteItem, deleteSeries, getItem, getSeries, loadWeek, peekWeek, WeekError, type Week } from './api'
-import { weekAfterDelete } from './itemDetails'
+import {
+  clearWeekCache,
+  deleteItem,
+  deleteSeries,
+  getItem,
+  getSeries,
+  listCheckIns,
+  loadWeek,
+  peekWeek,
+  WeekError,
+  type CheckIn,
+  type Week,
+} from './api'
+import { CheckInDialog } from './CheckInDialog'
+import { bannerTitle, pendingKey, targetFromBlock, type CheckInTarget } from './checkIn'
+import { weekAfterDelete, whenLine } from './itemDetails'
 import { formFrom, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
@@ -55,6 +69,29 @@ export default function App() {
     form: ItemForm
     weekStart: DateString
   } | null>(null)
+  // Check-ins (Milestone 7): the pending list, refreshed every minute, and the one being answered.
+  const [checkIns, setCheckIns] = useState<CheckIn[]>([])
+  const [checkingIn, setCheckingIn] = useState<CheckInTarget | null>(null)
+  const lastPending = useRef<string | null>(null)
+  const refreshCheckIns = useCallback(() => {
+    listCheckIns()
+      .then((list) => {
+        // The server turns old check-ins into unanswered ones, which can re-plan, so a change it made reloads the week.
+        const key = pendingKey(list)
+        if (lastPending.current !== null && lastPending.current !== key) {
+          clearWeekCache()
+          setReload((n) => n + 1)
+        }
+        lastPending.current = key
+        setCheckIns(list)
+      })
+      .catch(() => {}) // the week's own banner says when the planner can't be reached
+  }, [])
+  useEffect(() => {
+    refreshCheckIns()
+    const id = window.setInterval(refreshCheckIns, 60_000)
+    return () => window.clearInterval(id)
+  }, [refreshCheckIns])
   // What a finishing delete needs to know now, not when it started.
   const viewing = useRef(weekStart)
   const openItem = useRef<string | null>(null)
@@ -194,6 +231,9 @@ export default function App() {
 
   function showSaved(week: Week) {
     setResult({ for: weekStart, status: 'ready', week })
+    // Any change can add or settle check-ins; this week is already fresh, so don't reload it.
+    lastPending.current = null
+    refreshCheckIns()
   }
 
   function go(days: number) {
@@ -244,7 +284,9 @@ export default function App() {
     const block = state.week.blocks.find((b) => b.id === element.dataset.blockId)
     if (!block) return false
     const target: PopoverTarget = { kind: 'block', itemId: block.item_id, title: block.title, block, opener: element }
-    if (action === 'delete') {
+    if (block.deleted) {
+      setOpen(target) // a deleted item's kept session: says so, with nothing to do
+    } else if (action === 'delete') {
       setOpen({ ...target, startAt: 'confirm' })
     } else if (!block.editable) {
       setOpen(target) // says why it can't be edited
@@ -321,6 +363,19 @@ export default function App() {
         />
       )}
 
+      {view === 'week' && checkingIn && state.status === 'ready' && (
+        <CheckInDialog
+          key={checkingIn.block_id}
+          target={checkingIn}
+          timezone={state.week.timezone}
+          weekStart={weekStart}
+          frames={state.week.frames}
+          slotMin={state.week.slot_min}
+          onClose={() => setCheckingIn(null)}
+          onSaved={showSaved}
+        />
+      )}
+
       {view === 'week' && editing && state.status === 'ready' && (
         <NewItemDialog
           key={editing.id}
@@ -356,6 +411,29 @@ export default function App() {
           </div>
 
           {pageProblem && <Banner {...pageProblem} onDismiss={() => setPageProblem(null)} />}
+          {state.status === 'ready' && checkIns.length > 0 && (
+            <section className="banner check-in-banner" aria-labelledby="check-in-banner-title">
+              <p className="banner-title" id="check-in-banner-title">
+                {bannerTitle(checkIns.length)}
+              </p>
+              <ul className="check-in-list">
+                {checkIns.map((checkIn) => (
+                  <li key={checkIn.block_id} className="check-in-row">
+                    <div className="row-text">
+                      <span className="row-title">{checkIn.title}</span>
+                      <span className="row-sub">
+                        {whenLine(checkIn, state.week.timezone)}
+                        {checkIn.status !== 'planned' && ' · Waiting for your choice'}
+                      </span>
+                    </div>
+                    <button type="button" className="secondary-button" onClick={() => setCheckingIn(checkIn)}>
+                      Check in
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           {state.status === 'loading' && <p className="loading">Loading...</p>}
           {state.status === 'error' && <Banner {...state.problem} />}
           {state.status === 'ready' && !state.week.feasible && (
@@ -421,6 +499,10 @@ export default function App() {
           openError={openError?.itemId === open.itemId ? openError.message : null}
           onEdit={(scope) => startEdit(open, scope)}
           onDelete={(scope) => remove(open, scope)}
+          onCheckIn={(block) => {
+            setOpen(null)
+            setCheckingIn(targetFromBlock(block))
+          }}
           onClose={closePopover}
         />
       )}

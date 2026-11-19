@@ -123,6 +123,10 @@ class BlockOut(BaseModel):
     done_min: int | None = None
     missed_action: str | None = None
     history: bool = False  # it has check-in history, so deleting it archives it instead
+    on_miss: str = "reschedule"  # what a No does (Skip for an exact item set to Reschedule)
+    # Deleting an item with history keeps its sessions that started: how many, in every week.
+    kept: int = 0
+    deleted: bool = False  # a kept session of a deleted (archived) item, shown as a record only
 
 
 class CheckInOut(BaseModel):
@@ -147,6 +151,26 @@ class CheckInIn(BaseModel):
     done_min: int | None = None
     action: Literal["reschedule", "catch_up", "skip"] | None = None
     accept_shortfall: bool = False  # see ItemIn
+    # The catch-up item as changed in the item dialog, in place of the one the policy makes.
+    # Only when the missed part is caught up. Its week_start is the viewed week.
+    catch_up: ItemIn | None = None
+
+
+class CheckInPreviewOut(BaseModel):
+    """What an answer would do to the missed time, for the check-in dialog. Nothing is saved.
+
+    `action` is the policy that would run (None for Yes, or an Ask with no choice yet).
+    A catch-up comes as the item dialog's fields, with its deadline's reason ("next
+    session", "Project 3 is due", "a week from now") and whether its estimate is the
+    missed time times RECORDING_FACTOR (for an exact-time item).
+    """
+
+    action: Literal["reschedule", "catch_up", "skip"] | None
+    missed_min: int
+    item_title: str
+    catch_up: ItemFormOut | None = None
+    due_reason: str | None = None
+    recording: bool = False
 
 
 class SpanOut(BaseModel):
@@ -163,6 +187,7 @@ class ItemRef(BaseModel):
     editable: bool = False  # whether the edit dialog can change the item (not Custom)
     series_id: UUID | None = None  # set on an occurrence of a stored series
     history: bool = False  # it has check-in history, so deleting it archives it instead
+    kept: int = 0  # its sessions that started, which deleting keeps when it has history
 
 
 class RepeatOut(BaseModel):
@@ -236,6 +261,9 @@ def get_week(week_start: date) -> WeekOut:
         except PlannerTimeout as error:
             log.warning("%s: %s", week_start, error)
             raise HTTPException(status_code=503, detail=VIEW_TIMED_OUT) from error
+        # Planning a week for the first time can place blocks that ended long ago (a past lecture).
+        if _expire_check_ins(conn, settings, moment):
+            feasible = _status_or_stored(conn, settings, week_start, moment)
         return week_out(conn, settings, week_start, feasible, moment)
 
 
@@ -354,9 +382,11 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
 
     An item with check-in history is archived instead: its finished blocks stay
     as history, its sessions ahead are removed and it leaves the week view.
+    Deleting a catch-up item marks its missed block as skipped.
     """
     with database() as (conn, settings):
-        if store.get_item(conn, item_id) is None or store.is_archived(conn, item_id):
+        item = store.get_item(conn, item_id)
+        if item is None or store.is_archived(conn, item_id):
             raise HTTPException(status_code=404, detail=ITEM_GONE)
         moment = now()
         blocks = store.list_blocks(conn)
@@ -365,6 +395,7 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
         if item_id in _with_history(blocks):
             store.archive_item(conn, item_id, moment)
         else:
+            checkins.skip_deleted_catch_up(conn, item)
             store.delete_item(conn, item_id)
         try:
             if weeks:
@@ -467,28 +498,80 @@ def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
             raise HTTPException(status_code=404, detail=BLOCK_GONE)
         item = store.get_item(conn, block.item_id)
         assert item is not None  # blocks go with their item
-        chosen = None if request.action is None else OnMiss(request.action)
-        try:
-            resolution = checkins.resolve(
-                conn, settings, block, item, checkins.Answer(request.answer), moment, request.done_min, chosen
-            )
-        except checkins.Refused as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+        resolution = _resolve(conn, settings, block, item, request, moment)
+        if request.catch_up is not None:
+            if resolution.catch_up is None:
+                raise HTTPException(status_code=422, detail="Only a catch-up item can be changed when answering.")
+            try:
+                custom = to_item(request.catch_up, settings, moment)
+            except Invalid as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            resolution = replace(resolution, catch_up=replace(custom, catch_up_of=block.id))
         _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall)
         log.info("checked in %r: %s", item.title, request.answer)
         return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
 
 
-def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> None:
-    """Count check-ins left unanswered too long as No. If their policies can't fit, they wait for a choice instead."""
+@app.post("/api/blocks/{block_id}/check-in/preview")
+def preview_check_in(block_id: UUID, request: CheckInIn) -> CheckInPreviewOut:
+    """What answering would do to the missed time, worked out without saving or planning. 422 if it would be refused."""
+    with database() as (conn, settings):
+        moment = now()
+        block = next((b for b in store.list_blocks(conn) if b.id == block_id), None)
+        if block is None:
+            raise HTTPException(status_code=404, detail=BLOCK_GONE)
+        item = store.get_item(conn, block.item_id)
+        assert item is not None  # blocks go with their item
+        chosen = None if request.action is None else OnMiss(request.action)
+        try:
+            resolution = checkins.resolve(
+                conn, settings, block, item, checkins.Answer(request.answer), moment, request.done_min, chosen
+            )
+        except checkins.NeedsChoice:
+            return CheckInPreviewOut(action=None, missed_min=0, item_title=item.title)  # an Ask with no choice yet
+        except checkins.Refused as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        new = resolution.block
+        if new.missed_action is None:
+            return CheckInPreviewOut(action=None, missed_min=0, item_title=item.title)
+        length = (block.end - block.start) // timedelta(minutes=1)
+        missed = length - (new.actual_min or 0)
+        preview = CheckInPreviewOut(action=new.missed_action.value, missed_min=missed, item_title=item.title)
+        if resolution.catch_up is not None:
+            _, why = checkins.catch_up_due(conn, settings, block, item, moment)
+            preview.catch_up = from_item(resolution.catch_up, None, settings)
+            preview.due_reason = why
+            preview.recording = item.flex_preset is FlexPreset.EXACT
+        return preview
+
+
+def _resolve(
+    conn: sqlite3.Connection, settings: SolverSettings, block: Block, item: Item, request: CheckInIn, moment: datetime
+) -> checkins.Resolution:
+    """The answer's result, without saving it. 422 with the sentence if it can't be recorded."""
+    chosen = None if request.action is None else OnMiss(request.action)
+    try:
+        return checkins.resolve(
+            conn, settings, block, item, checkins.Answer(request.answer), moment, request.done_min, chosen
+        )
+    except checkins.Refused as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> bool:
+    """Count check-ins left unanswered too long as No. If their policies can't fit, they wait for a choice instead.
+
+    Returns whether any expired.
+    """
     resolutions = checkins.expire_all(conn, settings, moment)
     if not resolutions:
-        return
+        return False
     try:
         _save_check_ins(conn, settings, resolutions, moment, "unanswered check-ins")
     except HTTPException:
         checkins.apply(conn, [checkins.waiting(r) for r in resolutions])
     log.info("%d check-in(s) went unanswered", len(resolutions))
+    return True
 
 
 def _save_check_ins(
@@ -1666,12 +1749,19 @@ def week_out(
 ) -> WeekOut:
     """The week's stored blocks and frames as a response. Estimates are the work items have as of `moment`."""
     week = week_horizon(week_start, settings.timezone)
-    blocks = store.list_blocks(conn, week.start, week.end) if feasible else []
+    # Deleted (archived) items' kept sessions show too, as a record of what happened.
+    blocks = store.list_blocks(conn, week.start, week.end, include_archived=True) if feasible else []
     waiting = waiting_on_broken_weeks(conn, settings, week_start, moment)
     # Sessions are counted across every week, so look at all blocks, in start order.
-    every_block = store.list_blocks(conn)
+    every_block = store.list_blocks(conn, include_archived=True)
     frames = store.list_work_frames(conn)
-    items = {item.id: item for item in effective_items(store.list_items(conn), every_block, frames, settings, moment)}
+    live = {item.id for item in store.list_items(conn)}
+    every_item = store.list_items(conn, include_archived=True)
+    items = {item.id: item for item in effective_items(every_item, every_block, frames, settings, moment)}
+    kept: dict[UUID, int] = {}
+    for b in every_block:
+        if b.status is not BlockStatus.PLANNED or b.start <= moment:  # what archive_item keeps
+            kept[b.item_id] = kept.get(b.item_id, 0) + 1
     sessions: dict[UUID, list[UUID]] = {}
     for b in every_block:
         sessions.setdefault(b.item_id, []).append(b.id)
@@ -1697,13 +1787,16 @@ def week_out(
                 sessions=len(sessions[b.item_id]),
                 placed_min=placed[b.item_id],
                 estimate_min=items[b.item_id].estimate_min,
-                editable=editable(items[b.item_id]),
+                editable=b.item_id in live and editable(items[b.item_id]),
                 series_id=_stored(items[b.item_id].series_id, stored_series),
                 checkable=items[b.item_id].checkable,
                 status=b.status.value,
                 done_min=b.actual_min if b.status in (BlockStatus.DONE, BlockStatus.PARTIAL) else None,
                 missed_action=None if b.missed_action is None else b.missed_action.value,
                 history=b.item_id in history,
+                on_miss=checkins.policy_for(items[b.item_id]).value,
+                kept=kept.get(b.item_id, 0),
+                deleted=b.item_id not in live,
             )
             for b in blocks
         ],
@@ -1723,9 +1816,11 @@ def week_out(
                 editable=editable(i),
                 series_id=_stored(i.series_id, stored_series),
                 history=i.id in history,
+                kept=kept.get(i.id, 0),
             )
             for i in items.values()
-            if (i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting
+            if i.id in live
+            and ((i.flex_preset is FlexPreset.CUSTOM and not i.preset_params.get("windows")) or i.id in waiting)
         ],
         series=[repeat_out(s) for s in stored_series.values() if s.id in in_week],
         shortfalls=[

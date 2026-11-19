@@ -130,6 +130,104 @@ a.tab {
   color: var(--attention-text);
 }
 
+/* Check-ins waiting for an answer (DESIGN.md, Check-ins) */
+
+.check-in-banner {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.check-in-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.check-in-row {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.check-in-row + .check-in-row {
+  border-top: 1px solid var(--attention-ring);
+}
+
+.check-in-session {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* What happens to the missed time (Check-ins, Dialog): a dashed tile, a button for a catch-up. */
+.miss-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px dashed var(--text-muted);
+  border-radius: var(--radius-input);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.miss-tile {
+  cursor: pointer;
+  min-height: var(--tap);
+}
+
+button.miss-tile:hover {
+  border-color: var(--text);
+}
+
+.miss-tile-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.miss-tile-edit {
+  color: var(--accent);
+}
+
+.miss-tile-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.miss-tile-text,
+.miss-tile-row {
+  font-size: 13px;
+}
+
+.miss-tile-row {
+  display: flex;
+  gap: 8px;
+}
+
+.miss-tile-key {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.check-in-grace {
+  text-align: center;
+}
+
+.popover-check-in {
+  font-size: 13px;
+  color: var(--text);
+}
+
 /* Week grid card */
 
 .week-card {
@@ -338,6 +436,36 @@ a.tab {
   line-height: 11px;
 }
 
+/* Check-ins (DESIGN.md, Blocks): finished work is grey and struck through, missed work is
+   dashed, and a block waiting for its check-in gets an orange border (it needs you). */
+
+.block.done {
+  background: var(--block-done-bg);
+  border-color: var(--block-done-border);
+}
+
+.block.done .block-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.block.done .block-time,
+.block.missed .block-title,
+.block.missed .block-time {
+  color: var(--text-muted);
+}
+
+.block.missed {
+  background: var(--bg);
+  border-style: dashed;
+  border-color: var(--block-done-border);
+}
+
+.block.needs-check-in {
+  border-width: 2px;
+  border-color: var(--attention-border);
+}
+
 /* A block split at midnight: square off the edges that continue. */
 
 .block.cont-before {
@@ -383,6 +511,17 @@ a.tab {
 .swatch.placed {
   background: var(--block-flex-bg);
   border-color: var(--block-flex-border);
+}
+
+.swatch.done {
+  background: var(--block-done-bg);
+  border-color: var(--block-done-border);
+}
+
+.swatch.missed {
+  background: var(--bg);
+  border-style: dashed;
+  border-color: var(--block-done-border);
 }
 
 .swatch.work-hours {
@@ -989,6 +1128,22 @@ kbd {
 /* In the item details popover, every button row sits in the middle */
 .item-popover .popover-actions {
   justify-content: center;
+}
+
+/* Check in on its own full-width row; Edit and Delete under it, half each */
+.popover-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.item-popover .popover-wide {
+  width: 100%;
+}
+
+.item-popover .popover-halves {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
 }
 
 .popover-confirm {

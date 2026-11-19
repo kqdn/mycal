@@ -21,6 +21,63 @@ export interface Block {
   estimate_min: number | null // null for an exact-time item
   editable: boolean // whether the edit dialog can change the item (not Custom)
   series_id: string | null // set on an occurrence of a stored series
+  // Check-ins (Milestone 7)
+  checkable: boolean
+  status: BlockStatus
+  done_min: number | null // minutes done, for a done or partly done block
+  missed_action: MissedAction | null // what ran on the missed part; null while an Ask waits
+  history: boolean // the item has check-in history, so deleting it archives it
+  on_miss: OnMiss // what a No does (an exact item's Reschedule comes as Skip)
+  kept: number // the item's sessions that started, in every week: deleting it keeps them when it has history
+  deleted: boolean // a kept session of a deleted item, shown as a record only
+}
+
+export type BlockStatus = 'planned' | 'done' | 'partial' | 'missed' | 'unanswered'
+export type MissedAction = Exclude<OnMiss, 'ask'>
+
+/** GET /api/check-ins: a block waiting for an answer, or for a choice about its missed part. */
+export interface CheckIn {
+  block_id: string
+  item_id: string
+  title: string
+  start: string
+  end: string
+  fixed: boolean
+  status: BlockStatus // planned when not answered yet
+  done_min: number | null
+  on_miss: OnMiss
+  choices: MissedAction[]
+}
+
+/** POST /api/blocks/{id}/check-in */
+export interface CheckInRequest {
+  answer: 'yes' | 'partly' | 'no'
+  done_min?: number
+  action?: MissedAction
+  accept_shortfall?: boolean
+  catch_up?: ItemRequest // the catch-up item as changed in the item dialog
+}
+
+/**
+ * POST /api/blocks/{id}/check-in/preview: what an answer would do to the missed time.
+ * Nothing is saved. A catch-up comes as the item dialog's fields, with why it is due then.
+ */
+export interface CheckInPreview {
+  action: MissedAction | null // null for Yes, or an Ask with no choice yet
+  missed_min: number
+  item_title: string
+  catch_up: ItemFormOut | null
+  due_reason: string | null // "next session", "Project 3 is due", "a week from now"
+  recording: boolean // its estimate is the missed time × 1.25 (an exact-time item)
+}
+
+/** An "N times a week" item in the week that gets fewer sessions than it needs. */
+export interface Shortfall {
+  item_id: string
+  title: string
+  sessions: number
+  gets: number
+  message: string
 }
 
 /** How a series repeats. A days item repeats as a whole week: per_week, with no weekdays. */
@@ -49,8 +106,11 @@ export interface Week {
     sessions: number
     editable: boolean
     series_id: string | null
+    history: boolean
+    kept: number
   }[]
   series: RepeatOut[] // how each series with an occurrence in the week repeats
+  shortfalls: Shortfall[] // not yet accepted
 }
 
 /** GET /api/series/{id}: a stored series in the dialog's terms. Times are "HH:MM:SS". */
@@ -99,11 +159,12 @@ export interface ItemFormOut {
   on_miss: OnMiss
 }
 
-/** Why a week could not be shown: nothing imported yet (404), or data the API could not use. */
+/** Why a request failed: not found (404), a question to confirm (409, like "fewer sessions"),
+ * or anything else the API refused or could not do. */
 export class WeekError extends Error {
-  readonly kind: 'missing' | 'invalid'
+  readonly kind: 'missing' | 'confirm' | 'invalid'
 
-  constructor(kind: 'missing' | 'invalid', message: string) {
+  constructor(kind: 'missing' | 'confirm' | 'invalid', message: string) {
     super(message)
     this.kind = kind
   }
@@ -155,7 +216,8 @@ export async function fetchWeek(weekStart: DateString): Promise<Week> {
 async function failure(response: Response): Promise<WeekError> {
   const body = await response.json().catch(() => null)
   const detail = typeof body?.detail === 'string' ? body.detail : response.statusText
-  return new WeekError(response.status === 404 ? 'missing' : 'invalid', detail || `HTTP ${response.status}`)
+  const kind = response.status === 404 ? 'missing' : response.status === 409 ? 'confirm' : 'invalid'
+  return new WeekError(kind, detail || `HTTP ${response.status}`)
 }
 
 /**
@@ -316,4 +378,34 @@ export async function updateSeries(seriesId: string, request: SeriesRequest, wee
 /** End a series: occurrences that haven't started go, past ones stay. */
 export async function deleteSeries(seriesId: string, week: DateString): Promise<Week> {
   return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'DELETE')
+}
+
+// Check-ins (Milestone 7)
+
+/** GET /api/check-ins: blocks waiting for an answer, earliest first. Also turns old ones into unanswered. */
+export async function listCheckIns(): Promise<CheckIn[]> {
+  const response = await fetch('/api/check-ins')
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/** Answer a check-in. A 422 says the missed time can't go anywhere; a 409 asks to accept fewer sessions. */
+export async function answerCheckIn(blockId: string, request: CheckInRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/blocks/${blockId}/check-in?week=${week}`, 'POST', request)
+}
+
+/** What an answer would do, without saving it. Throws WeekError with the server's sentence on a 422. */
+export async function previewCheckIn(blockId: string, request: CheckInRequest): Promise<CheckInPreview> {
+  const response = await fetch(`/api/blocks/${blockId}/check-in/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) throw await failure(response)
+  return response.json()
+}
+
+/** Accept that an "N times a week" item gets fewer sessions, hiding its banner. */
+export async function acceptShortfall(itemId: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/shortfalls/${itemId}/accept?week=${week}`, 'POST')
 }

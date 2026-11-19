@@ -54,11 +54,20 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
       estimate_min: 60,
       editable: true,
       series_id: null,
+      checkable: false,
+      status: 'planned' as const,
+      done_min: null,
+      missed_action: null,
+      history: false,
+      kept: 0,
+      deleted: false,
+      on_miss: 'reschedule' as const,
       ...span([start, end]),
     })),
     frames: frames.map(span),
     unscheduled: [],
     series: [],
+    shortfalls: [],
   }
 }
 
