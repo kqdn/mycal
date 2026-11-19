@@ -202,7 +202,7 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
 def copy_in_memory(conn: sqlite3.Connection) -> sqlite3.Connection:
     """A throwaway in-memory copy of the whole database, to try a change on before keeping it."""
-    copy = sqlite3.connect(":memory:")
+    copy = sqlite3.connect(":memory:", check_same_thread=False)  # a proposal is used by later requests
     conn.backup(copy)
     copy.row_factory = sqlite3.Row
     copy.execute("PRAGMA foreign_keys = ON")

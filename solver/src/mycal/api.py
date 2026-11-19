@@ -23,6 +23,17 @@ Series (Milestone 6) are added, changed and deleted here too. A series
 reaches every week, so adding or changing one re-plans like a work frame
 change; the planner creates its occurrences in each week it plans.
 
+Proposals (Milestone 8). A change sent with propose=true is worked out on the
+in-memory copy as usual, but instead of being saved, the copy is held as the
+waiting proposal: week responses carry its version of the week (`proposal`),
+and Accept writes it over the database while Discard drops it. Work it leaves
+over is listed instead of refused. One proposal waits at a time, in memory
+only (an API restart discards it), and other changes get 409 until it is
+accepted or discarded, since Accept replaces the whole database. A check-in
+that goes unanswered still saves on its own; it drops the waiting proposal
+and the next response says so (`notice`). Without propose, changes save
+right away as before.
+
 Check-ins (Milestone 7) are answered here, through checkins.py, all or
 nothing like adding an item. Viewing a week or listing check-ins first turns
 check-ins left too long into unanswered ones (checkins.CHECK_IN_GRACE).
@@ -39,7 +50,7 @@ import threading
 from time import perf_counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -66,6 +77,7 @@ from mycal.planner import (
     monday,
     open_from_moment,
     left_over,
+    left_over_message,
     left_over_min,
     plan_weeks,
     planned_down,
@@ -93,6 +105,39 @@ log = logging.getLogger("uvicorn.error.mycal")
 _lock = threading.Lock()
 
 app = FastAPI(title="mycal")
+
+
+@dataclass(slots=True)
+class Proposal:
+    """A change worked out on an in-memory copy and held there until Accept or Discard."""
+
+    trial: sqlite3.Connection
+    summary: str
+    left_over: list[tuple[Item, int]]  # items with more work left over than before, and how many minutes
+
+
+# The waiting proposal, if any, and a one-time note for the next week response.
+# Requests take turns (_lock), so these are only touched by one at a time.
+_proposal: Proposal | None = None
+_notice: str | None = None
+
+PROPOSAL_WAITING = "Accept or discard the proposed change first."
+NO_PROPOSAL = "There is no proposed change waiting."
+PROPOSAL_DROPPED = "A check-in went unanswered and saved on its own, so the proposed change was dropped. Make it again."
+
+
+def _no_proposal_waiting() -> None:
+    """409 while a proposal waits: Accept replaces the whole database, so another change would be lost."""
+    if _proposal is not None:
+        raise HTTPException(status_code=409, detail=PROPOSAL_WAITING)
+
+
+def _drop_proposal(notice: str | None = None) -> None:
+    global _proposal, _notice
+    if _proposal is not None:
+        _proposal.trial.close()
+        _proposal = None
+        _notice = notice
 
 
 @app.exception_handler(RequestValidationError)
@@ -157,6 +202,7 @@ class CheckInIn(BaseModel):
     # The catch-up item as changed in the item dialog, in place of the one the policy makes.
     # Only when the missed part is caught up. Its week_start is the viewed week.
     catch_up: ItemIn | None = None
+    propose: bool = False  # see ItemIn
 
 
 class CheckInPreviewOut(BaseModel):
@@ -218,6 +264,25 @@ class ShortfallOut(BaseModel):
     message: str  # "Workout gets 2 of 3 sessions this week: only Wed and Fri are left."
 
 
+class LeftOverOut(BaseModel):
+    """Work a proposal leaves without blocks, more than before the change."""
+
+    item_id: UUID
+    title: str
+    minutes: int
+    message: str  # "1h won't fit before Fri 5pm"
+
+
+class ProposalOut(BaseModel):
+    """The waiting proposal's version of the viewed week (Milestone 8)."""
+
+    summary: str  # "Add Essay"
+    blocks: list[BlockOut]
+    unscheduled: list[ItemRef]
+    left_over: list[LeftOverOut]  # across every week the change re-planned
+    overlaps: list[tuple[UUID, UUID]]  # block pairs in the week that overlap (double booking)
+
+
 class WeekOut(BaseModel):
     week_start: date
     timezone: str
@@ -228,6 +293,8 @@ class WeekOut(BaseModel):
     unscheduled: list[ItemRef]
     series: list[RepeatOut] = []  # how each series with an occurrence in the week repeats
     shortfalls: list[ShortfallOut] = []
+    proposal: ProposalOut | None = None  # set while a proposed change waits for Accept or Discard
+    notice: str | None = None  # said once, like "the waiting proposal was dropped"
 
 
 
@@ -270,6 +337,29 @@ def get_week(week_start: date) -> WeekOut:
         return week_out(conn, settings, week_start, moment)
 
 
+@app.post("/api/proposal/accept")
+def accept_proposal(week: date) -> WeekOut:
+    """Save the waiting proposal over the database and return the viewed `week`. 404 if none waits."""
+    with database() as (conn, settings):
+        if _proposal is None:
+            raise HTTPException(status_code=404, detail=NO_PROPOSAL)
+        store.keep_copy(_proposal.trial, conn)
+        log.info("accepted %s", _proposal.summary)
+        _drop_proposal()
+        return _view(conn, settings, week, now())
+
+
+@app.post("/api/proposal/discard")
+def discard_proposal(week: date) -> WeekOut:
+    """Drop the waiting proposal, changing nothing, and return the viewed `week`. 404 if none waits."""
+    with database() as (conn, settings):
+        if _proposal is None:
+            raise HTTPException(status_code=404, detail=NO_PROPOSAL)
+        log.info("discarded %s", _proposal.summary)
+        _drop_proposal()
+        return _view(conn, settings, week, now())
+
+
 class ItemIn(BaseModel):
     """A new item as the New item dialog collects it: local dates and times in my timezone.
 
@@ -297,6 +387,7 @@ class ItemIn(BaseModel):
     on_miss: Literal["reschedule", "catch_up", "skip", "ask"] | None = None
     # Set when sending again after a 409 that said an "N times a week" item gets fewer sessions.
     accept_shortfall: bool = False
+    propose: bool = False  # make a proposal to accept or discard instead of saving (Milestone 8)
 
 
 class ItemFormOut(BaseModel):
@@ -369,13 +460,16 @@ def add_item(request: ItemIn) -> WeekOut:
                 raise HTTPException(status_code=422, detail=NO_DAY_LEFT)
 
         first, last = span_for_item(item, settings.timezone, moment)
-        _put_and_plan(conn, settings, item, first, last, moment, ADD_TIMED_OUT, request.accept_shortfall)
+        _put_and_plan(
+            conn, settings, item, first, last, moment, ADD_TIMED_OUT, request.accept_shortfall,
+            propose=f"Add {item.title}" if request.propose else None,
+        )
         log.info("added %r, re-planned %s to %s", item.title, first, last)
         return _view(conn, settings, request.week_start, moment)
 
 
 @app.delete("/api/items/{item_id}")
-def delete_item(item_id: UUID, week: date) -> WeekOut:
+def delete_item(item_id: UUID, week: date, propose: bool = False) -> WeekOut:
     """Delete an item and its blocks, re-plan the weeks they were in, and return the viewed `week`.
 
     An item with check-in history is archived instead: its finished blocks stay
@@ -386,15 +480,27 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
         item = store.get_item(conn, item_id)
         if item is None or store.is_archived(conn, item_id):
             raise HTTPException(status_code=404, detail=ITEM_GONE)
+        _no_proposal_waiting()
         moment = now()
         blocks = store.list_blocks(conn)
         weeks = weeks_of_blocks([b for b in blocks if b.item_id == item_id], settings.timezone)
-        _skip_occurrence(conn, item_id)
-        if item_id in _with_history(blocks):
-            store.archive_item(conn, item_id, moment)
-        else:
-            checkins.skip_deleted_catch_up(conn, item)
-            store.delete_item(conn, item_id)
+        history = item_id in _with_history(blocks)
+
+        def change(target: sqlite3.Connection) -> None:
+            _skip_occurrence(target, item_id)
+            if history:
+                store.archive_item(target, item_id, moment)
+            else:
+                checkins.skip_deleted_catch_up(target, item)
+                store.delete_item(target, item_id)
+
+        if propose and weeks:
+            _change_and_plan(
+                conn, settings, change, weeks[0], weeks[-1], moment, log_name=f"deleting {item.title!r}",
+                timed_out=CHANGE_TIMED_OUT, broke=items_would_not_fit, propose=f"Delete {item.title}",
+            )
+            return _view(conn, settings, week, moment)
+        change(conn)
         try:
             if weeks:
                 plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
@@ -430,6 +536,7 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
             raise HTTPException(status_code=404, detail=ITEM_GONE)
         if not editable(old):
             raise HTTPException(status_code=422, detail=CUSTOM_NOT_EDITABLE)
+        _no_proposal_waiting()
         moment = now()
         blocks = [b for b in store.list_blocks(conn) if b.item_id == item_id]
         moved = _when(request) != _when(from_item(old, None, settings))
@@ -455,7 +562,10 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         if weeks_touched(new, settings.timezone, moment):
             weeks += span_for_item(new, settings.timezone, moment)
         if weeks:
-            _put_and_plan(conn, settings, new, min(weeks), max(weeks), moment, EDIT_TIMED_OUT, request.accept_shortfall)
+            _put_and_plan(
+                conn, settings, new, min(weeks), max(weeks), moment, EDIT_TIMED_OUT, request.accept_shortfall,
+                propose=f"Change {new.title}" if request.propose else None,
+            )
         else:
             store.put_item(conn, new)  # nothing left to place, say a past item's new title
         if new.series_id is not None:
@@ -505,7 +615,10 @@ def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
             except Invalid as error:
                 raise HTTPException(status_code=422, detail=str(error)) from error
             resolution = replace(resolution, catch_up=replace(custom, catch_up_of=block.id))
-        _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall)
+        _save_check_ins(
+            conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall,
+            propose=f"Check in {item.title}" if request.propose else None,
+        )
         log.info("checked in %r: %s", item.title, request.answer)
         return _view(conn, settings, week, moment)
 
@@ -564,6 +677,7 @@ def _expire_check_ins(conn: sqlite3.Connection, settings: SolverSettings, moment
     resolutions = checkins.expire_all(conn, settings, moment)
     if not resolutions:
         return False
+    _drop_proposal(PROPOSAL_DROPPED)  # this saves to the database, which Accept would overwrite
     try:
         _save_check_ins(conn, settings, resolutions, moment, "unanswered check-ins")
     except HTTPException:
@@ -579,8 +693,11 @@ def _save_check_ins(
     moment: datetime,
     log_name: str,
     accept_shortfall: bool | None = None,
+    propose: str | None = None,
 ) -> None:
     """Store answers and re-plan from this week on, all or nothing (HTTPException and nothing saved).
+
+    With `propose` (its summary), the answer becomes the waiting proposal instead (see _change_and_plan).
 
     Refused if a week that fit stops fitting, a catch-up isn't placed in full,
     or an item has more unplaced work than before. An answer that leaves an
@@ -621,6 +738,7 @@ def _save_check_ins(
         timed_out=CHECK_IN_TIMED_OUT,
         broke=lambda _weeks: CHECK_IN_DOES_NOT_FIT,
         check=all_placed,
+        propose=propose,
     )
 
 
@@ -631,6 +749,7 @@ def _save_check_ins(
 def accept_shortfall(item_id: UUID, week: date) -> WeekOut:
     """Hide the banner for an item getting fewer sessions, until it drops further. Returns the viewed `week`."""
     with database() as (conn, settings):
+        _no_proposal_waiting()
         moment = now()
         short = next((s for s in _shortfalls(conn, settings, moment) if s.item_id == item_id), None)
         if short is not None:
@@ -767,7 +886,10 @@ def add_series(request: SeriesIn) -> WeekOut:
             series = to_series(request, settings, now())
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        return _change_everywhere(conn, settings, lambda trial: store.put_series(trial, series), request.week_start, repr(series.title))
+        return _change_everywhere(
+            conn, settings, lambda trial: store.put_series(trial, series), request.week_start, repr(series.title),
+            propose=f"Add repeating {series.title}" if request.propose else None,
+        )
 
 
 @app.post("/api/items/{item_id}/repeat")
@@ -817,7 +939,9 @@ def repeat_item(item_id: UUID, request: SeriesIn, week: date) -> WeekOut:
             if not rebuild:
                 store.mark_hand_edited(trial, linked.id)
 
-        return _change_everywhere(conn, settings, change, week, repr(series.title))
+        return _change_everywhere(
+            conn, settings, change, week, repr(series.title), propose=f"Repeat {old.title}" if request.propose else None
+        )
 
 
 def _item_date(item: Item, settings: SolverSettings) -> date:
@@ -869,7 +993,9 @@ def update_series(series_id: UUID, request: SeriesIn, week: date) -> WeekOut:
                 if not store.hand_edited(trial, occurrence.id):
                     store.delete_item(trial, occurrence.id)  # the planner creates it again from the new template
 
-        return _change_everywhere(conn, settings, change, week, repr(new.title))
+        return _change_everywhere(
+            conn, settings, change, week, repr(new.title), propose=f"Change repeating {new.title}" if request.propose else None
+        )
 
 
 NOT_SKIPPED = "Only a skipped date can be brought back here. To skip a date, delete it from its week."
@@ -889,23 +1015,34 @@ def _kept_skips(old: Series, requested: list[date] | None, today: date) -> list[
 
 
 @app.delete("/api/series/{series_id}")
-def delete_series(series_id: UUID, week: date) -> WeekOut:
+def delete_series(series_id: UUID, week: date, propose: bool = False) -> WeekOut:
     """End a series: occurrences that haven't started are deleted, and past and started ones stay
     (completion history). A series with nothing left is deleted whole."""
     with database() as (conn, settings):
         series = store.get_series(conn, series_id)
         if series is None:
             raise HTTPException(status_code=404, detail=SERIES_GONE)
+        _no_proposal_waiting()
         moment = now()
         gone = {o.id for o in _not_started(conn, settings, series_id, moment)}
         weeks = weeks_of_blocks([b for b in store.list_blocks(conn) if b.item_id in gone], settings.timezone)
-        for item_id in gone:
-            store.delete_item(conn, item_id)
-        left = [i.occurrence_date for i in store.list_items(conn) if i.series_id == series_id and i.occurrence_date]
-        if left:
-            store.put_series(conn, replace(series, end_date=max(left)))
-        else:
-            store.delete_series(conn, series_id)
+
+        def change(target: sqlite3.Connection) -> None:
+            for item_id in gone:
+                store.delete_item(target, item_id)
+            left = [i.occurrence_date for i in store.list_items(target) if i.series_id == series_id and i.occurrence_date]
+            if left:
+                store.put_series(target, replace(series, end_date=max(left)))
+            else:
+                store.delete_series(target, series_id)
+
+        if propose and weeks:
+            _change_and_plan(
+                conn, settings, change, weeks[0], weeks[-1], moment, log_name=f"ending {series.title!r}",
+                timed_out=SERIES_TIMED_OUT, broke=items_would_not_fit, propose=f"Stop repeating {series.title}",
+            )
+            return _view(conn, settings, week, moment)
+        change(conn)
         try:
             if weeks:
                 plan_weeks(conn, settings, weeks[0], weeks[-1], moment)
@@ -1068,6 +1205,7 @@ class FrameIn(BaseModel):
     weekdays: list[int]
     start_time: time
     end_time: time
+    propose: bool = False  # see ItemIn
 
 
 class FrameOut(FrameIn):
@@ -1096,7 +1234,10 @@ def add_frame(request: FrameIn, week: date) -> WeekOut:
     """Add a work frame, re-plan every planned week from this one on, and return the viewed `week`."""
     with database() as (conn, settings):
         frame = _to_frame(request, settings)
-        return _change_everywhere(conn, settings, lambda trial: store.put_work_frame(trial, frame), week, f"frame {frame.name!r}")
+        return _change_everywhere(
+            conn, settings, lambda trial: store.put_work_frame(trial, frame), week, f"frame {frame.name!r}",
+            propose=f"Add work frame {frame.name}" if request.propose else None,
+        )
 
 
 @app.put("/api/frames/{frame_id}")
@@ -1106,16 +1247,23 @@ def update_frame(frame_id: UUID, request: FrameIn, week: date) -> WeekOut:
         if frame_id not in {f.id for f in store.list_work_frames(conn)}:
             raise HTTPException(status_code=404, detail=FRAME_GONE)
         frame = replace(_to_frame(request, settings), id=frame_id)
-        return _change_everywhere(conn, settings, lambda trial: store.put_work_frame(trial, frame), week, f"frame {frame.name!r}")
+        return _change_everywhere(
+            conn, settings, lambda trial: store.put_work_frame(trial, frame), week, f"frame {frame.name!r}",
+            propose=f"Change work frame {frame.name}" if request.propose else None,
+        )
 
 
 @app.delete("/api/frames/{frame_id}")
-def delete_frame(frame_id: UUID, week: date) -> WeekOut:
+def delete_frame(frame_id: UUID, week: date, propose: bool = False) -> WeekOut:
     """Delete a work frame, re-plan, and return the viewed `week`. 422 and no change if a week would stop fitting."""
     with database() as (conn, settings):
         if frame_id not in {f.id for f in store.list_work_frames(conn)}:
             raise HTTPException(status_code=404, detail=FRAME_GONE)
-        return _change_everywhere(conn, settings, lambda trial: store.delete_work_frame(trial, frame_id), week, f"frame {frame_id}")
+        name = next(f.name for f in store.list_work_frames(conn) if f.id == frame_id)
+        return _change_everywhere(
+            conn, settings, lambda trial: store.delete_work_frame(trial, frame_id), week, f"frame {frame_id}",
+            propose=f"Delete work frame {name}" if propose else None,
+        )
 
 
 def _to_frame(request: FrameIn, settings: SolverSettings) -> WorkFrame:
@@ -1162,6 +1310,7 @@ class RuleIn(BaseModel):
     every_item: bool = False
     item_ids: list[UUID] = []
     series_ids: list[UUID] = []
+    propose: bool = False  # see ItemIn
 
 
 class TargetOut(BaseModel):
@@ -1249,7 +1398,9 @@ def add_rule(request: RuleIn, week: date) -> WeekOut:
             store.put_constraint(trial, rule)
             _free_covered(trial, [rule], settings)
 
-        return _change_everywhere(conn, settings, change, week, f"rule {rule.kind}")
+        return _change_everywhere(
+            conn, settings, change, week, f"rule {rule.kind}", propose="Add a rule" if request.propose else None
+        )
 
 
 @app.put("/api/rules/{rule_id}")
@@ -1267,11 +1418,13 @@ def update_rule(rule_id: UUID, request: RuleIn, week: date) -> WeekOut:
             store.put_constraint(trial, rule)
             _free_covered(trial, [old, rule], settings)
 
-        return _change_everywhere(conn, settings, change, week, f"rule {rule.kind}")
+        return _change_everywhere(
+            conn, settings, change, week, f"rule {rule.kind}", propose="Change a rule" if request.propose else None
+        )
 
 
 @app.delete("/api/rules/{rule_id}")
-def delete_rule(rule_id: UUID, week: date) -> WeekOut:
+def delete_rule(rule_id: UUID, week: date, propose: bool = False) -> WeekOut:
     """Delete a rule, re-plan, and return the viewed `week`."""
     with database() as (conn, settings):
         old = next((c for c in store.list_constraints(conn) if c.id == rule_id), None)
@@ -1282,7 +1435,7 @@ def delete_rule(rule_id: UUID, week: date) -> WeekOut:
             store.delete_constraint(trial, rule_id)
             _free_covered(trial, [old], settings)
 
-        return _change_everywhere(conn, settings, change, week, f"rule {old.kind}")
+        return _change_everywhere(conn, settings, change, week, f"rule {old.kind}", propose="Delete a rule" if propose else None)
 
 
 def _to_rule(conn: sqlite3.Connection, request: RuleIn, settings: SolverSettings) -> Constraint:
@@ -1415,8 +1568,12 @@ def _change_everywhere(
     change: Callable[[sqlite3.Connection], None],
     week: date,
     log_name: str,
+    propose: str | None = None,
 ) -> WeekOut:
-    """Apply a change that reaches every week (a work frame or a rule), all or nothing, and return the viewed week."""
+    """Apply a change that reaches every week (a work frame or a rule), all or nothing, and return the viewed week.
+
+    With `propose` (its summary), the change becomes the waiting proposal instead (see _change_and_plan).
+    """
     moment = now()
     first, last = _weeks_from_now(conn, settings, moment)
     _change_and_plan(
@@ -1430,6 +1587,7 @@ def _change_everywhere(
         timed_out=CHANGE_TIMED_OUT,
         broke=items_would_not_fit,
         clear_plans=True,
+        propose=propose,
     )
     log.info("changed %s, re-planned %s to %s", log_name, first, last)
     return _view(conn, settings, week, moment)
@@ -1453,11 +1611,14 @@ def _put_and_plan(
     moment: datetime,
     timed_out: str,
     accept_shortfall: bool = False,
+    *,
+    propose: str | None = None,
 ) -> None:
     """Store the item (new or changed) and re-plan [first..last], or raise HTTPException and change nothing.
 
     Kept only if no other item ends up with more work left over and all of the item's work is placed.
     An "N times a week" item it leaves with fewer sessions needs accept_shortfall (else 409).
+    With `propose` (its summary), it becomes the waiting proposal instead (see _change_and_plan).
     """
     before = _shortfalls(conn, settings, moment)
 
@@ -1479,6 +1640,7 @@ def _put_and_plan(
         timed_out=timed_out,
         broke=lambda _titles: DOES_NOT_FIT,
         check=all_placed,
+        propose=propose,
     )
 
 
@@ -1495,6 +1657,7 @@ def _change_and_plan(
     broke: Callable[[list[str]], str],
     check: Callable[[sqlite3.Connection], None] | None = None,
     clear_plans: bool = False,
+    propose: str | None = None,
 ) -> None:
     """Apply `change` and re-plan [first..last], or raise HTTPException and change nothing.
 
@@ -1503,8 +1666,17 @@ def _change_and_plan(
     `broke(titles)`) and `check`, if given, raises nothing. With
     `clear_plans`, every week's plan mark is cleared after the change, so
     weeks outside the span re-plan when next viewed.
+
+    With `propose` (the change's summary, "Add Essay"), the copy is held as
+    the waiting proposal instead of saved, and work left over is listed in it
+    rather than refused (a 422 from `check` too). Other errors, like a 409
+    asking to confirm fewer sessions, still come back. 409 while another
+    proposal waits.
     """
+    global _proposal
+    _no_proposal_waiting()
     trial = store.copy_in_memory(conn)
+    held = False
     try:
         _plan_baseline(trial, settings, first, last, moment)
         before = left_over_min(trial, settings, first, last, moment)
@@ -1513,17 +1685,27 @@ def _change_and_plan(
             store.clear_plans(trial)
         plan_weeks(trial, settings, first, last, moment)
         after = left_over_min(trial, settings, first, last, moment)
-        worse = [item.title for item_id, (item, minutes) in after.items() if minutes > before.get(item_id, (item, 0))[1]]
-        if worse:
-            raise HTTPException(status_code=422, detail=broke(sorted(worse)))
+        worse = [(item, minutes) for item_id, (item, minutes) in after.items() if minutes > before.get(item_id, (item, 0))[1]]
+        if worse and propose is None:
+            raise HTTPException(status_code=422, detail=broke(sorted(item.title for item, _ in worse)))
         if check is not None:
-            check(trial)
-        store.keep_copy(trial, conn)
+            try:
+                check(trial)
+            except HTTPException as error:
+                if propose is None or error.status_code != 422:
+                    raise
+        if propose is None:
+            store.keep_copy(trial, conn)
+        else:
+            _proposal = Proposal(trial, propose, sorted(worse, key=lambda pair: pair[0].title))
+            held = True
+            log.info("proposed %s, re-planned %s to %s", propose, first, last)
     except PlannerTimeout as error:
         log.warning("saving %s: %s", log_name, error)
         raise HTTPException(status_code=503, detail=timed_out) from error
     finally:
-        trial.close()
+        if not held:
+            trial.close()
 
 
 def _edited(old: Item, new: Item) -> Item:
@@ -1771,9 +1953,55 @@ def _time_pair(request: ItemIn) -> tuple[time | None, time | None]:
 
 
 def week_out(
-    conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime
+    conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime, with_proposal: bool = True
 ) -> WeekOut:
-    """The week's stored blocks and frames as a response. Estimates are the work items have as of `moment`."""
+    """The week's stored blocks and frames as a response. Estimates are the work items have as of `moment`.
+
+    `with_proposal` adds the waiting proposal's version of the week and the one-time notice.
+    """
+    global _notice
+    out = _week_out(conn, settings, week_start, moment)
+    if not with_proposal:
+        return out
+    notice, _notice = _notice, None
+    return out.model_copy(update={"proposal": _proposal_out(settings, week_start, moment), "notice": notice})
+
+
+def _proposal_out(settings: SolverSettings, week_start: date, moment: datetime) -> ProposalOut | None:
+    """The waiting proposal's version of the week, planning the week in it first if it has no plan there."""
+    if _proposal is None:
+        return None
+    try:
+        _ensure_planned(_proposal.trial, settings, week_start, moment)
+    except PlannerTimeout as error:
+        log.warning("%s in the proposal: %s", week_start, error)
+    week = week_out(_proposal.trial, settings, week_start, moment, with_proposal=False)
+    return ProposalOut(
+        summary=_proposal.summary,
+        blocks=week.blocks,
+        unscheduled=week.unscheduled,
+        left_over=[
+            LeftOverOut(item_id=item.id, title=item.title, minutes=minutes, message=left_over_message(item, minutes, settings.timezone))
+            for item, minutes in _proposal.left_over
+        ],
+        overlaps=_overlaps(week.blocks),
+    )
+
+
+def _overlaps(blocks: list[BlockOut]) -> list[tuple[UUID, UUID]]:
+    """Block pairs that overlap, earlier first. Only fixed events can (double booking)."""
+    ordered = sorted(blocks, key=lambda b: (b.start, b.end, str(b.id)))
+    pairs: list[tuple[UUID, UUID]] = []
+    for i, a in enumerate(ordered):
+        for b in ordered[i + 1 :]:
+            if b.start >= a.end:
+                break
+            pairs.append((a.id, b.id))
+    return pairs
+
+
+def _week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> WeekOut:
+    """The week's stored blocks and frames as a response, without the proposal (see week_out)."""
     week = week_horizon(week_start, settings.timezone)
     # Deleted (archived) items' kept sessions show too, as a record of what happened.
     blocks = store.list_blocks(conn, week.start, week.end, include_archived=True)
