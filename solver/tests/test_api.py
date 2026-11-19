@@ -180,12 +180,15 @@ def test_work_planned_in_another_week_counts(db: Path, client: TestClient) -> No
     assert next_week == []
 
 
-def test_a_week_that_cannot_fit_is_stored_as_infeasible(db: Path, client: TestClient, solves: list[int]) -> None:
+def test_a_week_that_cannot_hold_everything_stores_a_partial_plan(db: Path, client: TestClient, solves: list[int]) -> None:
     conn = store.connect(db)
     store.put_item(conn, Item("Too much", FlexPreset.DAY, preset_params={"day": date(2026, 11, 18)}, estimate_min=20 * 60))
     store.clear_plans(conn)
     first = get(client)
-    assert (first["feasible"], first["blocks"]) == (False, [])
+    [block] = blocks_titled(first, "Too much")
+    assert first["feasible"] is True and 0 < block["placed_min"] < 20 * 60
+    [left] = [u for u in first["unscheduled"] if u["title"] == "Too much"]
+    assert left["reason"].endswith("won't fit on Wed")
     assert get(client) == first  # stored, not solved again
     assert len(solves) == 1
 
@@ -417,22 +420,23 @@ def test_an_item_due_far_ahead_is_only_planned_in_the_weeks_up_to_its_deadline(
     assert sum(minutes(b) for b in blocks_titled(get(client, "2027-01-04"), "Thesis")) == 120
 
 
-def test_a_broken_week_is_blamed_alone_and_its_waiting_item_is_listed(db: Path, client: TestClient) -> None:
-    # Report is due Wed of the broken week, with more work than week 2 can hold.
+def test_work_that_does_not_fit_is_listed_in_its_due_week(db: Path, client: TestClient) -> None:
+    # Report is due Wed of week 3, with more work than weeks 2 and 3 can hold.
     break_week_3(db)
     conn = store.connect(db)
     store.put_item(
-        conn, Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=55 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
+        conn, Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=80 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
     )
     store.clear_plans(conn)
 
     week_2 = get(client, WEEK_2)
 
-    assert (week_2["feasible"], status(db, WEEK_2), status(db, WEEK_3)) == (True, True, False)
-    assert blocks_titled(week_2, "Report") == []
-    [waiting] = [u for u in week_2["unscheduled"] if u["title"] == "Report"]
-    assert waiting["reason"] == "Waiting on Nov 30 to Dec 6, which can't be planned."
-    assert get(client, WEEK_3)["feasible"] is False
+    assert (week_2["feasible"], status(db, WEEK_2)) == (True, True)
+    assert blocks_titled(week_2, "Report") != []  # as much as fits
+    assert all(u["title"] != "Report" for u in week_2["unscheduled"])  # listed in its due week only
+    reasons = {u["title"]: u["reason"] for u in get(client, WEEK_3)["unscheduled"]}
+    assert reasons["Report"].endswith("won't fit before Wed 5pm")
+    assert reasons["Exam prep"].endswith("won't fit on Tue")  # Report may take its hour: the same total is left out
 
 
 def test_an_item_due_before_the_broken_week_is_added(db: Path, client: TestClient) -> None:
@@ -450,11 +454,13 @@ def test_an_item_due_in_the_broken_week_goes_before_it(db: Path, client: TestCli
     assert datetime.fromisoformat(memo["end"]) <= pacific(30, 0, month=11)  # in week 2
 
 
-def test_an_item_that_can_only_go_in_the_broken_week_is_refused(db: Path, client: TestClient) -> None:
+def test_an_item_still_fits_in_a_week_where_other_work_does_not(db: Path, client: TestClient) -> None:
     break_week_3(db)
-    detail = refused(client, week_start=WEEK_3, title="Errand", preset="day", day="2026-12-01", estimate_min=30)
-    assert detail.startswith("Nothing was added: the week of Nov 30 to Dec 6 already can't be planned.")
-    assert all(i.title != "Errand" for i in store.list_items(store.connect(db)))
+    response = client.post(
+        "/api/items", json={"week_start": WEEK_3, "title": "Errand", "preset": "day", "day": "2026-12-01", "estimate_min": 30}
+    )
+    assert response.status_code == 201, response.text
+    assert len(blocks_titled(response.json(), "Errand")) == 1
 
 
 def test_work_deferred_by_the_span_cap_is_not_listed_as_waiting(db: Path, client: TestClient) -> None:
@@ -523,17 +529,16 @@ def test_sessions_are_counted_across_weeks(db: Path, client: TestClient) -> None
     assert (second["placed_min"], second["estimate_min"]) == (120, 120)
 
 
-def test_waiting_work_shows_less_placed_than_estimated(db: Path, client: TestClient) -> None:
-    # Work due in a broken week, after an hour of it was placed by hand in week 2.
-    break_week_3(db)
+def test_work_that_does_not_fit_shows_less_placed_than_estimated(db: Path, client: TestClient) -> None:
+    # More work than fits before the deadline, with an hour of it placed by hand in week 2.
     conn = store.connect(db)
-    report = Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=55 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
+    report = Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=80 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
     store.put_item(conn, report)
     store.put_blocks(conn, [Block(report.id, pacific(24, 9, month=11), pacific(24, 10, month=11), locked=True)])
     store.clear_plans(conn)
 
-    [block] = blocks_titled(get(client, WEEK_2), "Report")
-    assert (block["sessions"], block["placed_min"], block["estimate_min"]) == (1, 60, 55 * 60)
+    block = blocks_titled(get(client, WEEK_2), "Report")[0]
+    assert 60 <= block["placed_min"] < block["estimate_min"] == 80 * 60
 
 
 def test_an_exact_item_has_no_estimate_and_one_session(client: TestClient) -> None:
@@ -900,7 +905,8 @@ def test_a_frame_change_that_breaks_the_week_changes_nothing(db: Path, client: T
     id_ = frame_id(client, "Weekdays")
     response = client.put(f"/api/frames/{id_}?week={WEEK}", json=WEEKDAYS_FRAME | {"end_time": "09:30"})
     assert response.status_code == 422, response.text
-    assert response.json()["detail"].startswith("Nothing changed: the week of Nov 16 to 22 wouldn't fit.")
+    assert response.json()["detail"].startswith("Nothing changed: ")
+    assert response.json()["detail"].endswith(" wouldn't fit any more. Loosen the change, or make room first.")
     assert frames(client)[0]["end_time"] == "18:00:00"
     assert get(client)["blocks"] == before
     assert status(db, WEEK) is True
@@ -1016,7 +1022,7 @@ def test_an_avoid_rule_moves_work_out_of_its_times(client: TestClient) -> None:
 def test_a_daily_limit_that_breaks_the_week_changes_nothing(client: TestClient) -> None:
     before = get(client)["blocks"]
     detail = add_rule(client, 422, kind="daily_limit", max_min=60, weekdays=[0, 1, 2, 3, 4, 5, 6])["detail"]
-    assert detail.startswith("Nothing changed: the week of Nov 16 to 22 wouldn't fit.")
+    assert detail.startswith("Nothing changed: ") and " wouldn't fit any more." in detail
     assert len(rules(client)) == 4
     assert get(client)["blocks"] == before
 

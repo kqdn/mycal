@@ -94,10 +94,10 @@ export interface Week {
   week_start: DateString
   timezone: string
   slot_min: number // the planner's slot size; lengths off it are rounded
-  feasible: boolean
+  feasible: boolean // always true since partial plans (Milestone 8)
   blocks: Block[]
   frames: { start: string; end: string }[]
-  // `reason` is set when the item waits on a week that can't be planned.
+  // `reason` is set when some of the item's work didn't fit, like "1h won't fit before Fri 5pm".
   unscheduled: {
     id: string
     title: string

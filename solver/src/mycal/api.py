@@ -10,10 +10,10 @@ its plan is cleared (an import clears every week's plan), and adding or
 deleting an item re-plans the weeks it touches right away.
 
 Adding or editing an item is all or nothing: the change is tried on an
-in-memory copy of the database, and only kept if it doesn't break a week that
-fit before.
-A week that already didn't fit keeps its old blocks, and the item's work
-goes to its other weeks.
+in-memory copy of the database, and only kept if all of the item's work fits
+and no other item ends up with more work left over (without blocks) than
+before. A week always gets a plan; work that doesn't fit is listed in the
+week's unscheduled items with the reason.
 
 Work frames and rules apply to every week, so changing one re-plans every
 week from this one on that has a plan, the same all-or-nothing way, and
@@ -65,6 +65,8 @@ from mycal.planner import (
     MAX_SPAN_WEEKS,
     monday,
     open_from_moment,
+    left_over,
+    left_over_min,
     plan_weeks,
     planned_down,
     remaining_min,
@@ -74,7 +76,6 @@ from mycal.planner import (
     Shortfall,
     shortfalls,
     span_for_view,
-    waiting_on_broken_weeks,
     week_horizon,
     week_title,
     weeks_of_blocks,
@@ -182,7 +183,7 @@ class ItemRef(BaseModel):
     id: UUID
     title: str
     estimate_min: int | None  # None when the item has no estimate
-    reason: str | None = None  # why it isn't scheduled, when it is waiting on a week that can't be planned
+    reason: str | None = None  # why it isn't scheduled, when some of its work didn't fit
     sessions: int = 0  # how many blocks it has in every week
     editable: bool = False  # whether the edit dialog can change the item (not Custom)
     series_id: UUID | None = None  # set on an occurrence of a stored series
@@ -219,7 +220,7 @@ class WeekOut(BaseModel):
     week_start: date
     timezone: str
     slot_min: int  # so the page can show planned lengths without hardcoding 15
-    feasible: bool
+    feasible: bool  # always True since Milestone 8: a week always gets a plan, maybe partial
     blocks: list[BlockOut]
     frames: list[SpanOut]  # work-frame time inside the week, merged
     unscheduled: list[ItemRef]
@@ -252,19 +253,19 @@ def database() -> Iterator[tuple[sqlite3.Connection, SolverSettings]]:
 
 @app.get("/api/weeks/{week_start}")
 def get_week(week_start: date) -> WeekOut:
-    """The week's stored plan, planning it first if it has none. A week that can't be planned is still 200."""
+    """The week's stored plan, planning it first if it has none. Work that doesn't fit is listed in unscheduled."""
     with database() as (conn, settings):
         moment = now()
         _expire_check_ins(conn, settings, moment)
         try:
-            feasible = _status(conn, settings, week_start, moment)
+            _ensure_planned(conn, settings, week_start, moment)
         except PlannerTimeout as error:
             log.warning("%s: %s", week_start, error)
             raise HTTPException(status_code=503, detail=VIEW_TIMED_OUT) from error
         # Planning a week for the first time can place blocks that ended long ago (a past lecture).
         if _expire_check_ins(conn, settings, moment):
-            feasible = _status_or_stored(conn, settings, week_start, moment)
-        return week_out(conn, settings, week_start, feasible, moment)
+            return _view(conn, settings, week_start, moment)
+        return week_out(conn, settings, week_start, moment)
 
 
 class ItemIn(BaseModel):
@@ -351,11 +352,6 @@ ALREADY_STARTED = "It has already started, so its time can't change."
 ITEM_GONE = "That item no longer exists."
 
 
-def waits_on_broken_week(weeks: list[date]) -> str:
-    named = " and ".join(f"the week of {week_title(w)}" for w in weeks)
-    return f"Nothing was added: {named} already can't be planned. Make room there first, for example by deleting something."
-
-
 @app.post("/api/items", status_code=201)
 def add_item(request: ItemIn) -> WeekOut:
     """Add an item, re-plan the weeks it touches and return the viewed week. 422 if it doesn't fit."""
@@ -373,7 +369,7 @@ def add_item(request: ItemIn) -> WeekOut:
         first, last = span_for_item(item, settings.timezone, moment)
         _put_and_plan(conn, settings, item, first, last, moment, ADD_TIMED_OUT, request.accept_shortfall)
         log.info("added %r, re-planned %s to %s", item.title, first, last)
-        return week_out(conn, settings, request.week_start, _status_or_stored(conn, settings, request.week_start, moment), moment)
+        return _view(conn, settings, request.week_start, moment)
 
 
 @app.delete("/api/items/{item_id}")
@@ -404,7 +400,7 @@ def delete_item(item_id: UUID, week: date) -> WeekOut:
             # The item is gone either way. Weeks that didn't finish stay unmarked
             # and re-plan when next viewed.
             log.warning("re-planning after deleting %s: %s", item_id, error)
-        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+        return _view(conn, settings, week, moment)
 
 
 @app.get("/api/items/{item_id}")
@@ -463,7 +459,7 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         if new.series_id is not None:
             store.mark_hand_edited(conn, new.id)  # a series edit leaves it alone from now on
         log.info("edited %r, re-planned %s", new.title, f"{min(weeks)} to {max(weeks)}" if weeks else "nothing")
-        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+        return _view(conn, settings, week, moment)
 
 
 # Check-ins (Milestone 7)
@@ -509,7 +505,7 @@ def check_in(block_id: UUID, request: CheckInIn, week: date) -> WeekOut:
             resolution = replace(resolution, catch_up=replace(custom, catch_up_of=block.id))
         _save_check_ins(conn, settings, [resolution], moment, f"check-in for {item.title!r}", request.accept_shortfall)
         log.info("checked in %r: %s", item.title, request.answer)
-        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+        return _view(conn, settings, week, moment)
 
 
 @app.post("/api/blocks/{block_id}/check-in/preview")
@@ -604,7 +600,7 @@ def _save_check_ins(
     before = {i.id: unplaced(conn, i) for i in answered}
     short_before = _shortfalls(conn, settings, moment)
 
-    def all_placed(trial: sqlite3.Connection, _after: dict[date, bool]) -> None:
+    def all_placed(trial: sqlite3.Connection) -> None:
         if accept_shortfall is not None:
             _confirm_shortfalls(trial, settings, moment, short_before, accept_shortfall, {i.id for i in answered})
         if any(unplaced(trial, c) > 0 for c in catch_ups):
@@ -637,7 +633,7 @@ def accept_shortfall(item_id: UUID, week: date) -> WeekOut:
         short = next((s for s in _shortfalls(conn, settings, moment) if s.item_id == item_id), None)
         if short is not None:
             store.acknowledge_shortfall(conn, item_id, short.gets)
-        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+        return _view(conn, settings, week, moment)
 
 
 def _shortfalls(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> list[Shortfall]:
@@ -888,7 +884,7 @@ def delete_series(series_id: UUID, week: date) -> WeekOut:
         except PlannerTimeout as error:
             log.warning("re-planning after ending series %s: %s", series_id, error)
         log.info("ended %r", series.title)
-        return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+        return _view(conn, settings, week, moment)
 
 
 def _not_started(conn: sqlite3.Connection, settings: SolverSettings, series_id: UUID, moment: datetime) -> list[Item]:
@@ -1054,9 +1050,9 @@ FRAME_GONE = "That work frame no longer exists."
 CHANGE_TIMED_OUT = "The planner ran out of time before finishing, so nothing was changed. Try again."
 
 
-def weeks_would_break(weeks: list[date]) -> str:
-    named = " and ".join(f"the week of {week_title(w)}" for w in weeks)
-    return f"Nothing changed: {named} wouldn't fit. Loosen the change, or make room there first."
+def items_would_not_fit(titles: list[str]) -> str:
+    named = ", ".join(titles[:-1]) + f" and {titles[-1]}" if len(titles) > 1 else titles[0]
+    return f"Nothing changed: {named} wouldn't fit any more. Loosen the change, or make room first."
 
 
 @app.get("/api/frames")
@@ -1404,11 +1400,11 @@ def _change_everywhere(
         moment,
         log_name=log_name,
         timed_out=CHANGE_TIMED_OUT,
-        broke=weeks_would_break,
+        broke=items_would_not_fit,
         clear_plans=True,
     )
     log.info("changed %s, re-planned %s to %s", log_name, first, last)
-    return week_out(conn, settings, week, _status_or_stored(conn, settings, week, moment), moment)
+    return _view(conn, settings, week, moment)
 
 
 def _weeks_from_now(conn: sqlite3.Connection, settings: SolverSettings, moment: datetime) -> tuple[date, date]:
@@ -1432,19 +1428,17 @@ def _put_and_plan(
 ) -> None:
     """Store the item (new or changed) and re-plan [first..last], or raise HTTPException and change nothing.
 
-    Kept only if no week that fit before stops fitting and all of the item's work is placed.
+    Kept only if no other item ends up with more work left over and all of the item's work is placed.
     An "N times a week" item it leaves with fewer sessions needs accept_shortfall (else 409).
     """
     before = _shortfalls(conn, settings, moment)
 
-    def all_placed(trial: sqlite3.Connection, after: dict[date, bool]) -> None:
+    def all_placed(trial: sqlite3.Connection) -> None:
         _confirm_shortfalls(trial, settings, moment, before, accept_shortfall, {item.id})
         trial_blocks = store.list_blocks(trial)
         placed = effective_item(item, trial_blocks, store.list_work_frames(trial), settings, moment)
         if remaining_min(placed, trial_blocks) > 0:
-            # Its work could only go into weeks that can't be planned.
-            broken = [week for week, fit in sorted(after.items()) if not fit]
-            raise HTTPException(status_code=422, detail=waits_on_broken_week(broken) if broken else DOES_NOT_FIT)
+            raise HTTPException(status_code=422, detail=DOES_NOT_FIT)
 
     _change_and_plan(
         conn,
@@ -1455,7 +1449,7 @@ def _put_and_plan(
         moment,
         log_name=repr(item.title),
         timed_out=timed_out,
-        broke=lambda _weeks: DOES_NOT_FIT,
+        broke=lambda _titles: DOES_NOT_FIT,
         check=all_placed,
     )
 
@@ -1470,28 +1464,32 @@ def _change_and_plan(
     *,
     log_name: str,
     timed_out: str,
-    broke: Callable[[list[date]], str],
-    check: Callable[[sqlite3.Connection, dict[date, bool]], None] | None = None,
+    broke: Callable[[list[str]], str],
+    check: Callable[[sqlite3.Connection], None] | None = None,
     clear_plans: bool = False,
 ) -> None:
     """Apply `change` and re-plan [first..last], or raise HTTPException and change nothing.
 
-    Tried on an in-memory copy. It is kept only if no week that fit before
-    stops fitting (else 422 with `broke(weeks)`) and `check`, if given, raises
-    nothing. With `clear_plans`, every week's plan mark is cleared after the
-    change, so weeks outside the span re-plan when next viewed.
+    Tried on an in-memory copy. It is kept only if no item due in the span
+    ends up with more work left over than before (else 422 with
+    `broke(titles)`) and `check`, if given, raises nothing. With
+    `clear_plans`, every week's plan mark is cleared after the change, so
+    weeks outside the span re-plan when next viewed.
     """
     trial = store.copy_in_memory(conn)
     try:
-        before = _baseline(trial, settings, first, last, moment)
+        _plan_baseline(trial, settings, first, last, moment)
+        before = left_over_min(trial, settings, first, last, moment)
         change(trial)
         if clear_plans:
             store.clear_plans(trial)
-        after = plan_weeks(trial, settings, first, last, moment)
-        if broken := [week for week, fit in sorted(after.items()) if before.get(week) and not fit]:
-            raise HTTPException(status_code=422, detail=broke(broken))
+        plan_weeks(trial, settings, first, last, moment)
+        after = left_over_min(trial, settings, first, last, moment)
+        worse = [item.title for item_id, (item, minutes) in after.items() if minutes > before.get(item_id, (item, 0))[1]]
+        if worse:
+            raise HTTPException(status_code=422, detail=broke(sorted(worse)))
         if check is not None:
-            check(trial, after)
+            check(trial)
         store.keep_copy(trial, conn)
     except PlannerTimeout as error:
         log.warning("saving %s: %s", log_name, error)
@@ -1532,37 +1530,37 @@ def _when(form: ItemIn | ItemFormOut) -> tuple[Any, ...]:
     return (form.preset, week, form.day, form.start_time, form.end_time, weekdays, form.deadline_date, form.deadline_time)
 
 
-def _status(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> bool:
-    """The week's plan status, planning it (and the weeks its deadline items reach) first if it has none."""
-    feasible = store.plan_status(conn, week_start)
-    if feasible is None:
-        # Occurrences first, so a repeating deadline item due next week can stretch the span.
-        create_occurrences(conn, settings, week_start, week_start + (MAX_SPAN_WEEKS - 1) * ONE_WEEK, moment)
-        first, last = span_for_view(conn, settings, week_start, moment)
-        began = perf_counter()
-        outcome = plan_weeks(conn, settings, first, last, moment)
-        feasible = outcome[week_start]
-        broken = [str(w) for w, fit in outcome.items() if not fit]
-        log.info("%s to %s planned in %.2fs%s", first, last, perf_counter() - began, f", can't plan {broken}" if broken else "")
-    return feasible
+def _is_planned(conn: sqlite3.Connection, week_start: date) -> bool:
+    """Whether the week has a stored plan. A week stored as "can't be planned" (before Milestone 8) re-plans."""
+    return bool(store.plan_status(conn, week_start))
 
 
-def _status_or_stored(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> bool:
-    """Like _status, but after a change that already happened: a timeout shows the week's last stored plan."""
+def _ensure_planned(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> None:
+    """Plan the week (and the weeks its deadline items reach) if it has no stored plan."""
+    if _is_planned(conn, week_start):
+        return
+    # Occurrences first, so a repeating deadline item due next week can stretch the span.
+    create_occurrences(conn, settings, week_start, week_start + (MAX_SPAN_WEEKS - 1) * ONE_WEEK, moment)
+    first, last = span_for_view(conn, settings, week_start, moment)
+    began = perf_counter()
+    plan_weeks(conn, settings, first, last, moment)
+    log.info("%s to %s planned in %.2fs", first, last, perf_counter() - began)
+
+
+def _view(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime) -> WeekOut:
+    """The viewed week after a change that already happened: planned if needed, else (on a timeout) as stored."""
     try:
-        return _status(conn, settings, week_start, moment)
+        _ensure_planned(conn, settings, week_start, moment)
     except PlannerTimeout as error:
         log.warning("%s: %s", week_start, error)
-        return store.plan_status(conn, week_start) is not False
+    return week_out(conn, settings, week_start, moment)
 
 
-def _baseline(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, moment: datetime) -> dict[date, bool]:
-    """Whether each week in the span fit before an item was added: its stored status, or a plan without the item."""
+def _plan_baseline(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, moment: datetime) -> None:
+    """Plan the span before a change if any of its weeks has no stored plan, so left-over work can be compared."""
     weeks = [first + timedelta(weeks=n) for n in range((last - first).days // 7 + 1)]
-    stored = {week: store.plan_status(conn, week) for week in weeks}
-    if all(status is not None for status in stored.values()):
-        return {week: bool(status) for week, status in stored.items()}
-    return plan_weeks(conn, settings, first, last, moment)
+    if not all(_is_planned(conn, week) for week in weeks):
+        plan_weeks(conn, settings, first, last, moment)
 
 
 def to_item(request: ItemIn, settings: SolverSettings, moment: datetime, check_past: bool = True) -> Item:
@@ -1745,13 +1743,13 @@ def _time_pair(request: ItemIn) -> tuple[time | None, time | None]:
 
 
 def week_out(
-    conn: sqlite3.Connection, settings: SolverSettings, week_start: date, feasible: bool, moment: datetime
+    conn: sqlite3.Connection, settings: SolverSettings, week_start: date, moment: datetime
 ) -> WeekOut:
     """The week's stored blocks and frames as a response. Estimates are the work items have as of `moment`."""
     week = week_horizon(week_start, settings.timezone)
     # Deleted (archived) items' kept sessions show too, as a record of what happened.
-    blocks = store.list_blocks(conn, week.start, week.end, include_archived=True) if feasible else []
-    waiting = waiting_on_broken_weeks(conn, settings, week_start, moment)
+    blocks = store.list_blocks(conn, week.start, week.end, include_archived=True)
+    waiting = left_over(conn, settings, week_start, moment)
     # Sessions are counted across every week, so look at all blocks, in start order.
     every_block = store.list_blocks(conn, include_archived=True)
     frames = store.list_work_frames(conn)
@@ -1774,7 +1772,7 @@ def week_out(
         week_start=week_start,
         timezone=settings.timezone,
         slot_min=settings.slot_min,
-        feasible=feasible,
+        feasible=True,
         blocks=[
             BlockOut(
                 id=b.id,
@@ -1805,7 +1803,7 @@ def week_out(
             for w in frame_spans(frames, week_start, settings.timezone)
         ],
         # Items that can't be placed: a custom preset with no windows painted yet, and
-        # items whose work waits on a week that can't be planned (with the reason).
+        # items with work that didn't fit in their week (with the reason).
         unscheduled=[
             ItemRef(
                 id=i.id,
