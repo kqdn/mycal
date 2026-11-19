@@ -122,15 +122,23 @@ class Problem:
         return self.kept + self.fixed
 
 
-def fixed_clash(problem: Problem) -> bool:
-    """True if a fixed event's real times overlap another fixed event or a kept block.
+def pinned_overlaps(problem: Problem) -> list[tuple[UUID, UUID]]:
+    """Block id pairs where a fixed event's real times overlap another fixed event or a kept block.
 
-    Real times, not slots: 9:00 to 9:10 and 9:10 to 10:00 share a slot but don't clash.
+    These are allowed (double booking, like two classes at the same hour) and
+    only reported. Real times, not slots: 9:00 to 9:10 and 9:10 to 10:00 share
+    a slot but don't overlap. Pairs come in start order, earlier block first.
     """
-    fixed = sorted(problem.fixed, key=lambda b: b.start)
-    if any(a.end > b.start for a, b in zip(fixed, fixed[1:])):
-        return True
-    return any(f.start < k.end and k.start < f.end for f in fixed for k in problem.kept)
+    fixed_ids = {b.id for b in problem.fixed}
+    pinned = sorted(problem.pinned, key=lambda b: (b.start, b.end, str(b.id)))
+    pairs: list[tuple[UUID, UUID]] = []
+    for i, a in enumerate(pinned):
+        for b in pinned[i + 1 :]:
+            if b.start >= a.end:
+                break
+            if a.id in fixed_ids or b.id in fixed_ids:
+                pairs.append((a.id, b.id))
+    return pairs
 
 
 def day_limit_min(limits: list[DailyLimit], day: date) -> int | None:

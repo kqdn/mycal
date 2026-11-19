@@ -23,8 +23,9 @@ def test_planning_resumes_as_a_joint_span_after_a_broken_week() -> None:
     conn = store.connect(":memory:")
     store.save_settings(conn, SolverSettings(LA))
     store.put_work_frame(conn, WorkFrame("Mornings", [0, 1, 2, 3, 4], time(9), time(10), LA))  # 5h a week
-    for title in ("Dentist", "Exam"):  # the same hour on Tue Nov 24: week 2 can't be planned
-        store.put_item(conn, Item(title, FlexPreset.EXACT, preset_params={"start": pacific(11, 24, 9), "end": pacific(11, 24, 10)}))
+    # Two hours of work in one hour on Tue Nov 24: week 2 can't be planned.
+    params = {"day": date(2026, 11, 24), "start_time": time(9), "end_time": time(10)}
+    store.put_item(conn, Item("Exam prep", FlexPreset.DAY_RANGE, estimate_min=120, preset_params=params))
     # 8h due Fri Dec 11: only weeks 3 and 4 together hold it.
     task = Item("Course", FlexPreset.BEFORE_DEADLINE, estimate_min=8 * 60, max_chunk_min=60, deadline=pacific(12, 11, 17))
     store.put_item(conn, task)

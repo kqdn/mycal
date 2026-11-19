@@ -388,10 +388,10 @@ def pacific(day: int, hour: int, month: int = 12) -> datetime:
 
 
 def break_week_3(db: Path) -> None:
-    """Two fixed events in the same hour on Tue Dec 1: week 3 can't be planned."""
+    """Two hours of work in one hour on Tue Dec 1: week 3 can't be planned."""
     conn = store.connect(db)
-    for title in ("Dentist", "Exam"):
-        store.put_item(conn, Item(title, FlexPreset.EXACT, preset_params={"start": pacific(1, 13), "end": pacific(1, 14)}))
+    params = {"day": date(2026, 12, 1), "start_time": time(13), "end_time": time(14)}
+    store.put_item(conn, Item("Exam prep", FlexPreset.DAY_RANGE, estimate_min=120, preset_params=params))
     store.clear_plans(conn)
 
 

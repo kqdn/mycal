@@ -1,7 +1,8 @@
 """Fixed events (items with no estimate) keep their real times, even off the slot grid.
 
 Berkeley classes start at :10. A fixed event is never moved or rounded; other
-work stays off every slot it touches, and fixed events clash only on real times.
+work stays off every slot it touches. Fixed events may overlap each other
+and kept blocks (double booking); solve() plans them and reports each overlap.
 """
 
 from datetime import UTC, datetime
@@ -69,10 +70,38 @@ def test_back_to_back_fixed_events_sharing_a_slot_still_plan(engine: str) -> Non
 
 
 @pytest.mark.parametrize("engine", ENGINES)
-def test_fixed_events_that_really_overlap_cannot_be_planned(engine: str) -> None:
-    result = run(engine, [event("Quiz", at(9), at(9, 40)), event("Class", at(9, 30), at(10))])
+def test_fixed_events_that_really_overlap_both_plan_and_are_reported(engine: str) -> None:
+    quiz, lecture, homework = event("Quiz", at(9), at(9, 40)), event("Class", at(9, 30), at(10)), work(60)
 
-    assert (result.feasible, result.blocks) == (False, [])
+    result = run(engine, [quiz, lecture, homework])
+
+    assert result.feasible
+    assert times(result, quiz) == [(at(9), at(9, 40))]
+    assert times(result, lecture) == [(at(9, 30), at(10))]
+    assert times(result, homework) == [(at(10), at(11))]  # flexible work still stays clear of both
+    [(first, second)] = result.overlaps
+    by_id = {b.id: b.item_id for b in result.blocks}
+    assert (by_id[first], by_id[second]) == (quiz.id, lecture.id)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_fixed_event_over_a_locked_block_plans_and_is_reported(engine: str) -> None:
+    homework = work(60)
+    locked = Block(homework.id, at(9), at(10), locked=True)
+    lecture = event("Class", at(9, 30), at(10, 30))
+
+    result = run(engine, [homework, lecture], [locked])
+
+    assert result.feasible
+    assert times(result, homework) == [(at(9), at(10))]
+    assert result.overlaps == [(locked.id, next(b.id for b in result.blocks if b.item_id == lecture.id))]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_events_that_only_share_a_slot_are_not_an_overlap(engine: str) -> None:
+    result = run(engine, [event("Quiz", at(9), at(9, 10)), event("Class", at(9, 10), at(10))])
+
+    assert result.overlaps == []
 
 
 @pytest.mark.parametrize("engine", ENGINES)

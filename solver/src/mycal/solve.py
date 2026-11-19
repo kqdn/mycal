@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from uuid import UUID
 
 from mycal import backtracking, cp_sat
 from mycal.model import Block, Constraint, Item, WorkFrame
-from mycal.problem import Problem, SearchResult, build_problem, fixed_clash
+from mycal.problem import Problem, SearchResult, build_problem, pinned_overlaps
 from mycal.settings import Engine, SolverSettings
 
 ENGINES: dict[Engine, Callable[[Problem], SearchResult]] = {
@@ -23,11 +24,16 @@ class SolveResult:
     `status` says how the search ended: OPTIMAL, FEASIBLE (CP-SAT stopped at its
     time limit with a valid but unproven arrangement) or INFEASIBLE, and FOUND
     for backtracking, which does not score.
+
+    `overlaps` lists block id pairs (earlier first) where a fixed event's real
+    times overlap another fixed event or a kept block. Double booking is
+    allowed and only reported, so the caller can show it.
     """
 
     feasible: bool
     blocks: list[Block] = field(default_factory=list)
     status: str = ""
+    overlaps: list[tuple[UUID, UUID]] = field(default_factory=list)
 
 
 def solve(
@@ -70,8 +76,9 @@ def solve(
         - every block lies inside one of its item's windows
         - no two blocks overlap, and nothing overlaps a kept block
         - other work stays off every slot a kept block or fixed event
-          touches (9:10 to 10:00 blocks 9:00 to 10:00), but fixed events
-          clash with each other and with kept blocks only on real times
+          touches (9:10 to 10:00 blocks 9:00 to 10:00)
+        - fixed events may overlap each other and kept blocks (double
+          booking); each overlap is reported in `overlaps`, never refused
         - all blocks of an item end by its deadline
         - an item starts after every item in `depends_on` has ended
         - with `one_block_per_day`, no two of an item's blocks share a local day
@@ -84,10 +91,13 @@ def solve(
         hold (a deadline is at risk).
     """
     problem = build_problem(items, blocks, constraints, settings, work_frames)
-    if fixed_clash(problem):
-        return SolveResult(feasible=False, status="INFEASIBLE")
     found = ENGINES[settings.engine](problem)
     if found.blocks is None:
         return SolveResult(feasible=False, status=found.status)
     arrangement = [replace(b) for b in problem.kept] + problem.fixed + found.blocks
-    return SolveResult(feasible=True, blocks=sorted(arrangement, key=lambda b: b.start), status=found.status)
+    return SolveResult(
+        feasible=True,
+        blocks=sorted(arrangement, key=lambda b: b.start),
+        status=found.status,
+        overlaps=pinned_overlaps(problem),
+    )
