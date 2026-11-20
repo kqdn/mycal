@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -143,6 +143,101 @@ def test_a_session_already_running_is_in_the_way(client: TestClient, monkeypatch
     response = move(client, block(week, "Call home")["id"], tail)
 
     assert (response.status_code, response.json()["detail"]) == (422, "Practice piano is there already. Pick a free spot.")
+
+
+# +15 min
+
+
+def extend(client: TestClient, block_id: str):
+    return client.post(f"/api/blocks/{block_id}/extend", params={"week": WEEK}, json={"propose": True})
+
+
+def starts(b: dict) -> datetime:
+    return datetime.fromisoformat(b["start"])
+
+
+def ends(b: dict) -> datetime:
+    return datetime.fromisoformat(b["end"])
+
+
+def free_after(week: dict, b: dict) -> bool:
+    """Nothing starts in the hour after `b` ends (ties place blocks differently on each import)."""
+    return not any(ends(b) <= starts(o) < ends(b) + timedelta(hours=1) for o in week["blocks"])
+
+
+def running(monkeypatch: pytest.MonkeyPatch, b: dict) -> None:
+    """Make it 5 minutes into `b`."""
+    monkeypatch.setattr(api, "now", lambda: starts(b) + timedelta(minutes=5))
+
+
+def test_more_time_saves_right_away_when_nothing_moves(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = get(client)
+    b = next(b for b in week["blocks"] if not b["fixed"] and free_after(week, b))
+    estimate = client.get(f"/api/items/{b['item_id']}").json()["estimate_min"]
+    running(monkeypatch, b)
+
+    response = extend(client, b["id"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["proposal"] is None
+    longer = next(o for o in response.json()["blocks"] if o["id"] == b["id"])
+    assert (ends(longer) - ends(b), longer["locked"]) == (timedelta(minutes=15), True)
+    assert client.get(f"/api/items/{b['item_id']}").json()["estimate_min"] == estimate + 15
+
+
+def test_more_time_shows_a_new_plan_when_a_session_moves(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = get(client)
+    flexible = [b for b in week["blocks"] if not b["fixed"]]
+    b, after = next((b, o) for b in flexible for o in flexible if starts(o) == ends(b))  # back to back
+    running(monkeypatch, b)
+
+    response = extend(client, b["id"])
+
+    assert response.status_code == 200, response.text
+    proposal = response.json()["proposal"]
+    assert proposal["summary"] == f"Add 15m to {b['title']}"
+    moved = next(o for o in proposal["blocks"] if o["id"] == after["id"])
+    assert starts(moved) != starts(after)
+    assert next(o for o in response.json()["blocks"] if o["id"] == b["id"])["end"] == b["end"]  # not saved yet
+
+
+def test_more_time_may_run_into_a_fixed_event(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = get(client)
+    b = next(b for b in week["blocks"] if not b["fixed"] and free_after(week, b))
+    local_end = ends(b).astimezone(LA)
+    event = {"week_start": WEEK, "title": "Dentist", "preset": "exact", "day": local_end.date().isoformat(),
+             "start_time": local_end.strftime("%H:%M"), "end_time": (local_end + timedelta(minutes=30)).strftime("%H:%M")}
+    assert client.post("/api/items", json=event).status_code == 201
+    running(monkeypatch, b)
+
+    response = extend(client, b["id"])
+
+    assert response.status_code == 200, response.text
+    dentist = next(o for o in response.json()["blocks"] if o["title"] == "Dentist")
+    assert [b["id"], dentist["id"]] in response.json()["overlaps"]
+
+
+def test_only_a_started_session_gets_more_time(client: TestClient) -> None:
+    b = next(b for b in get(client)["blocks"] if not b["fixed"])
+    response = extend(client, b["id"])  # the week hasn't begun
+    assert (response.status_code, response.json()["detail"]) == (422, api.EXTEND_ONLY_STARTED)
+
+
+def test_more_time_with_a_bigger_slot_adds_one_slot(client: TestClient, db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = store.connect(db)
+    settings = store.load_settings(conn)
+    assert settings is not None
+    store.save_settings(conn, replace(settings, slot_min=30))
+    store.clear_plans(conn)
+    conn.close()
+    week = get(client)
+    b = next(b for b in week["blocks"] if not b["fixed"] and free_after(week, b))
+    running(monkeypatch, b)
+
+    response = extend(client, b["id"])
+
+    longer = next(o for o in response.json()["blocks"] if o["id"] == b["id"])
+    assert ends(longer) - ends(b) == timedelta(minutes=30)
 
 
 def test_unlocking_hands_the_session_back(client: TestClient) -> None:

@@ -72,6 +72,7 @@ from mycal.planner import (
     effective_items,
     occurrence_last_day,
     due_week,
+    duration_text,
     frame_spans,
     local_monday,
     MAX_SPAN_WEEKS,
@@ -307,6 +308,9 @@ class WeekOut(BaseModel):
     shortfalls: list[ShortfallOut] = []
     proposal: ProposalOut | None = None  # set while a proposed change waits for Accept or Discard
     notice: str | None = None  # said once, like "the waiting proposal was dropped"
+    # Block pairs in the week that overlap: double-booked fixed events, or a session given +15 min
+    # that ran into one (Milestone 9). A proposal lists its own.
+    overlaps: list[tuple[UUID, UUID]] = []
 
 
 
@@ -727,6 +731,51 @@ def unlock_block(block_id: UUID, request: UnlockIn, week: date) -> WeekOut:
         unlocked = replace(block, locked=False)
         _re_plan_block(conn, settings, item, block, unlocked, moment, f"Unlock {item.title}", request.propose)
         log.info("unlocked %r", item.title)
+        return _view(conn, settings, week, moment)
+
+
+class ExtendIn(BaseModel):
+    propose: bool = False  # show a new plan when other sessions move; saved right away when none do
+
+
+EXTEND_ONLY_STARTED = "Only a work session that started and isn't checked in yet can get more time."
+
+
+@app.post("/api/blocks/{block_id}/extend")
+def extend_block(block_id: UUID, request: ExtendIn, week: date) -> WeekOut:
+    """"+15 min": a session that started and has no answer yet grows by one slot and locks.
+
+    The item's estimate grows by the same amount, since the work took longer.
+    Running into a fixed event is allowed and shows as an overlap; a finished,
+    locked or running session in the way refuses it (422). With `propose`, it
+    is saved right away when no other session moves, else held as a new plan.
+    """
+    with database() as (conn, settings):
+        moment = now()
+        block, item = _block_and_item(conn, block_id)
+        if item.flex_preset is FlexPreset.EXACT or block.status is not BlockStatus.PLANNED or block.start > moment:
+            raise HTTPException(status_code=422, detail=EXTEND_ONLY_STARTED)
+        slot = timedelta(minutes=settings.slot_min)
+        longer = replace(block, end=block.end + slot, locked=True)
+        tail = replace(block, start=block.end, end=longer.end)
+        if (blocker := _in_the_way(conn, tail, moment, fixed_ok=True)) is not None:
+            raise HTTPException(status_code=422, detail=f"It would run into {blocker}.")
+        grown = replace(item, estimate_min=(item.estimate_min or 0) + settings.slot_min)
+
+        def change(target: sqlite3.Connection) -> None:
+            store.put_item(target, grown)
+            if grown.series_id is not None:
+                store.mark_hand_edited(target, grown.id)  # a series edit leaves its new estimate alone
+            store.put_blocks(target, [longer])
+
+        summary = f"Add {duration_text(settings.slot_min)} to {item.title}"
+        weeks = weeks_of_blocks([longer], settings.timezone) + list(span_for_item(item, settings.timezone, moment))
+        first = max(min(weeks), local_monday(moment, settings.timezone))
+        held = _change_and_plan(
+            conn, settings, change, first, max(first, max(weeks)), moment, log_name=summary, timed_out=CHANGE_TIMED_OUT,
+            broke=items_would_not_fit, propose=summary if request.propose else None, save_if_only={block.id},
+        )
+        log.info("%s (%s)", summary, "proposed" if held else "saved")
         return _view(conn, settings, week, moment)
 
 
@@ -1783,8 +1832,11 @@ def _change_and_plan(
     check: Callable[[sqlite3.Connection], None] | None = None,
     clear_plans: bool = False,
     propose: str | None = None,
-) -> None:
+    save_if_only: set[UUID] | None = None,
+) -> bool:
     """Apply `change` and re-plan [first..last], or raise HTTPException and change nothing.
+
+    Returns whether the change is held as a proposal rather than saved.
 
     Tried on an in-memory copy. It is kept only if no item due in the span
     ends up with more work left over than before (else 422 with
@@ -1796,7 +1848,8 @@ def _change_and_plan(
     the waiting proposal instead of saved, and work left over is listed in it
     rather than refused (a 422 from `check` too). Other errors, like a 409
     asking to confirm fewer sessions, still come back. 409 while another
-    proposal waits.
+    proposal waits. With `save_if_only` too (block ids), it is saved right away
+    instead when no other block changed and no work is left over (+15 min).
     """
     global _proposal
     _no_proposal_waiting()
@@ -1820,7 +1873,8 @@ def _change_and_plan(
             except HTTPException as error:
                 if propose is None or error.status_code != 422:
                     raise
-        if propose is None:
+        quiet = save_if_only is not None and not worse and not _moved_besides(blocks_before, trial, save_if_only)
+        if propose is None or quiet:
             store.keep_copy(trial, conn)
         else:
             weeks = [first + timedelta(weeks=n) for n in range((last - first).days // 7 + 1)]
@@ -1834,6 +1888,16 @@ def _change_and_plan(
     finally:
         if not held:
             trial.close()
+    return held
+
+
+def _moved_besides(before: list[Block], trial: sqlite3.Connection, ids: set[UUID]) -> bool:
+    """Whether any block other than `ids` is new, gone, or at other times in `trial` than in `before`."""
+
+    def spans(blocks: list[Block]) -> dict[UUID, tuple[datetime, datetime]]:
+        return {b.id: (b.start, b.end) for b in blocks if b.id not in ids}
+
+    return spans(before) != spans(store.list_blocks(trial, include_archived=True))
 
 
 def _edited(old: Item, new: Item) -> Item:
@@ -2092,6 +2156,7 @@ def week_out(
     """
     global _notice
     out = _week_out(conn, settings, week_start, moment)
+    out.overlaps = _overlaps(out.blocks)
     if not with_proposal:
         return out
     notice, _notice = _notice, None
