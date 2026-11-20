@@ -11,7 +11,7 @@ interface ControlsProps {
   onDiscard: () => void
 }
 
-/** "Current plan | Proposal", Discard and Accept. Accept only from the proposal, so you see what you accept. */
+/** "Current plan | New plan", Discard and Accept. Accept only from the new plan, so you see what you accept. On screen the proposal is "the new plan". */
 export function CompareControls({ showProposal, answering, onShow, onAccept, onDiscard }: ControlsProps) {
   const busy = answering !== null
   return (
@@ -21,7 +21,7 @@ export function CompareControls({ showProposal, answering, onShow, onAccept, onD
           Current plan
         </button>
         <button type="button" aria-pressed={showProposal} onClick={() => onShow(true)}>
-          Proposal
+          New plan
         </button>
       </div>
       <button type="button" className="secondary-button" disabled={busy} onClick={onDiscard}>
@@ -31,7 +31,7 @@ export function CompareControls({ showProposal, answering, onShow, onAccept, onD
         type="button"
         className="primary-button"
         disabled={busy || !showProposal}
-        title={showProposal ? undefined : 'Switch to the proposal to accept it'}
+        title={showProposal ? undefined : 'Switch to the new plan to accept it'}
         onClick={onAccept}
       >
         {answering === 'accept' ? 'Accepting...' : 'Accept'}
@@ -53,8 +53,8 @@ interface CardProps {
 export function ChangesCard({ proposal, changes, showProposal, selected, error, onSelect }: CardProps) {
   const overlaps = overlapLines(proposal)
   const hint = showProposal
-    ? 'Orange outlines are the new spots in the proposal. Click a change to jump to it and see where it was.'
-    : 'Orange outlines are blocks the proposal changes. Click a change to jump to it and see where it goes.'
+    ? 'Orange outlines are the new spots in the new plan. Click a change to jump to it and see where it was.'
+    : 'Orange outlines are blocks the new plan changes. Click a change to jump to it and see where it goes.'
   return (
     <section className="changes-card" aria-labelledby="changes-title">
       <div className="changes-head">

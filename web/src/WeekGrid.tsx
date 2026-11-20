@@ -196,7 +196,7 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps)
           <>
             <span className="legend-item">
               <span className="swatch changed" aria-hidden="true" />
-              Changes in the proposal
+              Changes in the new plan
             </span>
             <span className="legend-item">
               <span className="swatch other-spot-swatch" aria-hidden="true" />
