@@ -20,15 +20,15 @@ import { weekAfterDelete, whenLine } from './itemDetails'
 import { formAt, formFrom, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
-import { changedBlocks, shownWeek } from './proposal'
-import { ProposalBanner } from './ProposalBanner'
+import { changedBlocks, otherSpot, proposalChanges, shownWeek } from './proposal'
+import { ChangesCard, CompareControls } from './ProposalBanner'
 import { formFromSeries } from './repeatForm'
 import { RulesPage } from './RulesPage'
 import { ShortcutsHelp } from './ShortcutsHelp'
 import { scrollMinuteFor } from './layout'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
 import { HELP_ID, pointedBlock, toggleHelp, useShortcuts } from './useShortcuts'
-import { WeekGrid } from './WeekGrid'
+import { WeekGrid, type Compare } from './WeekGrid'
 
 type Problem = { title: string; body: string }
 type Result = { status: 'error'; problem: Problem } | { status: 'ready'; week: Week }
@@ -86,6 +86,8 @@ export default function App() {
   const [answering, setAnswering] = useState<'accept' | 'discard' | null>(null)
   const [proposalError, setProposalError] = useState<{ for: string; message: string } | null>(null)
   const [dismissedNotice, setDismissedNotice] = useState<Week | null>(null)
+  const [selectedChange, setSelectedChange] = useState<{ for: string; blockId: string } | null>(null)
+  const [reveal, setReveal] = useState(0) // bumped by a change tile, so the grid scrolls to it
   const lastPending = useRef<string | null>(null)
   const refreshCheckIns = useCallback(() => {
     listCheckIns()
@@ -134,6 +136,26 @@ export default function App() {
       ? scrollMinuteFor(changedBlocks(state.week), state.week.week_start, state.week.timezone)
       : null
   const focus = proposal && focusMinute !== null ? { key: proposal.summary, minute: focusMinute } : null
+  // What the proposal changes in this week, the selected change (a tile or a changed block), and what the grid draws for them.
+  const changes = state.status === 'ready' && proposal ? proposalChanges(state.week.blocks, proposal.blocks, state.week.timezone) : []
+  const selected = proposal && selectedChange?.for === proposal.summary ? selectedChange.blockId : null
+  const selectChange = (blockId: string) =>
+    proposal && setSelectedChange(selected === blockId ? null : { for: proposal.summary, blockId })
+  const selectedRow = changes.find((c) => c.blockId === selected) ?? null
+  const compare: Compare | null = proposal
+    ? {
+        tags: new Map(
+          changes.flatMap((c) => {
+            const text = showCurrent ? c.tagCurrent : c.tagProposal
+            return text === null ? [] : [[c.blockId, { text, arrow: c.arrow }] as const]
+          }),
+        ),
+        selected,
+        other: selectedRow ? otherSpot(selectedRow, !showCurrent) : null,
+        onSelect: selectChange,
+        reveal,
+      }
+    : null
   // Something the server says once, like "the proposed change was dropped", until dismissed.
   const notice = state.status === 'ready' && state.week !== dismissedNotice ? (state.week.notice ?? null) : null
 
@@ -449,9 +471,20 @@ export default function App() {
         <main className="content">
           <div className="title-row">
             <div className="title-block">
-              <span className="eyebrow">Your week</span>
+              <span className="eyebrow">
+                {proposal ? (showCurrent ? 'Your current plan' : `Previewing: ${proposal.summary}`) : 'Your week'}
+              </span>
               <h1 className="page-title">{weekTitle(weekStart)}</h1>
             </div>
+            {proposal && (
+              <CompareControls
+                showProposal={!showCurrent}
+                answering={answering}
+                onShow={(showProposal) => setCurrentFor(showProposal ? null : proposal.summary)}
+                onAccept={() => answerProposal(true)}
+                onDiscard={() => answerProposal(false)}
+              />
+            )}
             <div className="week-nav">
               <button type="button" className="icon-button" onClick={() => go(-7)} aria-label="Previous week">
                 <Chevron direction="left" />
@@ -498,16 +531,16 @@ export default function App() {
           {state.status === 'loading' && <p className="loading">Loading...</p>}
           {state.status === 'error' && <Banner {...state.problem} />}
           {state.status === 'ready' && proposal && (
-            <ProposalBanner
+            <ChangesCard
               proposal={proposal}
-              current={state.week.blocks}
-              timezone={state.week.timezone}
+              changes={changes}
               showProposal={!showCurrent}
-              answering={answering}
+              selected={selected}
               error={proposalError?.for === proposal.summary ? proposalError.message : null}
-              onShow={(showProposal) => setCurrentFor(showProposal ? null : proposal.summary)}
-              onAccept={() => answerProposal(true)}
-              onDiscard={() => answerProposal(false)}
+              onSelect={(blockId) => {
+                selectChange(blockId)
+                setReveal((n) => n + 1)
+              }}
             />
           )}
           {state.status === 'ready' && (
@@ -515,6 +548,7 @@ export default function App() {
               <WeekGrid
                 week={shown ?? state.week}
                 focus={focus}
+                compare={compare}
                 onOpen={(block, opener) => setOpen({ kind: 'block', itemId: block.item_id, title: block.title, block, opener })}
                 onAdd={
                   waiting

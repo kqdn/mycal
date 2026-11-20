@@ -61,7 +61,8 @@ a.tab {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
 }
 
 .title-block {
@@ -161,62 +162,232 @@ a.tab {
   gap: 2px;
 }
 
-/* Compare view (DESIGN.md, Compare view): a waiting proposal with Accept and Discard */
+/* Compare view (DESIGN.md, Compare view): a waiting proposal, after prototype v4 */
 
-.proposal-banner {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-}
-
-.proposal-head {
+.compare-controls {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 12px;
   flex-wrap: wrap;
+  gap: 10px;
+  margin-left: auto;
 }
 
-.proposal-eyebrow {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--attention-text);
-}
-
-.proposal-actions {
+.compare-toggle {
   display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.compare-toggle button {
+  min-height: var(--tap);
+  padding: 0 16px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compare-toggle button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* Accept from the current plan: greyed like a done block, as in the prototype. */
+.compare-controls .primary-button:disabled {
+  background: var(--block-done-bg);
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.changes-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--attention-bg);
+  border: 1px solid var(--attention-border);
+  border-radius: 12px;
+}
+
+.changes-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.changes-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.changes-hint {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.change-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 8px;
 }
 
-.proposal-toggle {
-  max-width: 320px;
+.change-tile {
+  min-height: var(--tap);
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--attention-border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.proposal-label {
+.change-tile:hover {
+  background: var(--attention-bg);
+  border-color: var(--attention-strong);
+}
+
+.change-tile-text-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Says what a click does, like the catch-up tile's Edit in the check-in dialog. */
+.change-tile-show {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.change-tile[aria-pressed='true'] {
+  border: 2px solid var(--attention-strong);
+  padding: 5px 11px; /* the thicker border takes the same room */
+}
+
+.change-tile-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
+.change-tile-text {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.changes-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
 }
 
-.proposal-list {
+.left-over-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.proposal-row {
+.left-over-row {
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 8px 0;
 }
 
-.proposal-row + .proposal-row {
+.left-over-row + .left-over-row {
   border-top: 1px solid var(--attention-ring);
 }
 
-.proposal-overlap {
+.changes-overlap {
+  font-size: 13px;
   font-weight: 600;
+  color: var(--attention-text);
+}
+
+/* A changed block: an orange outline, and a tag with an arrow in place of its time. */
+.block.changed {
+  border: 2px solid var(--attention-strong);
+  padding: 3px 7px;
+}
+
+.block.changed.one-line,
+.block.changed.title-only {
+  padding: 1px 7px;
+}
+
+/* The selected change: a ring around the block, drawn as an outline (no shadows). */
+.block.changed.selected {
+  outline: 3px solid var(--attention-ring);
+}
+
+.change-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--attention-text);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.change-tag svg {
+  flex-shrink: 0;
+  fill: none;
+  stroke: var(--attention-text);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The selected change's other spot: "Was here" or "Moves here". */
+.other-spot {
+  position: absolute;
+  left: 12px; /* lined up with blocks */
+  right: 4px;
+  box-sizing: border-box;
+  border: 2px dashed var(--attention-strong);
+  border-radius: var(--radius-block);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.other-spot-label {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--attention-bg);
+  color: var(--attention-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.swatch.changed {
+  background: var(--block-flex-bg);
+  border: 2px solid var(--attention-strong);
+}
+
+.swatch.other-spot-swatch {
+  border: 2px dashed var(--attention-strong);
 }
 
 /* What happens to the missed time (Check-ins, Dialog): a dashed tile, a button for a catch-up. */

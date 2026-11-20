@@ -6,19 +6,28 @@ import type { OnMiss } from './itemForm'
 import { estimateLabel, time12, toLocal, weekdayShort } from './time'
 
 export type ChangeKind = 'new' | 'moved' | 'resized' | 'removed'
+export type Arrow = 'up' | 'down' | 'left' | 'right'
+type Span = Pick<Block, 'start' | 'end'>
 
-/** One row of the changes list: a block that is new, moves, changes length or leaves the week. */
+/** One change in the week: a block that is new, moves, changes length or leaves the week. */
 export interface Change {
   blockId: string
   title: string
   kind: ChangeKind
-  text: string // "Moves from Thu 6:00pm to Fri 4:30pm"
+  text: string // the changes list: "Moves from Thu 6:00pm to Fri 4:30pm"
+  before: Span | null // where it is in the current plan
+  after: Span | null // where the proposal puts it
+  // Its tag in the grid, in the proposal and in the current plan, with an arrow for a move.
+  tagProposal: string | null // "From 6:00pm", "New", "Was 2h"
+  tagCurrent: string | null // "To 4:30pm", "Off this week", "Becomes 1h 30m"
+  arrow: Arrow | null // up or down within a day, left or right to another day
 }
 
 /**
- * The blocks of the week that differ between the current plan and the proposal, matched by id
- * (a re-plan keeps a block's id when the block stays). In the order they come in the week,
- * a removed block by where it was.
+ * The blocks of the week that differ between the current plan and the proposal, matched by
+ * block id: a re-plan keeps a block's id while it stays, and an item can have several blocks,
+ * so matching by item would mix up its sessions. In the order they come in the week, a removed
+ * block by where it was.
  */
 export function proposalChanges(current: Block[], proposed: Block[], timezone: string): Change[] {
   const before = new Map(current.map((b) => [b.id, b]))
@@ -30,18 +39,23 @@ export function proposalChanges(current: Block[], proposed: Block[], timezone: s
     if (change) rows.push({ at: block.start, change })
   }
   for (const old of current) {
-    if (!after.has(old.id)) {
-      rows.push({
-        at: old.start,
-        change: { blockId: old.id, title: old.title, kind: 'removed', text: `Off this week · was ${whenLine(old, timezone)}` },
-      })
-    }
+    if (!after.has(old.id)) rows.push({ at: old.start, change: removedBlock(old, timezone) })
   }
   return rows.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).map((row) => row.change)
 }
 
 function newBlock(block: Block, timezone: string): Change {
-  return { blockId: block.id, title: block.title, kind: 'new', text: `New · ${whenLine(block, timezone)}` }
+  return {
+    blockId: block.id, title: block.title, kind: 'new', text: `New · ${whenLine(block, timezone)}`,
+    before: null, after: block, tagProposal: 'New', tagCurrent: null, arrow: null,
+  }
+}
+
+function removedBlock(old: Block, timezone: string): Change {
+  return {
+    blockId: old.id, title: old.title, kind: 'removed', text: `Off this week · was ${whenLine(old, timezone)}`,
+    before: old, after: null, tagProposal: null, tagCurrent: 'Off this week', arrow: null,
+  }
 }
 
 function changeOf(old: Block, block: Block, timezone: string): Change | null {
@@ -49,15 +63,44 @@ function changeOf(old: Block, block: Block, timezone: string): Change | null {
   const resized = length(old) !== length(block)
   if (!moved && !resized) return null
   const sizes = `${estimateLabel(length(old))} becomes ${estimateLabel(length(block))}`
-  if (!moved) return { blockId: block.id, title: block.title, kind: 'resized', text: sizes }
-  const text = `Moves from ${moment(old.start, timezone)} to ${moment(block.start, timezone)}`
-  return { blockId: block.id, title: block.title, kind: 'moved', text: resized ? `${text} · ${sizes}` : text }
+  const common = { blockId: block.id, title: block.title, before: old, after: block }
+  if (!moved) {
+    return {
+      ...common, kind: 'resized', text: sizes, arrow: null,
+      tagProposal: `Was ${estimateLabel(length(old))}`, tagCurrent: `Becomes ${estimateLabel(length(block))}`,
+    }
+  }
+  const from = toLocal(old.start, timezone)
+  const to = toLocal(block.start, timezone)
+  const sameDay = from.date === to.date
+  // The day shows only when it changes: "Moves from Mon 5:00pm to 6:00pm", "From Thu 4:30pm".
+  const at = (local: typeof from) => (sameDay ? time12(local.minutes) : `${weekdayShort(local.date)} ${time12(local.minutes)}`)
+  const text = `Moves from ${weekdayShort(from.date)} ${time12(from.minutes)} to ${at(to)}`
+  return {
+    ...common,
+    kind: 'moved',
+    text: resized ? `${text} · ${sizes}` : text,
+    tagProposal: `From ${at(from)}`,
+    tagCurrent: `To ${at(to)}`,
+    arrow: sameDay ? (to.minutes < from.minutes ? 'up' : 'down') : to.date < from.date ? 'left' : 'right',
+  }
 }
 
-/** "Thu 6:00pm" */
-export function moment(iso: string, timezone: string): string {
-  const local = toLocal(iso, timezone)
-  return `${weekdayShort(local.date)} ${time12(local.minutes)}`
+/**
+ * The other spot of a selected change, as a dashed outline: where it was (in the proposal) or where
+ * it goes (in the current plan). A block that only changes length says its other length: "Was 7h".
+ */
+export function otherSpot(change: Change, showProposal: boolean): { span: Span; label: string } | null {
+  const span = showProposal ? change.before : change.after
+  if (!span) return null
+  const length = showProposal ? change.tagProposal : change.tagCurrent
+  const label = change.kind === 'resized' && length ? length : showProposal ? 'Was here' : 'Moves here'
+  return { span, label }
+}
+
+/** "3 changes from your current plan" */
+export function changeCount(count: number): string {
+  return `${count} ${count === 1 ? 'change' : 'changes'} from your current plan`
 }
 
 function length(block: Pick<Block, 'start' | 'end'>): number {

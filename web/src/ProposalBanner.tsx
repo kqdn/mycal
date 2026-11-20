@@ -1,92 +1,105 @@
-import type { Block, Proposal } from './api'
-import { overlapLines, proposalChanges } from './proposal'
+import type { Proposal } from './api'
+import { changeCount, overlapLines, type Change } from './proposal'
 
-interface Props {
-  proposal: Proposal
-  current: Block[] // the week's blocks in the current plan
-  timezone: string
+// The compare view (web/DESIGN.md, "Compare view"): the controls in the title row, and the changes card above the grid.
+
+interface ControlsProps {
   showProposal: boolean
   answering: 'accept' | 'discard' | null // which button is running
-  error: string | null
   onShow: (proposal: boolean) => void
   onAccept: () => void
   onDiscard: () => void
 }
 
-/**
- * The compare view's banner (web/DESIGN.md, "Compare view"): what the waiting change is, a
- * Current plan / Proposal toggle for the grid, what moves in this week, and what didn't fit.
- */
-export function ProposalBanner({ proposal, current, timezone, showProposal, answering, error, onShow, onAccept, onDiscard }: Props) {
-  const changes = proposalChanges(current, proposal.blocks, timezone)
-  const overlaps = overlapLines(proposal)
+/** "Current plan | Proposal", Discard and Accept. Accept only from the proposal, so you see what you accept. */
+export function CompareControls({ showProposal, answering, onShow, onAccept, onDiscard }: ControlsProps) {
   const busy = answering !== null
   return (
-    <section className="banner proposal-banner" aria-labelledby="proposal-title">
-      <div className="proposal-head">
-        <div className="row-text">
-          <span className="proposal-eyebrow">Proposed change</span>
-          <p className="banner-title" id="proposal-title">
-            {proposal.summary}
-          </p>
-        </div>
-        <div className="proposal-actions">
-          <button type="button" className="secondary-button" disabled={busy} onClick={onDiscard}>
-            {answering === 'discard' ? 'Discarding...' : 'Discard'}
-          </button>
-          <button type="button" className="primary-button" disabled={busy} onClick={onAccept}>
-            {answering === 'accept' ? 'Accepting...' : 'Accept'}
-          </button>
-        </div>
+    <div className="compare-controls">
+      <div className="compare-toggle" role="group" aria-label="Compare">
+        <button type="button" aria-pressed={!showProposal} onClick={() => onShow(false)}>
+          Current plan
+        </button>
+        <button type="button" aria-pressed={showProposal} onClick={() => onShow(true)}>
+          Proposal
+        </button>
+      </div>
+      <button type="button" className="secondary-button" disabled={busy} onClick={onDiscard}>
+        {answering === 'discard' ? 'Discarding...' : 'Discard'}
+      </button>
+      <button
+        type="button"
+        className="primary-button"
+        disabled={busy || !showProposal}
+        title={showProposal ? undefined : 'Switch to the proposal to accept it'}
+        onClick={onAccept}
+      >
+        {answering === 'accept' ? 'Accepting...' : 'Accept'}
+      </button>
+    </div>
+  )
+}
+
+interface CardProps {
+  proposal: Proposal
+  changes: Change[]
+  showProposal: boolean
+  selected: string | null // the block id of the selected change
+  error: string | null
+  onSelect: (blockId: string) => void // a tile was clicked: show that change in the grid, or let go of it
+}
+
+/** What the proposal changes in this week, one tile per change, then what didn't fit. */
+export function ChangesCard({ proposal, changes, showProposal, selected, error, onSelect }: CardProps) {
+  const overlaps = overlapLines(proposal)
+  const hint = showProposal
+    ? 'Orange outlines are the new spots in the proposal. Click a change to jump to it and see where it was.'
+    : 'Orange outlines are blocks the proposal changes. Click a change to jump to it and see where it goes.'
+  return (
+    <section className="changes-card" aria-labelledby="changes-title">
+      <div className="changes-head">
+        <p className="changes-title" id="changes-title">
+          {changes.length === 0 ? 'Nothing changes in this week' : changeCount(changes.length)}
+        </p>
+        {changes.length > 0 && <p className="changes-hint">{hint}</p>}
       </div>
 
-      <div className="segmented-pair proposal-toggle" role="radiogroup" aria-label="Show in the grid">
-        {[
-          { value: false, label: 'Current plan' },
-          { value: true, label: 'Proposal' },
-        ].map(({ value, label }) => (
-          <button
-            key={label}
-            type="button"
-            role="radio"
-            aria-checked={showProposal === value}
-            className={showProposal === value ? 'segment selected' : 'segment'}
-            onClick={() => onShow(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {changes.length === 0 ? (
-        <p className="banner-body">Nothing changes in this week.</p>
-      ) : (
-        <ul className="proposal-list" aria-label="Changes in this week">
+      {changes.length > 0 && (
+        <div className="change-tiles">
           {changes.map((change) => (
-            <li key={change.blockId} className="proposal-row">
-              <span className="row-title">{change.title}</span>
-              <span className="row-sub">{change.text}</span>
-            </li>
+            <button
+              key={change.blockId}
+              type="button"
+              className="change-tile"
+              aria-pressed={selected === change.blockId}
+              onClick={() => onSelect(change.blockId)}
+            >
+              <span className="change-tile-text-block">
+                <span className="change-tile-title">{change.title}</span>
+                <span className="change-tile-text">{change.text}</span>
+              </span>
+              <span className="change-tile-show">{selected === change.blockId ? 'Showing' : 'Show'}</span>
+            </button>
           ))}
-        </ul>
+        </div>
       )}
 
       {proposal.left_over.length > 0 && (
-        <>
-          <p className="proposal-label">Didn't fit</p>
-          <ul className="proposal-list" aria-label="Didn't fit">
+        <div>
+          <p className="changes-label">Didn't fit</p>
+          <ul className="left-over-list" aria-label="Didn't fit">
             {proposal.left_over.map((item) => (
-              <li key={item.item_id} className="proposal-row">
+              <li key={item.item_id} className="left-over-row">
                 <span className="row-title">{item.title}</span>
                 <span className="row-sub row-reason">{item.message}</span>
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       {overlaps.map((line) => (
-        <p key={line} className="banner-body proposal-overlap">
+        <p key={line} className="changes-overlap">
           {line}
         </p>
       ))}
