@@ -459,7 +459,7 @@ EDIT_TIMED_OUT = (
     "Try again with fewer days or a smaller estimate."
 )
 CUSTOM_NOT_EDITABLE = "Change a Custom item in its week file."
-ALREADY_STARTED = "It has already started, so its time can't change."
+ALREADY_CHECKED_IN = "It's already checked in, so its time can't change."
 ITEM_GONE = "That item no longer exists."
 
 
@@ -567,8 +567,11 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
                 new.on_miss = old.on_miss
         except Invalid as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        if moved and old.flex_preset is FlexPreset.EXACT and any(b.start <= moment for b in blocks):
-            raise HTTPException(status_code=422, detail=ALREADY_STARTED)
+        # A fixed event that started can still change its time until it's checked in (nothing is recorded
+        # for it yet); its started session is dropped and the changed item is planned like any other.
+        started = [b for b in blocks if b.start <= moment] if moved and old.flex_preset is FlexPreset.EXACT else []
+        if any(b.status is not BlockStatus.PLANNED for b in started):
+            raise HTTPException(status_code=422, detail=ALREADY_CHECKED_IN)
         if moved and request.preset == "every_day":
             if effective_item(new, [], store.list_work_frames(conn), settings, moment).estimate_min == 0:
                 raise HTTPException(status_code=422, detail=NO_DAY_LEFT)
@@ -576,13 +579,13 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         # Weeks in play: where its current plan is now, and where the changed item can go.
         open_from = open_from_moment(moment, settings.slot_min)
         current = [b for b in blocks if b.status is BlockStatus.PLANNED and not b.locked and b.start >= open_from]
-        weeks = weeks_of_blocks(current, settings.timezone)
+        weeks = weeks_of_blocks(current + started, settings.timezone)
         if weeks_touched(new, settings.timezone, moment):
             weeks += span_for_item(new, settings.timezone, moment)
         if weeks:
             _put_and_plan(
                 conn, settings, new, min(weeks), max(weeks), moment, EDIT_TIMED_OUT, request.accept_shortfall,
-                propose=f"Change {new.title}" if request.propose else None,
+                propose=f"Change {new.title}" if request.propose else None, drop=[b.id for b in started],
             )
         else:
             store.put_item(conn, new)  # nothing left to place, say a past item's new title
@@ -1843,12 +1846,14 @@ def _put_and_plan(
     accept_shortfall: bool = False,
     *,
     propose: str | None = None,
+    drop: list[UUID] | None = None,
 ) -> None:
     """Store the item (new or changed) and re-plan [first..last], or raise HTTPException and change nothing.
 
     Kept only if no other item ends up with more work left over and all of the item's work is placed.
     An "N times a week" item it leaves with fewer sessions needs accept_shortfall (else 409).
     With `propose` (its summary), it becomes the waiting proposal instead (see _change_and_plan).
+    `drop` are blocks removed first: a fixed event's started session when its time changes.
     """
     before = _shortfalls(conn, settings, moment)
 
@@ -1859,10 +1864,14 @@ def _put_and_plan(
         if remaining_min(placed, trial_blocks) > 0:
             raise HTTPException(status_code=422, detail=DOES_NOT_FIT)
 
+    def change(trial: sqlite3.Connection) -> None:
+        store.delete_blocks(trial, drop or [])
+        store.put_item(trial, item)
+
     _change_and_plan(
         conn,
         settings,
-        lambda trial: store.put_item(trial, item),
+        change,
         first,
         last,
         moment,

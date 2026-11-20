@@ -797,17 +797,40 @@ def test_a_past_item_can_be_renamed_but_not_moved_into_the_past(
     assert detail == "That time has already passed."
 
 
-def test_a_started_fixed_event_can_be_renamed_but_not_moved(
+def test_a_started_fixed_event_can_change_its_time_until_it_is_checked_in(
+    db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add(client, title="Dentist", preset="exact", day="2026-11-19", start_time="13:00", end_time="14:00", checkable=True)
+    id_ = item_id(db, "Dentist")
+    monkeypatch.setattr(api, "now", lambda: pacific(19, 13, month=11) + timedelta(minutes=10))
+    form = fetch(client, id_)
+
+    week = put(client, id_, form | {"end_time": "15:00"})  # running long: it started, so the start may be past
+
+    dentist = [b for b in week["blocks"] if b["title"] == "Dentist"]
+    assert [(local(b)[0], local(b)[1]) for b in dentist] == [("Thu 13:00", "Thu 15:00")]  # the started one is gone
+    block = dentist[0]["id"]
+    monkeypatch.setattr(api, "now", lambda: pacific(19, 15, month=11) + timedelta(minutes=10))
+    assert client.post(f"/api/blocks/{block}/check-in", params={"week": WEEK}, json={"answer": "yes"}).status_code == 200
+    form = fetch(client, id_)
+    assert put(client, id_, form | {"end_time": "16:00"}, status=422)["detail"] == api.ALREADY_CHECKED_IN
+    put(client, id_, form | {"title": "Dentist (cleaning)"})  # a title can always change
+    assert fetch(client, id_)["title"] == "Dentist (cleaning)"
+
+
+def test_a_started_fixed_event_can_become_work_for_later_that_day(
     db: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     add(client, title="Dentist", preset="exact", day="2026-11-19", start_time="13:00", end_time="14:00")
     id_ = item_id(db, "Dentist")
     monkeypatch.setattr(api, "now", lambda: pacific(19, 13, month=11) + timedelta(minutes=10))
-    form = fetch(client, id_)
+    form = fetch(client, id_) | {"preset": "day", "estimate_min": 60, "start_time": None, "end_time": None}
 
-    assert put(client, id_, form | {"end_time": "15:00"}, status=422)["detail"] == api.ALREADY_STARTED
-    put(client, id_, form | {"title": "Dentist (cleaning)"})
-    assert fetch(client, id_)["title"] == "Dentist (cleaning)"
+    week = put(client, id_, form)
+
+    dentist = [b for b in week["blocks"] if b["title"] == "Dentist"]
+    assert len(dentist) == 1 and not dentist[0]["fixed"]
+    assert local(dentist[0])[0] >= "Thu 13:15"  # placed again from now on
 
 
 def test_custom_items_and_missing_items_cannot_be_edited(db: Path, client: TestClient) -> None:
