@@ -36,7 +36,14 @@ describe('dropAt', () => {
       start: '2026-11-18T17:00:00.000Z',
       end: '2026-11-18T18:00:00.000Z',
       problem: null,
+      late: false,
     })
+  })
+
+  it('warns, without refusing, when it would end after the item is due', () => {
+    const due = { ...READ, due: '2026-11-18T18:00:00Z' } // Wed 10am
+    expect(dropAt(due, '2026-11-18', 9 * 60, [due], LA, NOW)).toMatchObject({ problem: null, late: false })
+    expect(dropAt(due, '2026-11-18', 9 * 60 + 15, [due], LA, NOW)).toMatchObject({ problem: null, late: true })
   })
 
   it('may land on a session the planner placed, which moves out of the way', () => {

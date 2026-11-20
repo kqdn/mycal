@@ -33,6 +33,12 @@ describe('proposalChanges', () => {
     ])
   })
 
+  it('warns when a block moves past its deadline', () => {
+    const due = { ...GYM, due: '2026-11-20T01:59:00Z' } // Thu 5:59pm
+    const late = { ...due, start: '2026-11-20T02:00:00Z', end: '2026-11-20T03:00:00Z' } // Thu 6:00 to 7:00pm
+    expect(proposalChanges([due], [late], LA)[0].text).toBe("Moves from Wed 6:00pm to Thu 6:00pm · After it's due")
+  })
+
   it('says a block that keeps its start only changes length', () => {
     const shorter = { ...READ, end: '2026-11-18T23:30:00Z' }
     expect(proposalChanges([READ], [shorter], LA)).toEqual([

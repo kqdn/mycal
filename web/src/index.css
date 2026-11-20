@@ -666,6 +666,11 @@ button.miss-tile:hover {
   z-index: 3;
 }
 
+/* After the item is due: still allowed, so the accent outline stays and only the text warns. */
+.day-column .drag-ghost.late {
+  color: var(--attention-text);
+}
+
 .day-column .drag-ghost.refused {
   border-color: var(--attention-strong);
   background: var(--attention-bg);

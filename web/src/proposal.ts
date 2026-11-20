@@ -1,6 +1,7 @@
 // The compare view (Milestone 8, web/DESIGN.md "Compare view"): what a waiting proposal changes in the week.
 
 import type { Block, CheckInRequest, Proposal, Week } from './api'
+import { afterDue } from './drag'
 import { whenLine } from './itemDetails'
 import type { OnMiss } from './itemForm'
 import { estimateLabel, time12, toLocal, weekdayShort, weekTitle, type DateString } from './time'
@@ -36,6 +37,8 @@ export function proposalChanges(current: Block[], proposed: Block[], timezone: s
   for (const block of proposed) {
     const old = before.get(block.id)
     const change = old ? changeOf(old, block, timezone) : newBlock(block, timezone)
+    // A spot after the deadline is allowed (you may have dragged it there), but the tile says so.
+    if (change && afterDue(block.end, block.due)) change.text += " · After it's due"
     if (change) rows.push({ at: block.start, change })
   }
   for (const old of current) {

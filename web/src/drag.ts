@@ -14,6 +14,7 @@ export interface Drop {
   start: string // UTC ISO
   end: string
   problem: string | null // "Linear algebra is there", "Already past"
+  late: boolean // it would end after the item is due: allowed (say, an extension), but warned about
 }
 
 /**
@@ -24,7 +25,8 @@ export interface Drop {
 export function dropAt(block: Block, date: DateString, minutes: number, blocks: Block[], timezone: string, now: string): Drop {
   const start = fromLocal(date, minutes, timezone)
   const end = new Date(Date.parse(start) + Date.parse(block.end) - Date.parse(block.start)).toISOString()
-  if (Date.parse(start) < Date.parse(now)) return { start, end, problem: 'Already past' }
+  const late = afterDue(end, block.due)
+  if (Date.parse(start) < Date.parse(now)) return { start, end, problem: 'Already past', late }
   const blocker = blocks.find(
     (other) =>
       other.id !== block.id &&
@@ -32,5 +34,10 @@ export function dropAt(block: Block, date: DateString, minutes: number, blocks: 
       Date.parse(other.end) > Date.parse(start) &&
       (other.fixed || other.locked || other.status !== 'planned' || Date.parse(other.start) <= Date.parse(now)),
   )
-  return { start, end, problem: blocker ? `${blocker.title} is there` : null }
+  return { start, end, problem: blocker ? `${blocker.title} is there` : null, late }
+}
+
+/** Whether a session ending at `end` runs past its item's deadline (`due`, for a "before a deadline" item). */
+export function afterDue(end: string, due: string | null | undefined): boolean {
+  return !!due && Date.parse(end) > Date.parse(due)
 }

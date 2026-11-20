@@ -170,9 +170,12 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
 
   const dropSpot = drag ? dropAt(drag.block, drag.date, drag.minutes, week.blocks, timezone, now.iso) : null
   const ghost = dropSpot ? pieces(dropSpot, weekStart, timezone) : []
-  const ghostLabel = dropSpot
-    ? (dropSpot.problem ?? range12(toLocal(dropSpot.start, timezone).minutes, toLocal(dropSpot.end, timezone).minutes))
+  const ghostTime = dropSpot
+    ? range12(toLocal(dropSpot.start, timezone).minutes, toLocal(dropSpot.end, timezone).minutes)
     : ''
+  // A spot after the deadline is allowed, with a warning ("2:00 to 4:00am · After it's due").
+  const ghostLabel = dropSpot?.problem ?? (dropSpot?.late ? `${ghostTime} · After it's due` : ghostTime)
+  const ghostClass = dropSpot?.problem ? 'drag-ghost refused' : dropSpot?.late ? 'drag-ghost late' : 'drag-ghost'
 
   /** The slot under the pointer in a day column, or null over a block or a slot that has begun. */
   function slotUnder(event: MouseEvent<HTMLDivElement>, date: DateString): number | null {
@@ -303,7 +306,7 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
                   .map((p) => (
                     <div
                       key={`ghost-${p.startMin}`}
-                      className={dropSpot?.problem ? 'drag-ghost refused' : 'drag-ghost'}
+                      className={ghostClass}
                       style={place(p)}
                       aria-hidden="true"
                     >
