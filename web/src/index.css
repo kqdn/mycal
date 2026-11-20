@@ -360,18 +360,18 @@ a.tab {
 }
 
 /* A changed block: an orange outline, and a tag with an arrow in place of its time. */
-.block.changed {
+.day-column .block.changed {
   border: 2px solid var(--attention-strong);
   padding: 3px 7px;
 }
 
-.block.changed.one-line,
-.block.changed.title-only {
+.day-column .block.changed.one-line,
+.day-column .block.changed.title-only {
   padding: 1px 7px;
 }
 
 /* The selected change: a ring around the block, drawn as an outline (no shadows). */
-.block.changed.selected {
+.day-column .block.changed.selected {
   outline: 3px solid var(--attention-ring);
 }
 
