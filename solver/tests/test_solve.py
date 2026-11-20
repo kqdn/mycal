@@ -238,6 +238,32 @@ def test_partial_plan_respects_a_daily_limit() -> None:
     assert (minutes_on(result, 16), unplaced_of(result, [essay])) == (60, {"Essay": 60})
 
 
+def test_a_session_that_must_keep_its_length_is_left_out_whole() -> None:
+    # 1h 30m of room: the 2h session is left out, not cut to 1h 30m.
+    gym = task("Gym", 120, [window(16, 9, 10.5)], keep_length=True)
+    result = run([gym])
+    assert (placed_for(result, gym), unplaced_of(result, [gym])) == ([], {"Gym": 120})
+
+
+def test_only_the_sessions_that_fit_whole_are_placed() -> None:
+    # Two 1h sessions in 1h 30m: one fits whole, the other is left out instead of shrinking to 30m.
+    gym = task("Gym", 120, [window(16, 9, 10.5)], max_chunk_min=60, keep_length=True)
+    result = run([gym])
+    [block] = placed_for(result, gym)
+    assert block.end - block.start == timedelta(hours=1)
+    assert unplaced_of(result, [gym]) == {"Gym": 60}
+
+
+def test_other_work_is_shortened_instead_of_a_keep_length_session() -> None:
+    # 3h of work in 2h 30m: Read gives up its half hour, Gym stays whole.
+    gym = task("Gym", 60, [window(16, 9, 11.5)], keep_length=True)
+    read = task("Read", 120, [window(16, 9, 11.5)])
+    result = run([gym, read])
+    [block] = placed_for(result, gym)
+    assert block.end - block.start == timedelta(hours=1)
+    assert unplaced_of(result, [gym, read]) == {"Read": 30}
+
+
 def test_unplaced_minutes_are_capped_at_the_real_work_left() -> None:
     # 50 minutes is 4 slots, but nothing fits, so 50 minutes (not 60) didn't fit.
     item = task("Call", 50, [window(16, 9, 9.25)], deadline=at(16, 9))

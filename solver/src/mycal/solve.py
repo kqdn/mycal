@@ -106,7 +106,8 @@ def solve(
 
     Partial placement: when not all remaining work fits, a second search
     places as much as it can within the same hard constraints. Blocks can be
-    left out or shortened (they keep their start and lose slots from the end),
+    left out or shortened (they keep their start and lose slots from the end;
+    an item with `keep_length` is never shortened, only left out),
     and `unplaced` lists the minutes that have no block. CP-SAT leaves out as
     few slots as it can find within the work limit; backtracking is a greedy
     best effort and may leave out more. A plan that fits never goes through

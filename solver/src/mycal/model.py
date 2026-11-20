@@ -75,6 +75,8 @@ class Item:
     with a `parent_id`. `catch_up_of` is the id of the missed Block this item
     makes up for. `one_block_per_day` makes "no two blocks on the same local
     day" a hard constraint; when off, spreading out is only a soft penalty.
+    `keep_length` means a session is never shortened when not everything
+    fits: it is placed whole or left out.
     `series_id` and `occurrence_date` are set together, only on occurrences of
     a Series.
     """
@@ -90,6 +92,7 @@ class Item:
     depends_on: list[UUID] = field(default_factory=list)
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
+    keep_length: bool = False
     on_miss: OnMiss = OnMiss.RESCHEDULE
     catch_up_of: UUID | None = None
     series_id: UUID | None = None
@@ -232,6 +235,7 @@ class ItemTemplate:
     on_miss: OnMiss = OnMiss.RESCHEDULE
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
+    keep_length: bool = False
 
     def __post_init__(self) -> None:
         if self.flex_preset not in TEMPLATE_PARAMS:

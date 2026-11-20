@@ -128,6 +128,7 @@ export interface SeriesFormOut {
   estimate_min: number | null
   max_chunk_min: number | null
   one_block_per_day: boolean
+  keep_length: boolean
   session_min: number | null
   checkable: boolean
   on_miss: OnMiss
@@ -157,6 +158,7 @@ export interface ItemFormOut {
   estimate_min: number | null
   max_chunk_min: number | null
   one_block_per_day: boolean
+  keep_length: boolean
   session_min: number | null
   checkable: boolean
   on_miss: OnMiss

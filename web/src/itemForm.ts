@@ -42,6 +42,7 @@ export interface ItemForm {
   estimate: string // "1h 30m", "45m", "2h" or minutes
   longestSession: string // same format; empty means no limit
   oneSessionPerDay: boolean
+  keepLength: boolean // Don't shorten sessions
   eachDay: string // an every-day item's length on each day, same format as estimate
   checkIn: boolean | null // null: the preset's default (on, except for exact-time items)
   onMiss: OnMiss
@@ -132,6 +133,7 @@ export interface ItemRequest {
   estimate_min?: number
   max_chunk_min?: number
   one_block_per_day: boolean
+  keep_length: boolean // never shorten a session to fit; leave it out whole
   session_min?: number
   checkable: boolean
   on_miss: OnMiss
@@ -160,6 +162,7 @@ export function formFrom(item: ItemFormOut, today: DateString): ItemForm {
     estimate: length(item.estimate_min),
     longestSession: length(item.max_chunk_min),
     oneSessionPerDay: item.one_block_per_day,
+    keepLength: item.keep_length,
     eachDay: length(item.session_min),
     checkIn: item.checkable,
     onMiss: item.on_miss,
@@ -196,6 +199,7 @@ export function emptyForm(weekStart: DateString, today: DateString): ItemForm {
     estimate: '',
     longestSession: '',
     oneSessionPerDay: false,
+    keepLength: false,
     eachDay: '',
     checkIn: null,
     onMiss: 'reschedule',
@@ -296,6 +300,9 @@ export function showsOneSessionPerDay(form: ItemForm): boolean {
   return estimate !== null && longest !== null && longest < estimate
 }
 
+/** Don't shorten sessions matters for any item with work to place: an estimate or a length each day. */
+export const showsKeepLength = (form: ItemForm) => showsEstimate(form) || showsEachDay(form)
+
 /** Field errors, worded to say how to fix them. `now` is a UTC ISO time; `timezone` is the week's.
  * With `week` (the viewed week and its frames), an every-day item with no open day left is an error too.
  * With `allowPast` (editing without changing when the item is), a passed deadline or day is allowed,
@@ -357,6 +364,7 @@ export function toRequest(form: ItemForm, weekStart: DateString): ItemRequest {
     title: form.title.trim(),
     preset: form.preset,
     one_block_per_day: showsOneSessionPerDay(form) && form.oneSessionPerDay,
+    keep_length: showsKeepLength(form) && form.keepLength,
     checkable: checksIn(form),
     on_miss: missPolicy(form),
   }

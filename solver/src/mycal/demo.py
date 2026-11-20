@@ -24,11 +24,12 @@ from mycal.solve import SolveResult, solve
 
 ITEM_FIELDS = {
     "title", "preset", "estimate_min", "max_chunk_min", "deadline", "checkable",
-    "on_miss", "one_block_per_day", "depends_on",
+    "on_miss", "one_block_per_day", "keep_length", "depends_on",
 }
 SERIES_FIELDS = {
     "title", "rrule", "start_date", "end_date", "skipped_dates", "preset", "estimate_min",
     "deadline_time", "checkable", "on_miss", "max_chunk_min", "one_block_per_day",
+    "keep_length",
 }
 PARAM_KEYS = {
     FlexPreset.EXACT: {"start", "end"},
@@ -138,6 +139,7 @@ def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
         on_miss=OnMiss(raw.get("on_miss", "reschedule")),
         max_chunk_min=max_chunk,
         one_block_per_day=one_per_day,
+        keep_length=raw.get("keep_length", False),
     )
     return Series(
         title=raw["title"],
@@ -199,6 +201,7 @@ def _parse_item(
         depends_on=[ids[title] for title in raw.get("depends_on", [])],
         max_chunk_min=max_chunk,
         one_block_per_day=one_per_day,
+        keep_length=raw.get("keep_length", False),
         on_miss=OnMiss(raw.get("on_miss", "reschedule")),
         id=ids[raw["title"]],
     )

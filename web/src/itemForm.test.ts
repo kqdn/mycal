@@ -112,9 +112,16 @@ describe('toRequest', () => {
       estimate_min: 180,
       max_chunk_min: 60,
       one_block_per_day: true,
+      keep_length: false,
       checkable: true,
       on_miss: 'reschedule',
     })
+  })
+
+  it("sends Don't shorten sessions, but not for an exact-time item", () => {
+    expect(toRequest(form({ keepLength: true }), WEEK).keep_length).toBe(true)
+    const exact = form({ preset: 'exact', day: '2026-11-19', startTime: '09:00', endTime: '10:00', keepLength: true })
+    expect(toRequest(exact, WEEK).keep_length).toBe(false)
   })
 
   it('leaves out hidden fields', () => {
@@ -129,6 +136,7 @@ describe('toRequest', () => {
       start_time: '09:00',
       end_time: '10:00',
       one_block_per_day: false,
+      keep_length: false,
       checkable: false, // an exact-time item doesn't check in by default
       on_miss: 'skip', // and can't be rescheduled
     })
@@ -246,6 +254,7 @@ describe('every one of these days', () => {
       end_time: '20:00',
       session_min: 30,
       one_block_per_day: false,
+      keep_length: false,
       checkable: true,
       on_miss: 'reschedule',
     })
@@ -353,6 +362,7 @@ describe('formFrom', () => {
     estimate_min: null,
     max_chunk_min: null,
     one_block_per_day: false,
+    keep_length: false,
     session_min: null,
     checkable: true,
     on_miss: 'reschedule',
@@ -362,7 +372,7 @@ describe('formFrom', () => {
     ['exact, overnight', { preset: 'exact', day: '2026-11-19', start_time: '23:00:00', end_time: '01:00:00', on_miss: 'skip' }],
     ['day, off the grid', { preset: 'day', day: '2026-11-18', estimate_min: 20 }],
     ['day_range', { preset: 'day_range', day: '2026-11-17', start_time: '17:00:00', end_time: '19:00:00', estimate_min: 30 }],
-    ['days', { preset: 'days', weekdays: [1, 3], estimate_min: 90, max_chunk_min: 45, one_block_per_day: true }],
+    ['days', { preset: 'days', weekdays: [1, 3], estimate_min: 90, max_chunk_min: 45, one_block_per_day: true, keep_length: true }],
     ['every_day', { preset: 'every_day', weekdays: [0, 2], start_time: '18:00:00', end_time: '20:00:00', session_min: 20 }],
     ['before_deadline', { preset: 'before_deadline', deadline_date: '2026-11-20', deadline_time: '17:00:00', estimate_min: 150 }],
   ]
@@ -385,6 +395,7 @@ describe('formFrom', () => {
         estimate_min: item.estimate_min,
         max_chunk_min: item.max_chunk_min,
         one_block_per_day: item.one_block_per_day,
+        keep_length: item.keep_length,
         session_min: item.session_min,
         checkable: item.checkable,
         on_miss: item.on_miss,

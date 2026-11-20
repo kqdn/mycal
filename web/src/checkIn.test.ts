@@ -156,7 +156,7 @@ describe('the check-in dialog tile', () => {
       id: 'c1', source: null, editable: true, series_id: null, week_start: '2026-11-16', title: 'Catch up: Lecture',
       preset: 'before_deadline', day: null, start_time: null, end_time: null, weekdays: null,
       deadline_date: '2026-11-19', deadline_time: '11:00:00', estimate_min: 45, max_chunk_min: null,
-      one_block_per_day: false, session_min: null, checkable: true, on_miss: 'reschedule',
+      one_block_per_day: false, keep_length: false, session_min: null, checkable: true, on_miss: 'reschedule',
     },
   }
 

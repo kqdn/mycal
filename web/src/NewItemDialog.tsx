@@ -12,6 +12,7 @@ import {
   PRESETS,
   showsEachDay,
   showsEstimate,
+  showsKeepLength,
   showsOneSessionPerDay,
   summary,
   toRequest,
@@ -326,6 +327,29 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, s
                   aria-labelledby="one-per-day-label"
                   className="switch"
                   onClick={() => update({ oneSessionPerDay: !form.oneSessionPerDay })}
+                >
+                  <span className="switch-track">
+                    <span className="switch-knob" />
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {showsKeepLength(form) && (
+              <div className="switch-card">
+                <div className="switch-text">
+                  <span className="row-title" id="keep-length-label">
+                    Don't shorten sessions
+                  </span>
+                  <span className="row-sub">If a session doesn't fit, it's left out whole instead of cut short.</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.keepLength}
+                  aria-labelledby="keep-length-label"
+                  className="switch"
+                  onClick={() => update({ keepLength: !form.keepLength })}
                 >
                   <span className="switch-track">
                     <span className="switch-knob" />

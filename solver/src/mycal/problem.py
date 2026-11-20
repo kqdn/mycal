@@ -415,6 +415,7 @@ def shrink_caps(item: Item, size: int, slot_min: int) -> dict[int, int]:
     A block keeps its start and shrinks from the end, so it may hold fewer
     slots than its chunk when its window closes or the deadline comes first.
     Kept blocks are not taken into account here; engines trim for them.
+    An item with `keep_length` only gets starts where the whole chunk fits.
     """
     latest_end = floor_slot(item.deadline, slot_min) if item.deadline else None
     caps: dict[int, int] = {}
@@ -425,6 +426,8 @@ def shrink_caps(item: Item, size: int, slot_min: int) -> dict[int, int]:
             end = min(end, latest_end)
         for start in range(first, end):
             caps[start] = max(caps.get(start, 0), min(size, end - start))
+    if item.keep_length:
+        caps = {start: cap for start, cap in caps.items() if cap == size}
     return dict(sorted(caps.items()))
 
 

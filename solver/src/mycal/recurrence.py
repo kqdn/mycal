@@ -88,6 +88,7 @@ def _occurrence(series: Series, day: date) -> Item:
         deadline=at(day, template.deadline_time) if template.deadline_time else None,
         max_chunk_min=template.max_chunk_min,
         one_block_per_day=template.one_block_per_day,
+        keep_length=template.keep_length,
         on_miss=template.on_miss,
         series_id=series.id,
         occurrence_date=day,

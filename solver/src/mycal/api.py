@@ -380,6 +380,7 @@ class ItemIn(BaseModel):
     estimate_min: int | None = None
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
+    keep_length: bool = False
     session_min: int | None = None
     # Check-ins (Milestone 7). Left out: checkable unless it is an exact-time item, and Reschedule
     # (Skip for an exact-time item, which can't move). Left out when editing: kept as stored.
@@ -413,6 +414,7 @@ class ItemFormOut(BaseModel):
     estimate_min: int | None = None
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
+    keep_length: bool = False
     session_min: int | None = None
     checkable: bool = False
     on_miss: Literal["reschedule", "catch_up", "skip", "ask"] = "reschedule"
@@ -859,6 +861,7 @@ class SeriesFormOut(BaseModel):
     estimate_min: int | None = None
     max_chunk_min: int | None = None
     one_block_per_day: bool = False
+    keep_length: bool = False
     session_min: int | None = None
     checkable: bool = False
     on_miss: Literal["reschedule", "catch_up", "skip", "ask"] = "reschedule"
@@ -1143,6 +1146,7 @@ def to_series(request: SeriesIn, settings: SolverSettings, moment: datetime, che
         deadline_time=request.deadline_time if item.flex_preset is FlexPreset.BEFORE_DEADLINE else None,
         max_chunk_min=item.max_chunk_min,
         one_block_per_day=item.one_block_per_day,
+        keep_length=item.keep_length,
         checkable=item.checkable,
         on_miss=item.on_miss,
     )
@@ -1164,6 +1168,7 @@ def from_series(series: Series, source: str | None) -> SeriesFormOut:
         "estimate_min": t.estimate_min,
         "max_chunk_min": t.max_chunk_min,
         "one_block_per_day": t.one_block_per_day,
+        "keep_length": t.keep_length,
         "checkable": t.checkable,
         "on_miss": t.on_miss.value,
         "freq": series.rule.freq,
@@ -1833,6 +1838,7 @@ def to_item(request: ItemIn, settings: SolverSettings, moment: datetime, check_p
         deadline=deadline,
         max_chunk_min=request.max_chunk_min,
         one_block_per_day=request.one_block_per_day,
+        keep_length=request.keep_length,
         checkable=checkable,
         on_miss=on_miss,
     )
@@ -1882,6 +1888,7 @@ def _every_day_item(request: ItemIn, title: str, params: dict[str, Any]) -> Item
         estimate_min=session * len(params["weekdays"]),
         max_chunk_min=session,
         one_block_per_day=True,
+        keep_length=request.keep_length,
         checkable=checkable,
         on_miss=on_miss,
     )
@@ -1909,6 +1916,7 @@ def from_item(item: Item, source: str | None, settings: SolverSettings) -> ItemF
         "estimate_min": item.estimate_min,
         "max_chunk_min": item.max_chunk_min,
         "one_block_per_day": item.one_block_per_day,
+        "keep_length": item.keep_length,
         "checkable": item.checkable,
         "on_miss": item.on_miss.value,
     }

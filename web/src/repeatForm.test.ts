@@ -102,6 +102,7 @@ describe('toSeriesRequest', () => {
       start_time: '08:00',
       end_time: '09:00',
       one_block_per_day: false,
+      keep_length: false,
       checkable: false,
       on_miss: 'skip',
       freq: 'weekly',
@@ -172,6 +173,7 @@ describe('formFromSeries', () => {
       estimate_min: null,
       max_chunk_min: null,
       one_block_per_day: false,
+      keep_length: false,
       session_min: null,
       checkable: false, // the defaults for an exact-time item, so it round-trips
       on_miss: 'skip',

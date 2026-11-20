@@ -60,6 +60,7 @@ def test_item_round_trips_every_field(conn: sqlite3.Connection) -> None:
         depends_on=[design.id, parent.id],  # order is kept
         max_chunk_min=120,
         one_block_per_day=True,
+        keep_length=True,
         on_miss=OnMiss.CATCH_UP,
         catch_up_of=uuid4(),
         series_id=uuid4(),
@@ -124,6 +125,7 @@ def lecture(**fields) -> Series:  # type: ignore[no-untyped-def]
             estimate_min=90,
             max_chunk_min=30,
             one_block_per_day=True,
+            keep_length=True,
             on_miss=OnMiss.SKIP,
         ),
         ItemTemplate(FlexPreset.BEFORE_DEADLINE, estimate_min=240, deadline_time=time(23, 59)),
@@ -433,3 +435,12 @@ def test_archiving_hides_an_item_and_frees_what_named_it(conn: sqlite3.Connectio
     assert store.get_item(conn, other.id).depends_on == []  # type: ignore[union-attr]
     [kept] = store.list_constraints(conn)
     assert kept.params["item_ids"] == [other.id]
+
+
+def test_a_series_saved_before_keep_length_loads_with_it_off(conn: sqlite3.Connection) -> None:
+    series = Series("Weekly thing", Rule("weekly", 1, [1]), LA, date(2026, 11, 16), ItemTemplate(FlexPreset.DAY, estimate_min=60))
+    store.put_series(conn, series)
+    template = store.load_json(conn.execute("SELECT template FROM series").fetchone()["template"])
+    del template["keep_length"]
+    conn.execute("UPDATE series SET template = ?", (store.dump_json(template),))
+    assert store.get_series(conn, series.id) == series

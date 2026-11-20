@@ -222,6 +222,7 @@ def catch_up_item(
         estimate_min=estimate,
         deadline=catch_up_deadline(conn, settings, block, item, moment),
         max_chunk_min=item.max_chunk_min,
+        keep_length=item.keep_length,
         checkable=True,
         on_miss=OnMiss.RESCHEDULE,
         catch_up_of=block.id,

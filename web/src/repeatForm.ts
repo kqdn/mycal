@@ -211,6 +211,7 @@ export function formFromSeries(series: SeriesFormOut, today: DateString): ItemFo
     estimate: length(series.estimate_min),
     longestSession: length(series.max_chunk_min),
     oneSessionPerDay: series.one_block_per_day,
+    keepLength: series.keep_length,
     eachDay: length(series.session_min),
     checkIn: series.checkable,
     onMiss: series.on_miss,

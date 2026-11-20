@@ -71,7 +71,7 @@ describe('addItem', () => {
     vi.unstubAllGlobals()
   })
 
-  const request = { week_start: '2026-11-16', title: 'Gym', preset: 'days' as const, weekdays: [0], estimate_min: 60, one_block_per_day: false, checkable: true, on_miss: 'reschedule' as const }
+  const request = { week_start: '2026-11-16', title: 'Gym', preset: 'days' as const, weekdays: [0], estimate_min: 60, one_block_per_day: false, keep_length: false, checkable: true, on_miss: 'reschedule' as const }
 
   it('posts the item and keeps only the returned week in memory', async () => {
     fetchMock.mockResolvedValueOnce(respond(200, { ...WEEK, week_start: '2026-11-23' }))

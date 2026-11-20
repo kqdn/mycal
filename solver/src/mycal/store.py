@@ -172,6 +172,10 @@ MIGRATIONS = [
     """
     ALTER TABLE items ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
     """,
+    # 9: items whose sessions are never shortened (Milestone 8, Don't shorten sessions).
+    """
+    ALTER TABLE items ADD COLUMN keep_length INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -395,8 +399,8 @@ def _write_item(conn: sqlite3.Connection, item: Item, source: str | None) -> Non
         """
         INSERT INTO items (id, title, flex_preset, preset_params, checkable, estimate_min, deadline,
                            parent_id, max_chunk_min, one_block_per_day, on_miss, catch_up_of,
-                           series_id, occurrence_date, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           series_id, occurrence_date, source, keep_length)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
             title = excluded.title, flex_preset = excluded.flex_preset,
             preset_params = excluded.preset_params, checkable = excluded.checkable,
@@ -404,7 +408,7 @@ def _write_item(conn: sqlite3.Connection, item: Item, source: str | None) -> Non
             parent_id = excluded.parent_id, max_chunk_min = excluded.max_chunk_min,
             one_block_per_day = excluded.one_block_per_day, on_miss = excluded.on_miss,
             catch_up_of = excluded.catch_up_of, series_id = excluded.series_id,
-            occurrence_date = excluded.occurrence_date
+            occurrence_date = excluded.occurrence_date, keep_length = excluded.keep_length
         """,
         (
             str(item.id),
@@ -422,6 +426,7 @@ def _write_item(conn: sqlite3.Connection, item: Item, source: str | None) -> Non
             _id(item.series_id),
             item.occurrence_date.isoformat() if item.occurrence_date else None,
             source,
+            int(item.keep_length),
         ),
     )
 
@@ -554,6 +559,7 @@ def _item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
         depends_on=[UUID(dep["depends_on"]) for dep in deps],
         max_chunk_min=row["max_chunk_min"],
         one_block_per_day=bool(row["one_block_per_day"]),
+        keep_length=bool(row["keep_length"]),
         on_miss=OnMiss(row["on_miss"]),
         catch_up_of=_from_id(row["catch_up_of"]),
         series_id=_from_id(row["series_id"]),
@@ -582,6 +588,7 @@ def _write_series(conn: sqlite3.Connection, series: Series, source: str | None) 
         "on_miss": t.on_miss.value,
         "max_chunk_min": t.max_chunk_min,
         "one_block_per_day": t.one_block_per_day,
+        "keep_length": t.keep_length,
     }
     conn.execute(
         """
@@ -641,6 +648,7 @@ def _series(row: sqlite3.Row) -> Series:
         on_miss=OnMiss(t["on_miss"]),
         max_chunk_min=t["max_chunk_min"],
         one_block_per_day=t["one_block_per_day"],
+        keep_length=t.get("keep_length", False),  # added later than the other fields
     )
     return Series(
         id=UUID(row["id"]),

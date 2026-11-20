@@ -159,7 +159,11 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
    - **Text:** the title "One session per day" (15px / 600), with "Puts each session on a different day." under it (12px, `--text-muted`).
    - **When it shows:** only when Longest session is set and shorter than Estimate, because otherwise there's only one session.
 
-5. **Check in when it ends (Milestone 7):** a switch row like One session per day, always shown.
+5. **Don't shorten sessions (Milestone 8):** a switch row like One session per day, under it.
+   - **Text:** the title "Don't shorten sessions" (15px / 600), with "If a session doesn't fit, it's left out whole instead of cut short." under it (12px, `--text-muted`).
+   - **When it shows:** for every item with work to place, so not for Exact time. Off by default. Gym is the example: a cut-short session is no use.
+
+6. **Check in when it ends (Milestone 7):** a switch row like One session per day, always shown.
    - **Text:** the title "Check in when it ends" (15px / 600), with "Asks Yes, Partly or No after each session." under it (12px, `--text-muted`).
    - **Default:** on, except for Exact time, where it starts off (meetings and appointments). A lecture can be switched on. Once switched by hand, changing the preset doesn't change it.
    - **If missed:** shown under the switch while it is on, 8px below it. A label "If missed", then a segmented choice like Repeats: "Reschedule", "Catch up", "Skip", "Ask me". Default: Reschedule. Exact time has no Reschedule, since it can't move, and Skip is selected in its place. A 12px `--text-muted` line under the choice says what it does:

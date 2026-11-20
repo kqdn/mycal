@@ -149,12 +149,17 @@ def search(problem: Problem, partial: bool = False) -> SearchResult:
 
     def place_greedily() -> None:
         # Current blocks first, so new work never pushes out work that already has its place.
-        for i in sorted(order, key=lambda i: chunks[i].previous_start is None):
+        # Then sessions that can't be shortened, since they need a whole gap.
+        def rank(i: int) -> tuple[bool, bool]:
+            return chunks[i].previous_start is None, not items[chunks[i].item_id].keep_length
+
+        for i in sorted(order, key=rank):
             chunk = chunks[i]
             caps = shrink_caps(items[chunk.item_id], chunk.size, slot_min)
+            smallest = chunk.size if items[chunk.item_id].keep_length else 1
             best: tuple[int, int] | None = None  # (start, size)
             for start in _value_order(chunk, tuple(caps)):
-                for size in range(caps[start], best[1] if best else 0, -1):
+                for size in range(caps[start], max(best[1] if best else 0, smallest - 1), -1):
                     if fits(i, start, size):
                         best = (start, size)
                         break

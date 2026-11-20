@@ -718,7 +718,7 @@ def item_blocks(db: Path, id_: UUID) -> list[tuple[UUID, datetime, datetime]]:
         {"title": "Dentist", "preset": "exact", "day": "2026-11-19", "start_time": "23:00", "end_time": "01:00"},
         {"title": "Errand", "preset": "day", "day": "2026-11-18", "estimate_min": 20},
         {"title": "Call", "preset": "day_range", "day": "2026-11-17", "start_time": "17:00", "end_time": "19:00", "estimate_min": 30},
-        {"title": "Read", "preset": "days", "weekdays": [1, 3], "estimate_min": 90, "max_chunk_min": 45, "one_block_per_day": True},
+        {"title": "Read", "preset": "days", "weekdays": [1, 3], "estimate_min": 90, "max_chunk_min": 45, "one_block_per_day": True, "keep_length": True},
         {"title": "Piano", "preset": "every_day", "weekdays": [0, 2], "start_time": "18:00", "end_time": "20:00", "session_min": 20},
         {"title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-20", "deadline_time": "17:00", "estimate_min": 60},
     ],
@@ -1129,10 +1129,18 @@ def test_a_series_round_trips_through_the_edit_form(client: TestClient) -> None:
     assert form | {"id": None} == {
         "id": None, "source": None, "title": "Office hours", "preset": "exact", "start_time": "08:00:00",
         "end_time": "09:00:00", "weekdays": None, "deadline_time": None, "estimate_min": None,
-        "max_chunk_min": None, "one_block_per_day": False, "session_min": None, "freq": "weekly",
+        "max_chunk_min": None, "one_block_per_day": False, "keep_length": False, "session_min": None, "freq": "weekly",
         "interval": 1, "repeat_weekdays": [1, 4], "start_date": "2026-11-16", "end_date": "2026-12-18",
         "checkable": False, "on_miss": "skip", "skipped_dates": [],  # the defaults for an exact-time item
     }
+
+
+def test_a_series_keeps_its_sessions_whole_in_every_week(client: TestClient, db: Path) -> None:
+    week = add_series(client, **LAB_WEEKLY | {"title": "Swim"}, keep_length=True)
+    assert client.get(f"/api/series/{series_id(week, 'Swim')}").json()["keep_length"] is True
+    get(client, "2026-11-23")
+    labs = [i for i in store.list_items(store.connect(db)) if i.title == "Swim"]
+    assert len(labs) >= 2 and all(i.keep_length for i in labs)
 
 
 def test_an_every_day_series_repeats_by_the_week_from_its_monday(client: TestClient) -> None:
@@ -1309,6 +1317,13 @@ def test_an_item_made_to_repeat_becomes_the_first_occurrence(client: TestClient,
     conn = store.connect(db)
     assert not store.hand_edited(conn, UUID(lab))  # rebuilt from the template, so series edits reach it
     assert client.get(f"/api/items/{lab}").json()["series_id"] == block["series_id"]
+
+
+def test_an_item_made_to_repeat_keeps_its_sessions_whole(client: TestClient, db: Path) -> None:
+    lab = item_titled(client, "Chemistry lab")
+    week = repeat(client, lab, **LAB_WEEKLY, keep_length=True)
+    assert client.get(f"/api/series/{series_id(week, 'Chemistry lab')}").json()["keep_length"] is True
+    assert client.get(f"/api/items/{lab}").json()["keep_length"] is True
 
 
 def test_an_item_off_the_repeat_days_is_kept_as_it_is(client: TestClient, db: Path) -> None:

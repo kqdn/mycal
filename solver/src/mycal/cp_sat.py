@@ -257,7 +257,8 @@ def build_model(problem: Problem, partial: bool = False) -> BuiltModel | None:
     if partial:
         for chunk in chunks:
             fit = shrink_caps(items[chunk.item_id], chunk.size, slot_min)
-            caps.append({s: r for s, cap in fit.items() if (r := room(chunk, s, cap)) > 0})
+            smallest = chunk.size if items[chunk.item_id].keep_length else 1
+            caps.append({s: r for s, cap in fit.items() if (r := room(chunk, s, cap)) >= smallest})
         chunks = [chunk for chunk, cap in zip(chunks, caps) if cap]
         caps = [cap for cap in caps if cap]
         domains = [list(cap) for cap in caps]
@@ -281,7 +282,9 @@ def build_model(problem: Problem, partial: bool = False) -> BuiltModel | None:
         start = model.new_int_var_from_domain(cp_model.Domain.from_values(values), f"start_{i}")
         starts.append(start)
         if partial:
-            size = model.new_int_var(0, chunk.size, f"size_{i}")
+            # Don't shorten sessions: the size is all or nothing.
+            whole = [0, chunk.size] if items[chunk.item_id].keep_length else list(range(chunk.size + 1))
+            size = model.new_int_var_from_domain(cp_model.Domain.from_values(whole), f"size_{i}")
             cap = model.new_int_var(1, chunk.size, f"cap_{i}")
             model.add_allowed_assignments([start, cap], list(caps[i].items()))
             model.add(size <= cap)
