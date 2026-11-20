@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Block, Proposal, Week } from './api'
 import {
-  changeCount, changedBlocks, changesTitle, checkInProposes, otherSpot, otherWeekLine, overlapLines, proposalChanges, shownWeek,
+  changeCount, changedBlocks, changesTitle, checkInProposes, otherSpot, otherWeekLine, otherWeekRows, overlapLines, proposalChanges,
+  shownWeek,
 } from './proposal'
 
 const LA = 'America/Los_Angeles'
@@ -180,5 +181,23 @@ describe('checkInProposes', () => {
     expect(checkInProposes({ answer: 'no' }, 'skip')).toBe(false)
     expect(checkInProposes({ answer: 'no', action: 'skip' }, 'ask')).toBe(false)
     expect(checkInProposes({ answer: 'no', action: 'catch_up' }, 'ask')).toBe(true)
+  })
+})
+
+describe('otherWeekRows', () => {
+  const week = (week_start: string, changes = 2) => ({ week_start, changes })
+
+  it('gives up to two weeks a line each, in week order', () => {
+    expect(otherWeekRows([week('2026-11-30', 1), week('2026-11-23')])).toEqual([
+      { weekStart: '2026-11-23', text: 'Also 2 changes in Nov 23 to 29' },
+      { weekStart: '2026-11-30', text: 'Also 1 change in Nov 30 to Dec 6' },
+    ])
+  })
+
+  it('sums up three or more in one line that opens the first', () => {
+    const weeks = ['2026-11-23', '2026-11-30', '2026-12-07', '2026-12-14', '2026-12-21', '2026-12-28'].map((w) => week(w))
+    expect(otherWeekRows(weeks)).toEqual([
+      { weekStart: '2026-11-23', text: 'Also changes in 6 more weeks, Nov 23 to Jan 3' },
+    ])
   })
 })

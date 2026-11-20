@@ -4,7 +4,7 @@ import type { Block, CheckInRequest, Proposal, Week } from './api'
 import { afterDue } from './drag'
 import { whenLine } from './itemDetails'
 import type { OnMiss } from './itemForm'
-import { estimateLabel, time12, toLocal, weekdayShort, weekTitle, type DateString } from './time'
+import { addDays, dateRange, estimateLabel, time12, toLocal, weekdayShort, weekTitle, type DateString } from './time'
 
 export type ChangeKind = 'new' | 'moved' | 'resized' | 'removed'
 export type Arrow = 'up' | 'down' | 'left' | 'right'
@@ -110,6 +110,19 @@ export function changeCount(count: number): string {
 export function changesTitle(count: number, proposal: Proposal): string {
   if (count > 0) return changeCount(count)
   return proposal.other_weeks.length > 0 ? 'No blocks move in this week' : 'No blocks move'
+}
+
+/**
+ * The changes card's lines for the other weeks a new plan changes, each with the week its Show opens.
+ * Up to two weeks get a line each; more get one line for all of them, whose Show opens the first:
+ * "Also changes in 6 more weeks, Nov 23 to Jan 3".
+ */
+export function otherWeekRows(weeks: Proposal['other_weeks']): { weekStart: DateString; text: string }[] {
+  const sorted = [...weeks].sort((a, b) => a.week_start.localeCompare(b.week_start))
+  if (sorted.length <= 2) return sorted.map((w) => ({ weekStart: w.week_start, text: otherWeekLine(w.changes, w.week_start) }))
+  const first = sorted[0].week_start
+  const lastSunday = addDays(sorted[sorted.length - 1].week_start, 6)
+  return [{ weekStart: first, text: `Also changes in ${sorted.length} more weeks, ${dateRange(first, lastSunday)}` }]
 }
 
 /** "Also 2 changes in Nov 23 to 29" */

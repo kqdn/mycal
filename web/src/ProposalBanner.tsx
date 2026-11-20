@@ -1,5 +1,5 @@
 import type { Proposal } from './api'
-import { changesTitle, otherWeekLine, overlapLines, type Change } from './proposal'
+import { changesTitle, otherWeekRows, overlapLines, type Change } from './proposal'
 import type { DateString } from './time'
 
 // The compare view (web/DESIGN.md, "Compare view"): the controls in the title row, and the changes card above the grid.
@@ -102,10 +102,10 @@ export function ChangesCard({ proposal, changes, showProposal, selected, error, 
         </div>
       )}
 
-      {proposal.other_weeks.map((other) => (
-        <p key={other.week_start} className="changes-other-week">
-          {otherWeekLine(other.changes, other.week_start)}
-          <button type="button" className="changes-show-week" onClick={() => onShowWeek(other.week_start)}>
+      {otherWeekRows(proposal.other_weeks).map((row) => (
+        <p key={row.weekStart} className="changes-other-week">
+          {row.text}
+          <button type="button" className="changes-show-week" onClick={() => onShowWeek(row.weekStart)}>
             Show
           </button>
         </p>

@@ -112,12 +112,16 @@ export function hourLabel(hour: number): string {
 
 /** Page title for a week: "Nov 16 to 22", or "Nov 30 to Dec 6" across months. */
 export function weekTitle(weekStart: DateString): string {
+  return dateRange(weekStart, addDays(weekStart, 6))
+}
+
+/** Two dates as a range: "Nov 16 to 22", the month again only when it changes ("Nov 23 to Jan 3"). */
+export function dateRange(from: DateString, to: DateString): string {
   const month = (date: DateString) =>
     new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' })
   const day = (date: DateString) => Number(date.slice(8, 10))
-  const end = addDays(weekStart, 6)
-  const endText = month(end) === month(weekStart) ? `${day(end)}` : `${month(end)} ${day(end)}`
-  return `${month(weekStart)} ${day(weekStart)} to ${endText}`
+  const toText = month(to) === month(from) ? `${day(to)}` : `${month(to)} ${day(to)}`
+  return `${month(from)} ${day(from)} to ${toText}`
 }
 
 /** "Wed, Nov 18" */
