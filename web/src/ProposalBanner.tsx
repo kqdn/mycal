@@ -11,19 +11,31 @@ interface ControlsProps {
   onDiscard: () => void
 }
 
-/** "Current plan | New plan", Discard and Accept. Accept only from the new plan, so you see what you accept. On screen the proposal is "the new plan". */
+/**
+ * One toggle that names the plan on screen ("New plan" green and filled, "Current plan" white and
+ * outlined) and flips to the other, then Discard and Accept. Accept only from the new plan, so you
+ * see what you accept. On screen the proposal is "the new plan".
+ */
 export function CompareControls({ showProposal, answering, onShow, onAccept, onDiscard }: ControlsProps) {
   const busy = answering !== null
   return (
     <div className="compare-controls">
-      <div className="compare-toggle" role="group" aria-label="Compare">
-        <button type="button" aria-pressed={!showProposal} onClick={() => onShow(false)}>
-          Current plan
-        </button>
-        <button type="button" aria-pressed={showProposal} onClick={() => onShow(true)}>
-          New plan
-        </button>
-      </div>
+      <button
+        type="button"
+        className={showProposal ? 'compare-toggle showing-new' : 'compare-toggle'}
+        aria-label={showProposal ? 'Switch to current plan' : 'Switch to new plan'}
+        title={showProposal ? 'Switch to current plan' : 'Switch to new plan'}
+        onClick={() => onShow(!showProposal)}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7" />
+        </svg>
+        {/* Both labels share one cell, so the button is as wide as the longer one and doesn't jump. */}
+        <span className="compare-toggle-labels">
+          <span className={showProposal ? '' : 'hidden'}>New plan</span>
+          <span className={showProposal ? 'hidden' : ''}>Current plan</span>
+        </span>
+      </button>
       <button type="button" className="secondary-button" disabled={busy} onClick={onDiscard}>
         {answering === 'discard' ? 'Discarding...' : 'Discard'}
       </button>

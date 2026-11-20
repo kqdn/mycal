@@ -173,17 +173,13 @@ a.tab {
 }
 
 .compare-toggle {
+  min-height: var(--tap);
   display: flex;
-  overflow: hidden;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
-  background: var(--surface);
-}
-
-.compare-toggle button {
-  min-height: var(--tap);
-  padding: 0 16px;
-  border: 0;
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -192,9 +188,32 @@ a.tab {
   cursor: pointer;
 }
 
-.compare-toggle button[aria-pressed='true'] {
+/* The new plan on screen: green and filled, like the old toggle's picked side. */
+.compare-toggle.showing-new {
   background: var(--accent);
+  border-color: var(--accent);
   color: var(--accent-contrast);
+}
+
+.compare-toggle svg {
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.compare-toggle-labels {
+  display: grid;
+}
+
+.compare-toggle-labels > span {
+  grid-area: 1 / 1;
+}
+
+.compare-toggle-labels > .hidden {
+  visibility: hidden;
 }
 
 /* Accept from the current plan: greyed like a done block, as in the prototype. */
