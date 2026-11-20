@@ -587,7 +587,9 @@ def update_item(item_id: UUID, request: ItemIn, week: date) -> WeekOut:
         else:
             store.put_item(conn, new)  # nothing left to place, say a past item's new title
         if new.series_id is not None:
-            store.mark_hand_edited(conn, new.id)  # a series edit leaves it alone from now on
+            # A series edit leaves it alone from now on. A proposal holds the mark too, so Accept
+            # keeps it (Accept writes the proposal over the database) and Discard drops it.
+            store.mark_hand_edited(_proposal.trial if request.propose and _proposal else conn, new.id)
         log.info("edited %r, re-planned %s", new.title, f"{min(weeks)} to {max(weeks)}" if weeks else "nothing")
         return _view(conn, settings, week, moment)
 

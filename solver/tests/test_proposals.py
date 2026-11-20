@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -159,3 +160,22 @@ def test_a_check_in_saving_on_its_own_drops_the_proposal(client: TestClient, mon
     assert week["proposal"] is None
     assert week["notice"] == api.PROPOSAL_DROPPED
     assert get(client)["notice"] is None  # said once
+
+
+def test_an_occurrence_edited_in_a_proposal_is_marked_only_once_accepted(client: TestClient, db: Path) -> None:
+    occurrence = next(b for b in get(client)["blocks"] if b["title"] == "Algorithms lecture")  # a series occurrence
+    form = client.get(f"/api/items/{occurrence['item_id']}").json()
+    changed = form | {"title": "Renamed", "propose": True}
+
+    def marked() -> bool:
+        return store.hand_edited(store.connect(db), UUID(occurrence["item_id"]))
+
+    response = client.put(f"/api/items/{occurrence['item_id']}", params={"week": WEEK}, json=changed)
+    assert response.status_code == 200, response.text
+    assert not marked()  # still only a proposal
+    client.post("/api/proposal/discard", params={"week": WEEK})
+    assert not marked()  # discarded with it
+
+    assert client.put(f"/api/items/{occurrence['item_id']}", params={"week": WEEK}, json=changed).status_code == 200
+    client.post("/api/proposal/accept", params={"week": WEEK})
+    assert marked()  # so a later series edit leaves it alone
