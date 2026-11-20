@@ -6,7 +6,6 @@ const WEEK: Week = {
   week_start: '2026-11-16',
   timezone: 'America/Los_Angeles',
   slot_min: 15,
-  feasible: true,
   blocks: [],
   frames: [],
   unscheduled: [],
@@ -82,7 +81,7 @@ describe('addItem', () => {
 
     const [url, init] = fetchMock.mock.calls[1]
     expect(url).toBe('/api/items')
-    expect(init).toMatchObject({ method: 'POST', body: JSON.stringify(request) })
+    expect(init).toMatchObject({ method: 'POST', body: JSON.stringify({ ...request, propose: true }) }) // held for Accept or Discard
     expect(peekWeek('2026-11-16')).toEqual(WEEK)
     expect(peekWeek('2026-11-23')).toBeUndefined()
   })
@@ -114,7 +113,7 @@ describe('deleteItem', () => {
     expect(await deleteItem('i1', '2026-11-16')).toEqual(WEEK)
 
     const [url, init] = fetchMock.mock.calls[1]
-    expect(url).toBe('/api/items/i1?week=2026-11-16')
+    expect(url).toBe('/api/items/i1?week=2026-11-16&propose=true')
     expect(init).toMatchObject({ method: 'DELETE' })
     expect(peekWeek('2026-11-16')).toEqual(WEEK)
     expect(peekWeek('2026-11-23')).toBeUndefined()

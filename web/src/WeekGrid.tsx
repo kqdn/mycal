@@ -11,10 +11,14 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h)
 interface WeekGridProps {
   week: Week
   onOpen: (block: Block, opener: HTMLElement) => void
-  onAdd: (date: DateString, minutes: number, lengthMin: number) => void // a click on an empty slot that hasn't begun
+  // A click on an empty slot that hasn't begun. Left out while a proposal waits, so empty slots do nothing.
+  onAdd?: (date: DateString, minutes: number, lengthMin: number) => void
+  // Where to scroll for what is being looked at, like a proposal's changes (key: which proposal). Scrolled to
+  // once per key; flipping between the current plan and the proposal keeps the scroll.
+  focus?: { key: string; minute: number } | null
 }
 
-export function WeekGrid({ week, onOpen, onAdd }: WeekGridProps) {
+export function WeekGrid({ week, onOpen, onAdd, focus }: WeekGridProps) {
   const { week_start: weekStart, timezone, slot_min: slotMin } = week
   const scroller = useRef<HTMLDivElement>(null)
   const dates = weekDates(weekStart)
@@ -26,7 +30,7 @@ export function WeekGrid({ week, onOpen, onAdd }: WeekGridProps) {
 
   /** The slot under the pointer in a day column, or null over a block or a slot that has begun. */
   function slotUnder(event: MouseEvent<HTMLDivElement>, date: DateString): number | null {
-    if ((event.target as HTMLElement).closest('.block')) return null
+    if (!onAdd || (event.target as HTMLElement).closest('.block')) return null
     const offset = event.clientY - event.currentTarget.getBoundingClientRect().top
     const minutes = slotAt(offset, slotMin)
     return slotHasBegun(date, minutes, now) ? null : minutes
@@ -38,9 +42,18 @@ export function WeekGrid({ week, onOpen, onAdd }: WeekGridProps) {
     return clickedLength(minutes, later.length > 0 ? Math.min(...later) : null)
   }
 
+  // Scroll when a week is first shown (to its focus, else its earliest block) and when a new focus comes.
+  // Not when the same week is shown again, so toggling the compare view or saving keeps your place.
+  const scrolledTo = useRef<{ week: DateString; focus: string | null } | null>(null)
   useLayoutEffect(() => {
-    if (scroller.current) scroller.current.scrollTop = minutesToPx(initialScrollMinute(week))
-  }, [week])
+    const last = scrolledTo.current
+    const newWeek = last?.week !== weekStart
+    const newFocus = focus != null && focus.key !== last?.focus
+    if (scroller.current && (newWeek || newFocus)) {
+      scroller.current.scrollTop = minutesToPx(focus ? focus.minute : initialScrollMinute(week))
+    }
+    scrolledTo.current = { week: weekStart, focus: focus?.key ?? null }
+  }, [week, weekStart, focus])
 
   const frames = week.frames.flatMap((span) => pieces(span, weekStart, timezone))
   const blocks = week.blocks.flatMap((block) =>
@@ -90,7 +103,7 @@ export function WeekGrid({ week, onOpen, onAdd }: WeekGridProps) {
                 }}
                 onClick={(event) => {
                   const minutes = slotUnder(event, date)
-                  if (minutes !== null && !closingPopover.current) onAdd(date, minutes, lengthAt(day, minutes))
+                  if (minutes !== null && !closingPopover.current) onAdd?.(date, minutes, lengthAt(day, minutes))
                   closingPopover.current = false
                 }}
               >

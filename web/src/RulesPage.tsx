@@ -9,13 +9,14 @@ import { useShortcuts } from './useShortcuts'
 
 interface Props {
   week: DateString // the week last viewed; changes return it and the Week tab shows it
+  onChanged: () => void // a change was made as a proposal: show it on the Week tab
 }
 
 type Load<T> = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; rows: T[] }
 type Focus = { section: 'frame' | 'rule'; ids: Set<string>; edited?: string; deleted: boolean }
 
 /** The Frames and rules page (web/DESIGN.md, "Frames and rules"). */
-export function RulesPage({ week }: Props) {
+export function RulesPage({ week, onChanged }: Props) {
   const [frames, setFrames] = useState<Load<FrameOut>>({ status: 'loading' })
   const [rules, setRules] = useState<Load<RuleOut>>({ status: 'loading' })
   const [reload, setReload] = useState(0)
@@ -70,6 +71,7 @@ export function RulesPage({ week }: Props) {
     const ids = new Set(list.status === 'ready' ? list.rows.map((row) => row.id) : [])
     focusAfter.current = { section, ids, edited: editing?.id, deleted }
     setReload((n) => n + 1)
+    onChanged()
   }
 
   const loadError = frames.status === 'error' ? frames.message : rules.status === 'error' ? rules.message : null

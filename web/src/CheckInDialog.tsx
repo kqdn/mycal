@@ -22,6 +22,7 @@ import { FieldError } from './fields'
 import { whenLine } from './itemDetails'
 import { formFrom, missHint, type DayContext, type ItemRequest } from './itemForm'
 import { NewItemDialog } from './NewItemDialog'
+import { checkInProposes } from './proposal'
 import { estimateLabel, today, type DateString } from './time'
 
 interface Props {
@@ -108,7 +109,8 @@ export function CheckInDialog({ target, timezone, weekStart, frames, slotMin, on
     setSaving(true)
     setServerError(null)
     try {
-      const week = await answerCheckIn(target.block_id, checkInRequest(form, question !== null), weekStart)
+      const request = checkInRequest(form, question !== null)
+      const week = await answerCheckIn(target.block_id, { ...request, propose: checkInProposes(request, target.on_miss) }, weekStart)
       onSaved(week)
       dialog.current?.close()
     } catch (error) {
@@ -119,7 +121,8 @@ export function CheckInDialog({ target, timezone, weekStart, frames, slotMin, on
   }
 
   function saveCatchUp(request: ItemRequest): Promise<Week> {
-    return answerCheckIn(target.block_id, { ...checkInRequest(form, question !== null), catch_up: request }, weekStart)
+    // A changed catch-up item always moves work, so it is always a proposal.
+    return answerCheckIn(target.block_id, { ...checkInRequest(form, question !== null), catch_up: request, propose: true }, weekStart)
   }
 
   const length = lengthMin(target)

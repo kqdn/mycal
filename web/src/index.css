@@ -161,6 +161,64 @@ a.tab {
   gap: 2px;
 }
 
+/* Compare view (DESIGN.md, Compare view): a waiting proposal with Accept and Discard */
+
+.proposal-banner {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.proposal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.proposal-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--attention-text);
+}
+
+.proposal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.proposal-toggle {
+  max-width: 320px;
+}
+
+.proposal-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.proposal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.proposal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+}
+
+.proposal-row + .proposal-row {
+  border-top: 1px solid var(--attention-ring);
+}
+
+.proposal-overlap {
+  font-weight: 600;
+}
+
 /* What happens to the missed time (Check-ins, Dialog): a dashed tile, a button for a catch-up. */
 .miss-tile {
   display: flex;

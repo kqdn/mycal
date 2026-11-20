@@ -58,6 +58,7 @@ export interface CheckInRequest {
   action?: MissedAction
   accept_shortfall?: boolean
   catch_up?: ItemRequest // the catch-up item as changed in the item dialog
+  propose?: boolean // hold it as a proposal to accept or discard (Milestone 8)
 }
 
 /**
@@ -92,11 +93,27 @@ export interface RepeatOut {
   end_date: DateString | null
 }
 
+/** Work a proposal leaves over that wasn't left over before, across every week it re-planned. */
+export interface LeftOver {
+  item_id: string
+  title: string
+  minutes: number
+  message: string // "1h won't fit before Fri 5pm"
+}
+
+/** The waiting proposal's version of the week (Milestone 8). */
+export interface Proposal {
+  summary: string // "Add Essay"
+  blocks: Block[]
+  unscheduled: Week['unscheduled']
+  left_over: LeftOver[]
+  overlaps: [string, string][] // block ids of fixed events that overlap (double booking)
+}
+
 export interface Week {
   week_start: DateString
   timezone: string
   slot_min: number // the planner's slot size; lengths off it are rounded
-  feasible: boolean // always true since partial plans (Milestone 8)
   blocks: Block[]
   frames: { start: string; end: string }[]
   // `reason` is set when some of the item's work didn't fit, like "1h won't fit before Fri 5pm".
@@ -113,6 +130,8 @@ export interface Week {
   }[]
   series: RepeatOut[] // how each series with an occurrence in the week repeats
   shortfalls: Shortfall[] // not yet accepted
+  proposal?: Proposal | null // set while a proposed change waits for Accept or Discard
+  notice?: string | null // said once, like "the proposed change was dropped"
 }
 
 /** GET /api/series/{id}: a stored series in the dialog's terms. Times are "HH:MM:SS". */
@@ -234,7 +253,7 @@ export async function addItem(request: ItemRequest): Promise<Week> {
   const response = await fetch('/api/items', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, propose: true }),
   })
   if (!response.ok) throw await failure(response)
   const week: Week = await response.json()
@@ -270,7 +289,7 @@ export async function updateItem(itemId: string, request: ItemRequest, week: Dat
   const response = await fetch(`/api/items/${itemId}?week=${week}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, propose: true }),
   })
   if (!response.ok) throw await failure(response)
   const returned: Week = await response.json()
@@ -279,7 +298,7 @@ export async function updateItem(itemId: string, request: ItemRequest, week: Dat
 }
 
 export async function deleteItem(itemId: string, week: DateString): Promise<Week> {
-  const response = await fetch(`/api/items/${itemId}?week=${week}`, { method: 'DELETE' })
+  const response = await fetch(`/api/items/${itemId}?week=${week}&propose=true`, { method: 'DELETE' })
   if (!response.ok) throw await failure(response)
   const returned: Week = await response.json()
   rememberOnly(returned)
@@ -298,17 +317,17 @@ export async function listFrames(): Promise<FrameOut[]> {
 
 /** Add a work frame. Throws WeekError with the server's message on a 422 (a week would stop fitting). */
 export async function addFrame(request: FrameRequest, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/frames?week=${week}`, 'POST', request)
+  return sendForWeek(`/api/frames?week=${week}`, 'POST', proposed(request))
 }
 
 /** Change a work frame. A 404 (already gone) throws WeekError with kind 'missing'. */
 export async function updateFrame(frameId: string, request: FrameRequest, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/frames/${frameId}?week=${week}`, 'PUT', request)
+  return sendForWeek(`/api/frames/${frameId}?week=${week}`, 'PUT', proposed(request))
 }
 
 /** Delete a work frame. Refused with a 422 if a week would stop fitting without it. */
 export async function deleteFrame(frameId: string, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/frames/${frameId}?week=${week}`, 'DELETE')
+  return sendForWeek(`/api/frames/${frameId}?week=${week}&propose=true`, 'DELETE')
 }
 
 // Rules (constraints). Like work frames, a change re-plans every week from this one on.
@@ -329,17 +348,22 @@ export async function listTargets(): Promise<TargetOut[]> {
 
 /** Add a rule. Throws WeekError with the server's message on a 422. */
 export async function addRule(request: RuleRequest, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/rules?week=${week}`, 'POST', request)
+  return sendForWeek(`/api/rules?week=${week}`, 'POST', proposed(request))
 }
 
 /** Change a rule (its kind stays). A 404 (already gone) throws WeekError with kind 'missing'. */
 export async function updateRule(ruleId: string, request: RuleRequest, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/rules/${ruleId}?week=${week}`, 'PUT', request)
+  return sendForWeek(`/api/rules/${ruleId}?week=${week}`, 'PUT', proposed(request))
 }
 
 /** Delete a rule. Deleting a rule never makes a week stop fitting. */
 export async function deleteRule(ruleId: string, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/rules/${ruleId}?week=${week}`, 'DELETE')
+  return sendForWeek(`/api/rules/${ruleId}?week=${week}&propose=true`, 'DELETE')
+}
+
+/** A change's body, sent as a proposal: the server holds it until Accept or Discard (Milestone 8). */
+function proposed<T extends object>(request: T): T & { propose: true } {
+  return { ...request, propose: true }
 }
 
 /** Send a change that returns the viewed week, and keep only that week in the cache. */
@@ -360,12 +384,12 @@ async function sendForWeek(url: string, method: 'POST' | 'PUT' | 'DELETE', body?
 
 /** Add a repeating item. Throws WeekError with the server's message on a 422. */
 export async function addSeries(request: SeriesRequest): Promise<Week> {
-  return sendForWeek('/api/series', 'POST', request)
+  return sendForWeek('/api/series', 'POST', proposed(request))
 }
 
 /** Turn a one-off item into a series; the item becomes its occurrence on the item's own date. */
 export async function repeatItem(itemId: string, request: SeriesRequest, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/items/${itemId}/repeat?week=${week}`, 'POST', request)
+  return sendForWeek(`/api/items/${itemId}/repeat?week=${week}`, 'POST', proposed(request))
 }
 
 /** A series as the edit dialog shows it. A 404 (already gone) throws WeekError with kind 'missing'. */
@@ -377,12 +401,12 @@ export async function getSeries(seriesId: string): Promise<SeriesFormOut> {
 
 /** Change a series: occurrences that haven't started are rebuilt, except ones edited by hand. */
 export async function updateSeries(seriesId: string, request: SeriesRequest, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'PUT', request)
+  return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'PUT', proposed(request))
 }
 
 /** End a series: occurrences that haven't started go, past ones stay. */
 export async function deleteSeries(seriesId: string, week: DateString): Promise<Week> {
-  return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'DELETE')
+  return sendForWeek(`/api/series/${seriesId}?week=${week}&propose=true`, 'DELETE')
 }
 
 // Check-ins (Milestone 7)
@@ -408,6 +432,16 @@ export async function previewCheckIn(blockId: string, request: CheckInRequest): 
   })
   if (!response.ok) throw await failure(response)
   return response.json()
+}
+
+/** Save the waiting proposal. A 404 means none waits any more (say, a check-in dropped it). */
+export async function acceptProposal(week: DateString): Promise<Week> {
+  return sendForWeek(`/api/proposal/accept?week=${week}`, 'POST')
+}
+
+/** Drop the waiting proposal, changing nothing. */
+export async function discardProposal(week: DateString): Promise<Week> {
+  return sendForWeek(`/api/proposal/discard?week=${week}`, 'POST')
 }
 
 /** Accept that an "N times a week" item gets fewer sessions, hiding its banner. */

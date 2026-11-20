@@ -92,8 +92,8 @@ Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted
 
 ## Other pieces
 
-- **Unscheduled list:** a card (`--surface`, 1px `--border`, radius `--radius-card`) under the grid, headed "Unscheduled" as a section label. Each row is at least 56px tall with 14px side padding and a 1px `--divider` between rows. It shows the title (15px / 600) and the estimate under it (12px, `--text-muted`), for example "15m". An item whose work waits on a week that can't be planned adds the reason after the estimate, in `--attention-text` (that week needs you), and the line wraps: "12h · Waiting on Nov 30 to Dec 6, which can't be planned." Work that is only waiting for its deadline to come within planning range is normal and gets no reason, so it isn't listed here.
-- **Attention banner** (infeasible week, missing week file): `--attention-bg` background, 1px `--attention-border`, radius 12px, 12px 16px padding. The title is 14px / 600 in `--text`. The body is 13px in `--attention-text`. Example: "This week can't be planned" / "6h of work doesn't fit before Wed 11:59pm." A banner about something you did, like a delete that failed after its popover closed, has a close button on the right: a 44px square, no background, "×" at 20px in `--attention-text`. Banners about the week itself have none.
+- **Unscheduled list:** a card (`--surface`, 1px `--border`, radius `--radius-card`) under the grid, headed "Unscheduled" as a section label. Each row is at least 56px tall with 14px side padding and a 1px `--divider` between rows. It shows the title (15px / 600) and the estimate under it (12px, `--text-muted`), for example "15m". An item with work that didn't fit adds the reason after the estimate, in `--attention-text` (it needs you), and the line wraps: "12h · 1h won't fit before Fri 5pm". Work that is only waiting for its deadline to come within planning range is normal and gets no reason, so it isn't listed here. While a proposal waits, the list is the one of the plan the grid shows.
+- **Attention banner** (a week that can't be loaded, a failed change): `--attention-bg` background, 1px `--attention-border`, radius 12px, 12px 16px padding. The title is 14px / 600 in `--text`. The body is 13px in `--attention-text`. Example: "This week couldn't be loaded" / the server's sentence. A banner about something you did, like a delete that failed after its popover closed, has a close button on the right: a 44px square, no background, "×" at 20px in `--attention-text`. Banners about the week itself have none.
 
 ## Add item dialog (Milestone 3)
 
@@ -268,6 +268,24 @@ When a checkable session ends, the page asks how it went. Push notifications wai
 - **Errors:** at their field, like the Add item dialog: "Pick Yes, Partly or No.", "Use a length shorter than the session's 1h, like 30m.", "Pick what happens to the time you missed." A refusal from the server (the missed time can't go anywhere) shows in the banner at the top of the body, "Couldn't save it", and the form stays, so another choice can be picked.
 - **Fewer sessions:** when the answer would leave an "N times a week" item with fewer sessions, the server asks first. The dialog shows a banner, "Fewer sessions", with the server's sentence ("Workout gets 2 of 3 sessions this week: only Wed and Fri are left.") and "Save anyway to accept it.", and the primary button reads "Save anyway". Changing the answer takes the question away.
 - **Done:** the dialog closes, the grid shows the re-planned week, and the banner drops the session.
+
+## Compare view (Milestone 8)
+
+A change doesn't save right away. The server works it out and holds it as a proposal, and the Week page shows it until it is accepted or discarded. One proposal waits at a time.
+
+- **What proposes:** adding, editing and deleting items and repeating items, making an item repeat, and frame and rule changes. A check-in proposes only when it moves work (Reschedule or Catch up, and always when the catch-up item was changed). Yes and Skip save right away, since nothing else in the plan changes. A frame or rule change made on Frames and rules switches to the Week tab, which shows the proposal.
+- **Banner:** above the grid, under the check-ins banner, on every week while a proposal waits, in the attention style (it needs you). In order:
+  1. "Proposed change" (12px / 600, `--attention-text`) over the change's summary as the banner title ("Add Essay", "Delete Gym", "Change work frame Weekdays"), with "Discard" (secondary) and "Accept" (primary) on the right. They read "Discarding..." and "Accepting..." while running, and both are disabled then. On a narrow screen the buttons wrap under the title.
+  2. **Current plan / Proposal:** a two-segment choice like Repeats, at most 320px wide, that flips the grid and the Unscheduled list between the two plans. It starts on Proposal for each new proposal.
+  3. **Changes in this week:** one row per block that differs, in the order they come in the week: the title (15px / 600) and a 12px `--text-muted` line, "Moves from Thu 6:00pm to Fri 4:30pm", "Moves from ... · 2h becomes 1h 30m", "2h becomes 1h 30m", "New · Wed, Nov 18, 2:00 to 4:00pm" or "Off this week · was Thu, Nov 19, 6:00 to 8:00pm" (a block that left the week, deleted or moved to another one). Rows have a 1px `--attention-ring` line between them, like the check-ins banner. With nothing different: "Nothing changes in this week." (the change may only reach other weeks).
+  4. **Didn't fit:** a 12px / 600 label, then a row per item with work the proposal leaves over that wasn't left over before, across every week it re-planned: the title, and the reason in `--attention-text` ("1h won't fit before Fri 5pm").
+  5. Fixed events that overlap: "Lecture and Dentist overlap" in 13px / 600 `--attention-text`.
+  6. A failed Accept or Discard shows as a field error at the bottom.
+- **Scroll:** when a proposal comes, the grid scrolls to the earliest block it changes in the week, minus 30 minutes, on any day (not the week's earliest block, which may be unrelated night work). Flipping between the plans keeps the scroll, so the change stays in view in both. Saving or accepting keeps it too; only another week, or a new proposal, scrolls again.
+- **While it waits:** New item, a click on an empty slot, E and Delete, the popover's Edit, Delete item and Check in, and the check-ins banner's Check in buttons are disabled. The popover says "Accept or Discard the proposed change first." The server refuses other changes too.
+- **Accept or Discard:** the banner goes and the grid shows the plan that was kept, saved or not. If nothing waits any more (a check-in saved on its own meanwhile), the week just reloads.
+- **Dropped:** a check-in left unanswered saves on its own, and that drops the waiting proposal. The next week shows a dismissable banner, "Proposed change dropped", with the server's sentence.
+- **Next:** changed blocks get an orange outline and a tag in the grid, and a selected change shows its other spot as a dashed outline (see Previewing an arrangement in docs/PRD.md).
 
 ## Repeat (Milestone 6)
 

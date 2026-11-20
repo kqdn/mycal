@@ -46,6 +46,12 @@ export function pieces(span: Span, weekStart: DateString, timeZone: string): Pie
   return result
 }
 
+/** Where to scroll to show some blocks, like the ones a proposal changes: the earliest start minus 30 minutes, or null with none in the week. */
+export function scrollMinuteFor(spans: Span[], weekStart: DateString, timeZone: string): number | null {
+  const first = earliestStart(spans, weekStart, timeZone)
+  return first === null ? null : Math.max(0, first - 30)
+}
+
 /** The earliest local minute any span starts on any of the 7 days, ignoring tails of the night before. */
 function earliestStart(spans: Span[], weekStart: DateString, timeZone: string): number | null {
   const starts = spans
