@@ -301,7 +301,9 @@ export default function App() {
   function moveTo(block: Block, start: string, timezone: string): Promise<void> {
     if (!block.fixed) return changeBlock(() => moveBlock(block.id, start, weekStart), `Couldn't move ${block.title}`)
     const failed = `Couldn't move ${block.title}`
-    if (!block.series_id) return changeBlock(() => moveEvent(block, start, timezone, 'one'), failed)
+    // A started occurrence moves alone: This and following only rebuilds dates that haven't started.
+    const started = Date.parse(block.start) <= Date.now()
+    if (!block.series_id || started) return changeBlock(() => moveEvent(block, start, timezone, 'one'), failed)
     const anchor = document.querySelector('.drag-ghost')?.getBoundingClientRect() ?? new DOMRect()
     return new Promise((resolve) => {
       setMoveChoice({

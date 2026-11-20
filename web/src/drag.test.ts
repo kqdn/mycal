@@ -23,8 +23,13 @@ describe('canDrag', () => {
     expect(canDrag({ ...READ, locked: true }, NOW)).toBe(true)
   })
 
-  it('keeps started and finished sessions and kept records where they are', () => {
-    expect(canDrag(READ, READ.start)).toBe(false)
+  it('lets a session that started move until it is answered', () => {
+    expect(canDrag(READ, READ.start)).toBe(true) // running
+    expect(canDrag(READ, '2026-11-17T23:30:00Z')).toBe(true) // ended, waiting for its check-in
+    expect(canDrag({ ...READ, checkable: false }, '2026-11-17T23:30:00Z')).toBe(false) // ended, never answered
+  })
+
+  it('keeps answered sessions and kept records where they are', () => {
     expect(canDrag({ ...READ, status: 'done' }, NOW)).toBe(false)
     expect(canDrag({ ...READ, deleted: true }, NOW)).toBe(false)
   })
@@ -62,6 +67,10 @@ describe('dropAt', () => {
   it('touching end to end is not in the way', () => {
     const lecture = block('l', 'Lecture', '2026-11-18T18:00:00Z', '2026-11-18T19:00:00Z', { fixed: true })
     expect(dropAt(READ, '2026-11-18', 9 * 60, [READ, lecture], LA, NOW).problem).toBeNull()
+  })
+
+  it('allows a start in the past when it ends after now, so a running session can move to when it began', () => {
+    expect(dropAt(READ, '2026-11-16', 7 * 60 + 15, [READ], LA, NOW).problem).toBeNull() // 7:15 to 8:15, now 8:00
   })
 
   it('refuses the past', () => {

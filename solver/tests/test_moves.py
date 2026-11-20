@@ -126,11 +126,38 @@ def test_a_locked_session_is_not_pushed_aside(client: TestClient) -> None:
     assert (response.status_code, response.json()["detail"]) == (422, "Call home is there already. Pick a free spot.")
 
 
-def test_a_session_that_started_is_not_moved(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    call = block(get(client), "Call home")
-    monkeypatch.setattr(api, "now", lambda: datetime.fromisoformat(call["start"]))
-    response = move(client, call["id"], at(20, 19))
-    assert (response.status_code, response.json()["detail"]) == (422, api.MOVE_NOT_STARTED)
+def test_a_running_session_moves_even_to_a_start_in_the_past(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = get(client)
+    # A session with the half hour before it free (ties place blocks differently on each import).
+    call = next(
+        b for b in week["blocks"]
+        if not b["fixed"] and not any(starts(b) - timedelta(minutes=30) < ends(o) <= starts(b) for o in week["blocks"])
+    )
+    monkeypatch.setattr(api, "now", lambda: starts(call) + timedelta(minutes=10))
+    began = starts(call) - timedelta(minutes=15)  # it really began 15 minutes earlier
+
+    response = move(client, call["id"], began.isoformat())
+
+    assert response.status_code == 200, response.text
+    moved = next(b for b in response.json()["proposal"]["blocks"] if b["id"] == call["id"])
+    assert starts(moved) == began and moved["locked"] is True
+
+
+def test_a_session_that_is_over_or_checked_in_stays(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = get(client)
+    plain = next(b for b in week["blocks"] if not b["fixed"] and not b["checkable"])
+    monkeypatch.setattr(api, "now", lambda: ends(plain) + timedelta(minutes=5))
+    response = move(client, plain["id"], (ends(plain) + timedelta(hours=1)).isoformat())
+    assert (response.status_code, response.json()["detail"]) == (422, api.MOVE_NOT_OPEN)  # ended, never answered
+
+    essay = {"week_start": WEEK, "title": "Essay", "preset": "day", "day": "2026-11-18", "estimate_min": 60, "checkable": True}
+    assert client.post("/api/items", json=essay).status_code == 201
+    checkable = next(b for b in get(client)["blocks"] if b["title"] == "Essay")
+    monkeypatch.setattr(api, "now", lambda: ends(checkable) + timedelta(minutes=5))
+    answered = client.post(f"/api/blocks/{checkable['id']}/check-in", params={"week": WEEK}, json={"answer": "yes"})
+    assert answered.status_code == 200, answered.text
+    response = move(client, checkable["id"], (ends(checkable) + timedelta(hours=1)).isoformat())
+    assert (response.status_code, response.json()["detail"]) == (422, api.MOVE_NOT_OPEN)
 
 
 def test_a_session_already_running_is_in_the_way(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

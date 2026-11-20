@@ -692,14 +692,18 @@ class UnlockIn(BaseModel):
 
 
 MOVE_ONLY_WORK = "Only a work session the planner placed can be moved here. Move a fixed event by changing its time."
-MOVE_NOT_STARTED = "Only a session that hasn't started can be moved."
-MOVE_IN_PAST = "A session can't be moved into the past."
+MOVE_NOT_OPEN = "Only a session that isn't over, or ended and isn't checked in yet, can be moved."
+MOVE_IN_PAST = "A session has to end after now."
 MOVE_OFF_GRID = "A session has to start on the slot grid."
 
 
 @app.post("/api/blocks/{block_id}/move")
 def move_block(block_id: UUID, request: MoveIn, week: date) -> WeekOut:
-    """Move a work session that hasn't started to `start`, keeping its length, and lock it there.
+    """Move a work session to `start`, keeping its length, and lock it there.
+
+    Like "+15 min", it works until the session is answered: before it starts, while it runs,
+    or (with check-ins) after it ends and before its check-in. The new spot has to end after
+    now, so a running session can move to when it really started.
 
     The planner keeps a locked block where it is, so it plans the rest around it.
     A session the planner placed that is in the way gets placed again. A fixed
@@ -710,10 +714,12 @@ def move_block(block_id: UUID, request: MoveIn, week: date) -> WeekOut:
         block, item = _block_and_item(conn, block_id)
         if item.flex_preset is FlexPreset.EXACT:
             raise HTTPException(status_code=422, detail=MOVE_ONLY_WORK)
-        if block.status is not BlockStatus.PLANNED or block.start <= moment:
-            raise HTTPException(status_code=422, detail=MOVE_NOT_STARTED)
+        # One without check-ins never gets an answer, so once it ends it's history.
+        over = block.end <= moment and not item.checkable
+        if block.status is not BlockStatus.PLANNED or over:
+            raise HTTPException(status_code=422, detail=MOVE_NOT_OPEN)
         start = request.start.astimezone(UTC)
-        if start < moment:
+        if start + (block.end - block.start) <= moment:
             raise HTTPException(status_code=422, detail=MOVE_IN_PAST)
         if slot_start(floor_slot(start, settings.slot_min), settings.slot_min) != start:
             raise HTTPException(status_code=422, detail=MOVE_OFF_GRID)

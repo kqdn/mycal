@@ -7,12 +7,14 @@ import { weekdayOf } from './repeatForm'
 import { fromLocal, type DateString, type LocalMoment } from './time'
 
 /**
- * Whether a block can be dragged: a session or fixed event that hasn't started, not a kept record.
- * A fixed event also has to be one the edit dialog can change (not Custom), since moving it edits it.
+ * Whether a block can be dragged: a session or fixed event that isn't answered yet, as for "+15 min":
+ * before it starts, while it runs, or (with check-ins) until it's checked in. Not a kept record. A fixed
+ * event also has to be one the edit dialog can change (not Custom), since moving it edits it.
  */
 export function canDrag(block: Block, now: string): boolean {
   const movable = !block.fixed || block.editable
-  return movable && !block.deleted && block.status === 'planned' && Date.parse(block.start) > Date.parse(now)
+  const open = block.checkable || Date.parse(now) < Date.parse(block.end)
+  return movable && !block.deleted && block.status === 'planned' && open
 }
 
 /** Where a dragged block would land, and why it can't go there (null when it can). */
@@ -32,7 +34,8 @@ export function dropAt(block: Block, date: DateString, minutes: number, blocks: 
   const start = fromLocal(date, minutes, timezone)
   const end = new Date(Date.parse(start) + Date.parse(block.end) - Date.parse(block.start)).toISOString()
   const late = afterDue(end, block.due)
-  if (Date.parse(start) < Date.parse(now)) return { start, end, problem: 'Already past', late }
+  // It only has to end after now: a running session may move to when it really started.
+  if (Date.parse(end) <= Date.parse(now)) return { start, end, problem: 'Already past', late }
   // A fixed event may overlap anything (double booking, marked in the new plan); sessions move around it.
   if (block.fixed) return { start, end, problem: null, late }
   const blocker = blocks.find(
