@@ -2,11 +2,17 @@
 // match the server's (POST /api/blocks/{id}/move), so a refused spot shows before the drop.
 
 import type { Block } from './api'
-import { fromLocal, type DateString } from './time'
+import type { ItemForm } from './itemForm'
+import { weekdayOf } from './repeatForm'
+import { fromLocal, type DateString, type LocalMoment } from './time'
 
-/** Whether a block can be dragged: a work session the planner placed (or you moved) that hasn't started. */
+/**
+ * Whether a block can be dragged: a session or fixed event that hasn't started, not a kept record.
+ * A fixed event also has to be one the edit dialog can change (not Custom), since moving it edits it.
+ */
 export function canDrag(block: Block, now: string): boolean {
-  return !block.fixed && !block.deleted && block.status === 'planned' && Date.parse(block.start) > Date.parse(now)
+  const movable = !block.fixed || block.editable
+  return movable && !block.deleted && block.status === 'planned' && Date.parse(block.start) > Date.parse(now)
 }
 
 /** Where a dragged block would land, and why it can't go there (null when it can). */
@@ -27,6 +33,8 @@ export function dropAt(block: Block, date: DateString, minutes: number, blocks: 
   const end = new Date(Date.parse(start) + Date.parse(block.end) - Date.parse(block.start)).toISOString()
   const late = afterDue(end, block.due)
   if (Date.parse(start) < Date.parse(now)) return { start, end, problem: 'Already past', late }
+  // A fixed event may overlap anything (double booking, marked in the new plan); sessions move around it.
+  if (block.fixed) return { start, end, problem: null, late }
   const blocker = blocks.find(
     (other) =>
       other.id !== block.id &&
@@ -35,6 +43,30 @@ export function dropAt(block: Block, date: DateString, minutes: number, blocks: 
       (other.fixed || other.locked || other.status !== 'planned' || Date.parse(other.start) <= Date.parse(now)),
   )
   return { start, end, problem: blocker ? `${blocker.title} is there` : null, late }
+}
+
+/** "09:05" for 545 minutes; an end at midnight the next day is "00:00", which the server reads as overnight. */
+function clock(minutes: number): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(Math.floor(minutes / 60) % 24)}:${pad(minutes % 60)}`
+}
+
+/** A fixed event's edit form moved to a new local start and end ("This event only", or a one-off event). */
+export function movedEvent(form: ItemForm, start: LocalMoment, end: LocalMoment): ItemForm {
+  return { ...form, day: start.date, startTime: clock(start.minutes), endTime: clock(end.minutes) }
+}
+
+/**
+ * A repeating event's form moved for "All events": its new times, and for a weekly series moved to
+ * another day, that weekday in place of the old one (`from`, the dragged occurrence's date).
+ */
+export function movedSeries(form: ItemForm, from: DateString, start: LocalMoment, end: LocalMoment): ItemForm {
+  const times = { startTime: clock(start.minutes), endTime: clock(end.minutes) }
+  const [old, now] = [weekdayOf(from), weekdayOf(start.date)]
+  if (form.repeat !== 'weekly' || old === now) return { ...form, ...times }
+  const days = new Set(form.repeatDays.filter((d) => d !== old))
+  days.add(now)
+  return { ...form, ...times, repeatDays: [...days].sort((a, b) => a - b) }
 }
 
 /** Whether a session ending at `end` runs past its item's deadline (`due`, for a "before a deadline" item). */

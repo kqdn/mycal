@@ -418,6 +418,14 @@ export async function updateSeries(seriesId: string, request: SeriesRequest, wee
   return sendForWeek(`/api/series/${seriesId}?week=${week}`, 'PUT', proposed(request))
 }
 
+/**
+ * "This and following events" (Milestone 9): the series from `fromDate` on gets the request's fields;
+ * the dates before it keep theirs. Comes back as a new plan to accept.
+ */
+export async function splitSeries(seriesId: string, fromDate: DateString, request: SeriesRequest, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/series/${seriesId}/split?week=${week}`, 'POST', { ...proposed(request), from_date: fromDate })
+}
+
 /** End a series: occurrences that haven't started go, past ones stay. */
 export async function deleteSeries(seriesId: string, week: DateString): Promise<Week> {
   return sendForWeek(`/api/series/${seriesId}?week=${week}&propose=true`, 'DELETE')

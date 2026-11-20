@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from './api'
-import { canDrag, dropAt } from './drag'
+import { canDrag, dropAt, movedEvent, movedSeries } from './drag'
+import { emptyForm } from './itemForm'
 
 const LA = 'America/Los_Angeles'
 const NOW = '2026-11-16T16:00:00Z' // Mon Nov 16, 8am PST
@@ -22,8 +23,7 @@ describe('canDrag', () => {
     expect(canDrag({ ...READ, locked: true }, NOW)).toBe(true)
   })
 
-  it('keeps fixed events, started and finished sessions and kept records where they are', () => {
-    expect(canDrag({ ...READ, fixed: true }, NOW)).toBe(false)
+  it('keeps started and finished sessions and kept records where they are', () => {
     expect(canDrag(READ, READ.start)).toBe(false)
     expect(canDrag({ ...READ, status: 'done' }, NOW)).toBe(false)
     expect(canDrag({ ...READ, deleted: true }, NOW)).toBe(false)
@@ -66,5 +66,57 @@ describe('dropAt', () => {
 
   it('refuses the past', () => {
     expect(dropAt(READ, '2026-11-16', 7 * 60, [READ], LA, NOW).problem).toBe('Already past')
+  })
+})
+
+describe('dragging a fixed event', () => {
+  const LECTURE = block('l', 'Lecture', '2026-11-17T19:00:00Z', '2026-11-17T20:00:00Z', { fixed: true, estimate_min: null })
+
+  it('can be dragged unless it is a Custom item the dialog cannot change', () => {
+    expect(canDrag(LECTURE, NOW)).toBe(true)
+    expect(canDrag({ ...LECTURE, editable: false }, NOW)).toBe(false)
+  })
+
+  it('may land on anything, since fixed events may overlap (double booking)', () => {
+    const essay = block('e', 'Essay', '2026-11-18T17:00:00Z', '2026-11-18T18:00:00Z', { status: 'done' })
+    expect(dropAt(LECTURE, '2026-11-18', 9 * 60, [LECTURE, essay], LA, NOW).problem).toBeNull()
+    expect(dropAt(LECTURE, '2026-11-16', 7 * 60, [LECTURE], LA, NOW).problem).toBe('Already past')
+  })
+})
+
+describe('movedEvent', () => {
+  it('sets the day and times the dialog would send', () => {
+    const form = emptyForm('2026-11-16', '2026-11-16')
+    const moved = movedEvent(form, { date: '2026-11-19', minutes: 9 * 60 + 30 }, { date: '2026-11-19', minutes: 11 * 60 })
+    expect([moved.day, moved.startTime, moved.endTime]).toEqual(['2026-11-19', '09:30', '11:00'])
+  })
+
+  it('writes an end at midnight as 00:00, which the server reads as the next day', () => {
+    const form = emptyForm('2026-11-16', '2026-11-16')
+    const moved = movedEvent(form, { date: '2026-11-19', minutes: 23 * 60 }, { date: '2026-11-20', minutes: 0 })
+    expect([moved.startTime, moved.endTime]).toEqual(['23:00', '00:00'])
+  })
+})
+
+describe('movedSeries', () => {
+  const weekly = { ...emptyForm('2026-11-16', '2026-11-16'), repeat: 'weekly' as const, repeatDays: [1, 3] } // Tue, Thu
+
+  it('moves the times, and the weekday when a weekly series moves to another day', () => {
+    // Tue Nov 17 dragged to Wed Nov 18, 2:00 to 3:30pm
+    const moved = movedSeries(weekly, '2026-11-17', { date: '2026-11-18', minutes: 14 * 60 }, { date: '2026-11-18', minutes: 15 * 60 + 30 })
+    expect([moved.repeatDays, moved.startTime, moved.endTime]).toEqual([[2, 3], '14:00', '15:30'])
+  })
+
+  it('keeps the days when it stays on its day, or onto a day it already has', () => {
+    const sameDay = movedSeries(weekly, '2026-11-17', { date: '2026-11-17', minutes: 600 }, { date: '2026-11-17', minutes: 660 })
+    expect(sameDay.repeatDays).toEqual([1, 3])
+    const ontoThu = movedSeries(weekly, '2026-11-17', { date: '2026-11-19', minutes: 600 }, { date: '2026-11-19', minutes: 660 })
+    expect(ontoThu.repeatDays).toEqual([3])
+  })
+
+  it('only moves the times of a daily series', () => {
+    const daily = { ...weekly, repeat: 'daily' as const }
+    const moved = movedSeries(daily, '2026-11-17', { date: '2026-11-18', minutes: 600 }, { date: '2026-11-18', minutes: 660 })
+    expect([moved.repeatDays, moved.startTime]).toEqual([[1, 3], '10:00'])
   })
 })

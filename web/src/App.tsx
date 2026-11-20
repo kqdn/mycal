@@ -11,24 +11,29 @@ import {
   loadWeek,
   moveBlock,
   peekWeek,
+  splitSeries,
   unlockBlock,
+  updateItem,
   WeekError,
+  type Block,
   type CheckIn,
   type Week,
 } from './api'
 import { CheckInDialog } from './CheckInDialog'
+import { movedEvent, movedSeries } from './drag'
 import { bannerTitle, pendingKey, targetFromBlock, type CheckInTarget } from './checkIn'
 import { weekAfterDelete, whenLine } from './itemDetails'
-import { formAt, formFrom, type ItemForm } from './itemForm'
+import { formAt, formFrom, toRequest, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
 import { changedBlocks, otherSpot, proposalChanges, shownWeek } from './proposal'
 import { ChangesCard, CompareControls } from './ProposalBanner'
-import { formFromSeries } from './repeatForm'
+import { MoveChoice } from './MoveChoice'
+import { formFromSeries, toSeriesRequest } from './repeatForm'
 import { RulesPage } from './RulesPage'
 import { ShortcutsHelp } from './ShortcutsHelp'
 import { scrollMinuteFor } from './layout'
-import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
+import { addDays, estimateLabel, mondayOf, today, toLocal, weekTitle, type DateString } from './time'
 import { HELP_ID, pointedBlock, toggleHelp, useShortcuts } from './useShortcuts'
 import { WeekGrid, type Compare } from './WeekGrid'
 
@@ -67,6 +72,13 @@ export default function App() {
   const [pending, setPending] = useState<Set<string>>(new Set())
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
   const [pageProblem, setPageProblem] = useState<Problem | null>(null)
+  // A repeating fixed event was dropped: which dates move (Milestone 9).
+  const [moveChoice, setMoveChoice] = useState<{
+    block: Block
+    anchor: DOMRect
+    pick: (scope: 'one' | 'following') => void
+    cancel: () => void
+  } | null>(null)
   // Editing: the item being loaded for the dialog, why that failed, and the dialog's starting point.
   const [opening, setOpening] = useState<string | null>(null)
   const [openError, setOpenError] = useState<{ itemId: string; message: string } | null>(null)
@@ -278,6 +290,48 @@ export default function App() {
     } finally {
       setOpening(null)
     }
+  }
+
+  /**
+   * A block was dropped at `start` (Milestone 9). A session moves and locks. A fixed event changes its
+   * item's time through the usual edit; a repeating one asks first, "This event only" or "This and following".
+   * Resolves once it's done or cancelled, so the grid keeps its outline until then.
+   */
+  function moveTo(block: Block, start: string, timezone: string): Promise<void> {
+    if (!block.fixed) return changeBlock(() => moveBlock(block.id, start, weekStart), `Couldn't move ${block.title}`)
+    const failed = `Couldn't move ${block.title}`
+    if (!block.series_id) return changeBlock(() => moveEvent(block, start, timezone, 'one'), failed)
+    const anchor = document.querySelector('.drag-ghost')?.getBoundingClientRect() ?? new DOMRect()
+    return new Promise((resolve) => {
+      setMoveChoice({
+        block,
+        anchor,
+        pick: (scope) => {
+          setMoveChoice(null)
+          changeBlock(() => moveEvent(block, start, timezone, scope), failed).finally(resolve)
+        },
+        cancel: () => {
+          setMoveChoice(null)
+          resolve()
+        },
+      })
+    })
+  }
+
+  /** The edit that puts a fixed event at `start`, keeping its length: this date only, or it and the later dates. */
+  async function moveEvent(block: Block, start: string, timezone: string, scope: 'one' | 'following'): Promise<Week> {
+    const end = new Date(Date.parse(start) + Date.parse(block.end) - Date.parse(block.start)).toISOString()
+    const [from, to] = [toLocal(start, timezone), toLocal(end, timezone)]
+    if (scope === 'following' && block.series_id) {
+      const series = await getSeries(block.series_id)
+      const date = block.occurrence_date ?? toLocal(block.start, timezone).date
+      const form = movedSeries(formFromSeries(series, today()), date, from, to)
+      // From the earlier of its date and where it was dropped, so a drop to an earlier day is included.
+      const fromDate = from.date < date ? from.date : date
+      return splitSeries(series.id, fromDate, toSeriesRequest(form, weekStart), weekStart)
+    }
+    const item = await getItem(block.item_id)
+    return updateItem(item.id, toRequest(movedEvent(formFrom(item, today()), from, to), mondayOf(from.date)), weekStart)
   }
 
   /** Move or unlock a session by hand (Milestone 9). Either comes back as a new plan to accept. */
@@ -581,7 +635,7 @@ export default function App() {
                     ? undefined
                     : (block, start) => {
                         setOpen(null)
-                        return changeBlock(() => moveBlock(block.id, start, weekStart), `Couldn't move ${block.title}`)
+                        return moveTo(block, start, state.week.timezone)
                       }
                 }
               />
@@ -646,6 +700,15 @@ export default function App() {
             changeBlock(() => unlockBlock(block.id, weekStart), `Couldn't unlock ${block.title}`)
           }}
           onClose={closePopover}
+        />
+      )}
+
+      {moveChoice && (
+        <MoveChoice
+          title={moveChoice.block.title}
+          anchor={moveChoice.anchor}
+          onPick={moveChoice.pick}
+          onCancel={moveChoice.cancel}
         />
       )}
     </>
