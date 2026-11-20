@@ -64,6 +64,7 @@ from pydantic import BaseModel
 from mycal import checkins, store
 from mycal.model import Block, BlockStatus, Constraint, FlexPreset, Item, ItemTemplate, OnMiss, Rule, Series, WorkFrame
 from mycal.presets import every_day_session
+from mycal.problem import floor_slot, is_kept, slot_start
 from mycal.recurrence import occurrence_dates, occurrence_on
 from mycal.planner import (
     create_occurrences,
@@ -157,6 +158,7 @@ class BlockOut(BaseModel):
     start: datetime
     end: datetime
     fixed: bool  # an exact event, not work the solver placed
+    locked: bool = False  # moved by hand: the planner keeps it where it is (Milestone 9)
     # The item's sessions in every week, in start order, for "Session 2 of 4".
     session: int
     sessions: int
@@ -666,6 +668,114 @@ def preview_check_in(block_id: UUID, request: CheckInIn) -> CheckInPreviewOut:
             preview.due_reason = why
             preview.recording = item.flex_preset is FlexPreset.EXACT
         return preview
+
+
+# Moving blocks by hand (Milestone 9)
+
+
+class MoveIn(BaseModel):
+    start: datetime  # the new start; the session keeps its length
+    propose: bool = False  # see ItemIn
+
+
+class UnlockIn(BaseModel):
+    propose: bool = False  # see ItemIn
+
+
+MOVE_ONLY_WORK = "Only a work session the planner placed can be moved here. Move a fixed event by changing its time."
+MOVE_NOT_STARTED = "Only a session that hasn't started can be moved."
+MOVE_IN_PAST = "A session can't be moved into the past."
+MOVE_OFF_GRID = "A session has to start on the slot grid."
+
+
+@app.post("/api/blocks/{block_id}/move")
+def move_block(block_id: UUID, request: MoveIn, week: date) -> WeekOut:
+    """Move a work session that hasn't started to `start`, keeping its length, and lock it there.
+
+    The planner keeps a locked block where it is, so it plans the rest around it.
+    A session the planner placed that is in the way gets placed again. A fixed
+    event, a finished session or another locked one refuses the spot (422).
+    """
+    with database() as (conn, settings):
+        moment = now()
+        block, item = _block_and_item(conn, block_id)
+        if item.flex_preset is FlexPreset.EXACT:
+            raise HTTPException(status_code=422, detail=MOVE_ONLY_WORK)
+        if block.status is not BlockStatus.PLANNED or block.start <= moment:
+            raise HTTPException(status_code=422, detail=MOVE_NOT_STARTED)
+        start = request.start.astimezone(UTC)
+        if start < moment:
+            raise HTTPException(status_code=422, detail=MOVE_IN_PAST)
+        if slot_start(floor_slot(start, settings.slot_min), settings.slot_min) != start:
+            raise HTTPException(status_code=422, detail=MOVE_OFF_GRID)
+        moved = replace(block, start=start, end=start + (block.end - block.start), locked=True)
+        if (blocker := _in_the_way(conn, moved, moment)) is not None:
+            raise HTTPException(status_code=422, detail=f"{blocker} is there already. Pick a free spot.")
+        _re_plan_block(conn, settings, item, block, moved, moment, f"Move {item.title}", request.propose)
+        log.info("moved %r to %s", item.title, start)
+        return _view(conn, settings, week, moment)
+
+
+@app.post("/api/blocks/{block_id}/unlock")
+def unlock_block(block_id: UUID, request: UnlockIn, week: date) -> WeekOut:
+    """Hand a locked session that hasn't started back to the planner, which may move it again."""
+    with database() as (conn, settings):
+        moment = now()
+        block, item = _block_and_item(conn, block_id)
+        if not block.locked or block.status is not BlockStatus.PLANNED or block.start <= moment:
+            raise HTTPException(status_code=422, detail="Only a locked session that hasn't started can be unlocked.")
+        unlocked = replace(block, locked=False)
+        _re_plan_block(conn, settings, item, block, unlocked, moment, f"Unlock {item.title}", request.propose)
+        log.info("unlocked %r", item.title)
+        return _view(conn, settings, week, moment)
+
+
+def _block_and_item(conn: sqlite3.Connection, block_id: UUID) -> tuple[Block, Item]:
+    """The stored block and its item, or 404."""
+    block = next((b for b in store.list_blocks(conn) if b.id == block_id), None)
+    if block is None:
+        raise HTTPException(status_code=404, detail=BLOCK_GONE)
+    item = store.get_item(conn, block.item_id)
+    assert item is not None  # blocks go with their item
+    return block, item
+
+
+def _in_the_way(conn: sqlite3.Connection, moved: Block, moment: datetime, fixed_ok: bool = False) -> str | None:
+    """The title of a block `moved` would overlap that the planner keeps where it is, if any:
+    a fixed event (unless `fixed_ok`), a finished or locked session, or one that already started.
+
+    Sessions the planner placed that haven't started don't count: they are placed again around it.
+    """
+    for other in store.list_blocks(conn, moved.start, moved.end):
+        if other.id == moved.id:
+            continue
+        other_item = store.get_item(conn, other.item_id)
+        assert other_item is not None
+        if other_item.flex_preset is FlexPreset.EXACT:
+            if not fixed_ok:
+                return other_item.title
+        elif is_kept(other) or other.start <= moment:
+            return other_item.title
+    return None
+
+
+def _re_plan_block(
+    conn: sqlite3.Connection,
+    settings: SolverSettings,
+    item: Item,
+    old: Block,
+    new: Block,
+    moment: datetime,
+    summary: str,
+    propose: bool,
+) -> None:
+    """Save `new` in place of `old` and re-plan the weeks of both spots and the item's own weeks, all or nothing."""
+    weeks = weeks_of_blocks([old, new], settings.timezone) + list(span_for_item(item, settings.timezone, moment))
+    first = max(min(weeks), local_monday(moment, settings.timezone))
+    _change_and_plan(
+        conn, settings, lambda target: store.put_blocks(target, [new]), first, max(first, max(weeks)), moment,
+        log_name=summary, timed_out=CHANGE_TIMED_OUT, broke=items_would_not_fit, propose=summary if propose else None,
+    )
 
 
 def _resolve(
@@ -2075,6 +2185,7 @@ def _week_out(conn: sqlite3.Connection, settings: SolverSettings, week_start: da
                 start=b.start,
                 end=b.end,
                 fixed=items[b.item_id].flex_preset is FlexPreset.EXACT,
+                locked=b.locked,
                 session=sessions[b.item_id].index(b.id) + 1,
                 sessions=len(sessions[b.item_id]),
                 placed_min=placed[b.item_id],
