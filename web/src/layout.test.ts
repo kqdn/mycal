@@ -60,6 +60,7 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
       history: false,
       kept: 0,
       deleted: false,
+      locked: false,
       on_miss: 'reschedule' as const,
       ...span([start, end]),
     })),

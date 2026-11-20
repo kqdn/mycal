@@ -40,6 +40,7 @@ interface Props {
   onEdit: (scope: Scope) => void
   onDelete: (scope: Scope) => void
   onCheckIn: (block: Block) => void
+  onUnlock: (block: Block) => void
   onClose: () => void
 }
 
@@ -50,7 +51,9 @@ interface Props {
  * after the popover closes. Mount it with a key per target so the confirm step
  * starts fresh.
  */
-export function ItemPopover({ target, timezone, repeat, deleting, waiting, error, opening, openError, onEdit, onDelete, onCheckIn, onClose }: Props) {
+export function ItemPopover({
+  target, timezone, repeat, deleting, waiting, error, opening, openError, onEdit, onDelete, onCheckIn, onUnlock, onClose,
+}: Props) {
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   // The actions row, or in its place: confirming a delete, or (for a series) picking what Edit changes.
@@ -100,6 +103,11 @@ export function ItemPopover({ target, timezone, repeat, deleting, waiting, error
   const deleted = target.kind === 'block' && target.block.deleted
   const checkInText = target.kind === 'block' ? checkInLine(target.block, openedAt) : ''
   const checkIn = target.kind === 'block' && !deleted && canCheckIn(target.block, openedAt) ? target.block : null
+  // A session you placed by hand that hasn't started can go back to the planner.
+  const unlock =
+    target.kind === 'block' && !deleted && target.block.locked && Date.parse(target.block.start) > Date.parse(openedAt)
+      ? target.block
+      : null
 
   // E and Delete do what the Edit and Delete item buttons do, from any step, so you can switch
   // between "Edit which?" and the delete confirm without starting over. Not while a delete or an
@@ -143,6 +151,11 @@ export function ItemPopover({ target, timezone, repeat, deleting, waiting, error
             {checkIn && (
               <button type="button" className="secondary-button popover-wide" disabled={opening || waiting} onClick={() => onCheckIn(checkIn)}>
                 {checkIn.status === 'planned' ? 'Check in' : 'Change answer'}
+              </button>
+            )}
+            {unlock && (
+              <button type="button" className="secondary-button popover-wide" disabled={opening || waiting} onClick={() => onUnlock(unlock)}>
+                Unlock
               </button>
             )}
             <div className="popover-actions popover-halves">

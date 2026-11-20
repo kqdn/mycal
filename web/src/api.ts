@@ -14,6 +14,7 @@ export interface Block {
   start: string
   end: string
   fixed: boolean // an exact event, not work the solver placed
+  locked: boolean // moved by hand: the planner keeps it where it is (Milestone 9)
   // The item's sessions in every week, in start order: "Session 2 of 4".
   session: number
   sessions: number
@@ -368,6 +369,18 @@ function proposed<T extends object>(request: T): T & { propose: true } {
 }
 
 /** Send a change that returns the viewed week, and keep only that week in the cache. */
+// Moving blocks by hand (Milestone 9). A move or an unlock comes back as a new plan to accept.
+
+/** POST /api/blocks/{id}/move: put a session at `start` (UTC ISO), keeping its length, and lock it there. */
+export async function moveBlock(blockId: string, start: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/blocks/${blockId}/move?week=${week}`, 'POST', { start, propose: true })
+}
+
+/** POST /api/blocks/{id}/unlock: hand a locked session back to the planner. */
+export async function unlockBlock(blockId: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/blocks/${blockId}/unlock?week=${week}`, 'POST', { propose: true })
+}
+
 async function sendForWeek(url: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<Week> {
   const response = await fetch(url, {
     method,

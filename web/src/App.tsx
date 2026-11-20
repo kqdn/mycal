@@ -9,7 +9,9 @@ import {
   getSeries,
   listCheckIns,
   loadWeek,
+  moveBlock,
   peekWeek,
+  unlockBlock,
   WeekError,
   type CheckIn,
   type Week,
@@ -275,6 +277,15 @@ export default function App() {
       setOpenError({ itemId, message: error instanceof WeekError ? error.message : "Can't reach the planner." })
     } finally {
       setOpening(null)
+    }
+  }
+
+  /** Move or unlock a session by hand (Milestone 9). Either comes back as a new plan to accept. */
+  async function changeBlock(change: () => Promise<Week>, failed: string) {
+    try {
+      showSaved(await change())
+    } catch (error) {
+      setPageProblem({ title: failed, body: error instanceof WeekError ? error.message : "Can't reach the planner." })
     }
   }
 
@@ -565,6 +576,14 @@ export default function App() {
                         setAdding(true)
                       }
                 }
+                onMove={
+                  waiting
+                    ? undefined
+                    : (block, start) => {
+                        setOpen(null)
+                        return changeBlock(() => moveBlock(block.id, start, weekStart), `Couldn't move ${block.title}`)
+                      }
+                }
               />
               {(shown ?? state.week).unscheduled.length > 0 && (
                 <section aria-labelledby="unscheduled-label">
@@ -621,6 +640,10 @@ export default function App() {
           onCheckIn={(block) => {
             setOpen(null)
             setCheckingIn(targetFromBlock(block))
+          }}
+          onUnlock={(block) => {
+            setOpen(null)
+            changeBlock(() => unlockBlock(block.id, weekStart), `Couldn't unlock ${block.title}`)
           }}
           onClose={closePopover}
         />

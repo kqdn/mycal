@@ -633,6 +633,57 @@ button.miss-tile:hover {
   line-height: 11px;
 }
 
+/* Dragging a block (DESIGN.md, Dragging a block) */
+
+.block.draggable {
+  cursor: grab;
+  user-select: none; /* a long press drags instead of selecting text */
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.block.dragged {
+  opacity: 0.4;
+}
+
+/* Where the block would land: a dashed accent outline with its time, orange when it can't go there. */
+.day-column .drag-ghost {
+  position: absolute;
+  left: 12px; /* lined up with blocks */
+  right: 4px;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  overflow: hidden;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-block);
+  background: var(--accent-tint);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.day-column .drag-ghost.refused {
+  border-color: var(--attention-strong);
+  background: var(--attention-bg);
+  color: var(--attention-text);
+}
+
+/* A block you placed by hand: a padlock before its title. */
+.block-lock {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -1px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .now-line {
   position: absolute;
   left: 0;

@@ -35,6 +35,7 @@ function block(changes: Partial<Block>): Block {
     history: false,
     kept: 0,
     deleted: false,
+    locked: false,
     on_miss: 'reschedule',
     ...changes,
   }
@@ -65,6 +66,7 @@ describe('kindLine', () => {
   it('names the kind of a single session', () => {
     expect(kindLine(block({}), BEFORE)).toBe('Placed by the solver')
     expect(kindLine(block({ fixed: true, estimate_min: null }), BEFORE)).toBe('Fixed')
+    expect(kindLine(block({ locked: true }), BEFORE)).toBe('Placed by you')
   })
 
   it('says "in all" only when all the work is placed', () => {

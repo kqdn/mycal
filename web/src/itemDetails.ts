@@ -32,7 +32,7 @@ export function whenLine(block: Pick<Block, 'start' | 'end'>, timezone: string):
  * before `now` (a UTC ISO time).
  */
 export function kindLine(block: Block, now: string): string {
-  const parts = [block.fixed ? 'Fixed' : 'Placed by the solver']
+  const parts = [block.fixed ? 'Fixed' : block.locked ? 'Placed by you' : 'Placed by the solver']
   const waiting = block.estimate_min !== null && block.placed_min < block.estimate_min
   if (block.sessions > 1) parts.push(`Session ${block.session} of ${block.sessions}`)
   if (waiting) parts.push(`${estimateLabel(block.placed_min)} of ${estimateLabel(block.estimate_min!)} placed`)

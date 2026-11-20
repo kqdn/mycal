@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Block, Week } from './api'
 import { awaitsCheckIn, blockKind } from './checkIn'
+import { canDrag, dropAt } from './drag'
 import { clickedLength } from './itemForm'
 import type { Arrow } from './proposal'
 import { initialScrollMinute, minutesToPx, pieces, slotAt, slotHasBegun, textMode, weekDates, type Piece } from './layout'
@@ -18,7 +19,23 @@ interface WeekGridProps {
   // once per key; flipping between the current plan and the proposal keeps the scroll.
   focus?: { key: string; minute: number } | null
   compare?: Compare | null // while a proposal waits: changed blocks' tags, the selected change and its other spot
+  // A block was dragged to a free spot (UTC ISO start). Left out while a proposal waits, so nothing drags.
+  // The grid keeps the dragged outline until the promise settles.
+  onMove?: (block: Block, start: string) => Promise<void>
 }
+
+/** A block being dragged: where its top is (local date and minute) and how far down it was grabbed. */
+interface Dragging {
+  block: Block
+  grabPx: number
+  date: DateString
+  minutes: number
+  saving: boolean // dropped, and the move is being worked out
+}
+
+const DRAG_START_PX = 4 // a mouse or pen moves this far before a press becomes a drag, so a click still opens
+const LONG_PRESS_MS = 400 // a finger holds this long first, so a swipe still scrolls
+const EDGE_PX = 40 // dragging this close to the top or bottom of the grid scrolls it
 
 /** What the compare view draws on the grid (web/DESIGN.md, "Compare view"). */
 export interface Compare {
@@ -29,7 +46,7 @@ export interface Compare {
   reveal: number // bumped when a change tile is clicked: the grid scrolls to the selected change
 }
 
-export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps) {
+export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGridProps) {
   const { week_start: weekStart, timezone, slot_min: slotMin } = week
   const scroller = useRef<HTMLDivElement>(null)
   const dates = weekDates(weekStart)
@@ -38,6 +55,124 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps)
   const [hover, setHover] = useState<{ date: DateString; minutes: number } | null>(null)
   // A click that starts while a popover is open only closes it (the browser does that on release).
   const closingPopover = useRef(false)
+  const columns = useRef<(HTMLDivElement | null)[]>([])
+  const [drag, setDrag] = useState<Dragging | null>(null)
+  const dragging = useRef(false) // a drag is under way: a finger doesn't scroll the page
+  // The click the browser sends after a drop (on the block or the column under it) does nothing.
+  const ignoreClicksUntil = useRef(0)
+  const clickIgnored = () => performance.now() < ignoreClicksUntil.current
+
+  useEffect(() => {
+    const holdStill = (event: TouchEvent) => {
+      if (dragging.current) event.preventDefault()
+    }
+    document.addEventListener('touchmove', holdStill, { passive: false })
+    return () => document.removeEventListener('touchmove', holdStill)
+  }, [])
+
+  /** The local spot for a block's top with the pointer at (x, y), to the nearest slot, or null outside the days. */
+  function spotAt(x: number, y: number, grabPx: number): { date: DateString; minutes: number } | null {
+    for (const [day, column] of columns.current.entries()) {
+      const rect = column?.getBoundingClientRect()
+      if (rect && x >= rect.left && x < rect.right) {
+        const minutes = slotAt(y - rect.top - grabPx + minutesToPx(slotMin) / 2, slotMin)
+        return { date: dates[day], minutes }
+      }
+    }
+    return null
+  }
+
+  /** Scroll the grid while the pointer is near its top or bottom edge. */
+  function scrollNearEdge(y: number) {
+    const body = scroller.current
+    const head = body?.querySelector('.week-head')
+    if (!body || !head) return
+    if (y < head.getBoundingClientRect().bottom + EDGE_PX) body.scrollTop -= 16
+    else if (y > body.getBoundingClientRect().bottom - EDGE_PX) body.scrollTop += 16
+  }
+
+  /**
+   * A press on a block that can move. Mouse and pen drag once they move a few pixels; a finger
+   * after a long press. Dropping on a free spot calls onMove; Escape or a refused spot snaps back.
+   */
+  function press(block: Block, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!onMove || event.button !== 0 || drag?.saving || !canDrag(block, now.iso)) return
+    const move = onMove
+    const pointer = event.pointerId
+    const origin = { x: event.clientX, y: event.clientY }
+    const grabPx = event.clientY - event.currentTarget.getBoundingClientRect().top
+    const touch = event.pointerType === 'touch'
+    let active = false
+    let last: Dragging | null = null
+
+    const follow = (x: number, y: number) => {
+      scrollNearEdge(y)
+      const spot = spotAt(x, y, grabPx)
+      if (spot) {
+        last = { block, grabPx, ...spot, saving: false }
+        setDrag(last)
+      }
+    }
+    const begin = (x: number, y: number) => {
+      active = true
+      dragging.current = true
+      follow(x, y)
+    }
+    const end = () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('keydown', onKey)
+      dragging.current = false
+    }
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerId !== pointer) return
+      const far = Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > DRAG_START_PX
+      if (active) follow(e.clientX, e.clientY)
+      else if (far && touch) end() // a swipe before the long press: let it scroll
+      else if (far) begin(e.clientX, e.clientY)
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerId !== pointer) return
+      end()
+      if (!active) return
+      ignoreClicksUntil.current = performance.now() + 400
+      if (last) drop(last, move)
+      else setDrag(null)
+    }
+    const onCancel = () => {
+      end()
+      setDrag(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !active) return
+      e.preventDefault()
+      onCancel()
+    }
+    const timer = touch ? window.setTimeout(() => begin(origin.x, origin.y), LONG_PRESS_MS) : undefined
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('keydown', onKey)
+  }
+
+  /** Move to the dropped spot, or snap back when it is refused or where the block already is. */
+  function drop(at: Dragging, move: (block: Block, start: string) => Promise<void>) {
+    const spot = dropAt(at.block, at.date, at.minutes, week.blocks, timezone, now.iso)
+    if (spot.problem || Date.parse(spot.start) === Date.parse(at.block.start)) {
+      setDrag(null)
+      return
+    }
+    setDrag({ ...at, saving: true })
+    move(at.block, spot.start).finally(() => setDrag(null))
+  }
+
+  const dropSpot = drag ? dropAt(drag.block, drag.date, drag.minutes, week.blocks, timezone, now.iso) : null
+  const ghost = dropSpot ? pieces(dropSpot, weekStart, timezone) : []
+  const ghostLabel = dropSpot
+    ? (dropSpot.problem ?? range12(toLocal(dropSpot.start, timezone).minutes, toLocal(dropSpot.end, timezone).minutes))
+    : ''
 
   /** The slot under the pointer in a day column, or null over a block or a slot that has begun. */
   function slotUnder(event: MouseEvent<HTMLDivElement>, date: DateString): number | null {
@@ -116,9 +251,12 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps)
             {dates.map((date, day) => (
               <div
                 key={date}
-                className={hover?.date === date ? 'day-column can-add' : 'day-column'}
+                ref={(element) => {
+                  columns.current[day] = element
+                }}
+                className={hover?.date === date && !drag ? 'day-column can-add' : 'day-column'}
                 onMouseMove={(event) => {
-                  const minutes = slotUnder(event, date)
+                  const minutes = drag ? null : slotUnder(event, date)
                   setHover(minutes === null ? null : { date, minutes })
                 }}
                 onMouseLeave={() => setHover(null)}
@@ -127,7 +265,9 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps)
                 }}
                 onClick={(event) => {
                   const minutes = slotUnder(event, date)
-                  if (minutes !== null && !closingPopover.current) onAdd?.(date, minutes, lengthAt(day, minutes))
+                  if (minutes !== null && !closingPopover.current && !clickIgnored()) {
+                    onAdd?.(date, minutes, lengthAt(day, minutes))
+                  }
                   closingPopover.current = false
                 }}
               >
@@ -148,11 +288,27 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps)
                       piece={piece}
                       timezone={timezone}
                       now={now.iso}
-                      onOpen={onOpen}
+                      onOpen={(b, opener) => !clickIgnored() && onOpen(b, opener)}
                       tag={compare?.tags.get(block.id) ?? null}
                       selected={compare?.selected === block.id}
                       onSelect={compare?.onSelect}
+                      // A piece that began the day before has its top elsewhere, so it isn't grabbed.
+                      draggable={!!onMove && !piece.continuesBefore && canDrag(block, now.iso)}
+                      dragged={drag?.block.id === block.id}
+                      onPress={press}
                     />
+                  ))}
+                {ghost
+                  .filter((p) => p.day === day)
+                  .map((p) => (
+                    <div
+                      key={`ghost-${p.startMin}`}
+                      className={dropSpot?.problem ? 'drag-ghost refused' : 'drag-ghost'}
+                      style={place(p)}
+                      aria-hidden="true"
+                    >
+                      {drag?.saving ? 'Moving...' : ghostLabel}
+                    </div>
                   ))}
                 {other
                   .filter((p) => p.day === day)
@@ -180,6 +336,12 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare }: WeekGridProps)
           <span className="swatch placed" aria-hidden="true" />
           Placed by the solver
         </span>
+        {week.blocks.some((b) => b.locked) && (
+          <span className="legend-item">
+            <LockIcon />
+            Placed by you
+          </span>
+        )}
         <span className="legend-item">
           <span className="swatch done" aria-hidden="true" />
           Done
@@ -232,13 +394,16 @@ interface BlockViewProps {
   tag: { text: string; arrow: Arrow | null } | null // a change in the compare view, shown in place of the time
   selected: boolean
   onSelect?: (blockId: string) => void
+  draggable: boolean // it can be dragged to move it (Milestone 9)
+  dragged: boolean // it is being dragged: drawn faint in its old spot
+  onPress: (block: Block, event: ReactPointerEvent<HTMLButtonElement>) => void
 }
 
 /**
  * A block is a button: clicking it, or Enter or Space, opens its details popover. A changed block
  * in the compare view selects its change instead, to show its other spot.
  */
-function BlockView({ block, piece, timezone, now, onOpen, tag, selected, onSelect }: BlockViewProps) {
+function BlockView({ block, piece, timezone, now, onOpen, tag, selected, onSelect, draggable, dragged, onPress }: BlockViewProps) {
   const start = toLocal(block.start, timezone)
   const end = toLocal(block.end, timezone)
   const style = place(piece)
@@ -249,9 +414,13 @@ function BlockView({ block, piece, timezone, now, onOpen, tag, selected, onSelec
   if (piece.continuesAfter) classes.push('cont-after')
   if (tag) classes.push('changed')
   if (tag && selected) classes.push('selected')
+  if (draggable) classes.push('draggable')
+  if (dragged) classes.push('dragged')
   let label = `${block.title}, ${weekdayShort(start.date)} ${range12(start.minutes, end.minutes)}`
+  if (block.locked) label += ', placed by you'
   if (tag) label += `. ${tag.text}. Select to show the other spot.`
   const second = tag ? <ChangeTag text={tag.text} arrow={tag.arrow} /> : <span className="block-time">{range12(start.minutes, end.minutes)}</span>
+  const lock = block.locked ? <LockIcon /> : null
 
   return (
     <button
@@ -262,21 +431,41 @@ function BlockView({ block, piece, timezone, now, onOpen, tag, selected, onSelec
       aria-haspopup={tag && onSelect ? undefined : 'dialog'}
       aria-pressed={tag && onSelect ? selected : undefined}
       data-block-id={block.id}
+      onPointerDown={draggable ? (event) => onPress(block, event) : undefined}
       onClick={(event) => (tag && onSelect ? onSelect(block.id) : onOpen(block, event.currentTarget))}
     >
       {mode === 'two-line' && (
         <>
-          <span className="block-title">{block.title}</span>
+          <span className="block-title">
+            {lock}
+            {block.title}
+          </span>
           {second}
         </>
       )}
       {mode === 'one-line' && (
         <span className="block-title">
+          {lock}
           {block.title} · {tag ? tag.text : time12(start.minutes)}
         </span>
       )}
-      {mode === 'title-only' && <span className="block-title">{block.title}</span>}
+      {mode === 'title-only' && (
+        <span className="block-title">
+          {lock}
+          {block.title}
+        </span>
+      )}
     </button>
+  )
+}
+
+/** A small padlock before the title of a block you placed by hand: the planner keeps it there. */
+function LockIcon() {
+  return (
+    <svg className="block-lock" width="10" height="10" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
   )
 }
 

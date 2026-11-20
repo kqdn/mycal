@@ -53,6 +53,7 @@ function block(changes: Partial<Block>): Block {
     history: false,
     kept: 0,
     deleted: false,
+    locked: false,
     on_miss: 'reschedule',
     ...changes,
   }

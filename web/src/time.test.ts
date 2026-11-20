@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, estimateLabel, hourLabel, mondayOf, range12, time12, toLocal, weekTitle } from './time'
+import { addDays, estimateLabel, fromLocal, hourLabel, mondayOf, range12, time12, toLocal, weekTitle } from './time'
 
 const LA = 'America/Los_Angeles'
 
@@ -59,5 +59,17 @@ describe('titles and estimates', () => {
 
   it('formats estimates', () => {
     expect([15, 60, 90, 125].map(estimateLabel)).toEqual(['15m', '1h', '1h 30m', '2h 5m'])
+  })
+})
+
+describe('fromLocal', () => {
+  it('turns a local date and minute into UTC, the reverse of toLocal', () => {
+    expect(fromLocal('2026-11-17', 21 * 60, LA)).toBe('2026-11-18T05:00:00.000Z')
+    expect(fromLocal('2026-11-18', 14 * 60, 'Asia/Tokyo')).toBe('2026-11-18T05:00:00.000Z')
+  })
+
+  it('keeps wall-clock time across the DST change', () => {
+    expect(fromLocal('2026-10-31', 540, LA)).toBe('2026-10-31T16:00:00.000Z') // PDT
+    expect(fromLocal('2026-11-01', 540, LA)).toBe('2026-11-01T17:00:00.000Z') // PST
   })
 })

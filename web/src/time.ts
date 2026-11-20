@@ -41,6 +41,23 @@ export function toLocal(iso: string, timeZone: string): LocalMoment {
   }
 }
 
+/**
+ * The UTC ISO time of a local date and minute in `timeZone`, the reverse of toLocal. It guesses
+ * with the wall-clock time as if it were UTC, then corrects by how far off toLocal says it is
+ * (twice, so a guess on the other side of a DST change settles too).
+ */
+export function fromLocal(date: DateString, minutes: number, timeZone: string): string {
+  const [y, m, d] = date.split('-').map(Number)
+  const wanted = Date.UTC(y, m - 1, d, 0, minutes)
+  let guess = wanted
+  for (let i = 0; i < 2; i++) {
+    const local = toLocal(new Date(guess).toISOString(), timeZone)
+    const [ly, lm, ld] = local.date.split('-').map(Number)
+    guess += wanted - Date.UTC(ly, lm - 1, ld, 0, local.minutes)
+  }
+  return new Date(guess).toISOString()
+}
+
 /** Plain calendar arithmetic on a date string (no timezone, so no DST surprises). */
 export function addDays(date: DateString, days: number): DateString {
   const [y, m, d] = date.split('-').map(Number)

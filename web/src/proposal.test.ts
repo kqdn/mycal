@@ -11,7 +11,7 @@ function block(id: string, title: string, start: string, end: string): Block {
   return {
     id, item_id: `item-${id}`, title, start, end, fixed: false, session: 1, sessions: 1, placed_min: 60,
     estimate_min: 60, editable: true, series_id: null, checkable: true, status: 'planned', done_min: null,
-    missed_action: null, history: false, on_miss: 'reschedule', kept: 0, deleted: false,
+    missed_action: null, history: false, on_miss: 'reschedule', kept: 0, deleted: false, locked: false,
   }
 }
 

@@ -88,7 +88,7 @@ Each block also gets an accessible name with the full details, for example `aria
 
 ### Legend
 
-Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver", "Done", "Missed", then "Work hours" (an `--surface` swatch with a 1px `--border`, for the white time inside work frames). Add "Locked by you" when that exists.
+Under the grid: a 1px `--border` top edge, 14px 16px padding, 12px `--text-muted` text, with 8px 22px gaps between items. Each item is a 14px swatch with radius 4px, styled like its block kind, followed by its label: "Fixed", "Placed by the solver", "Done", "Missed", then "Work hours" (an `--surface` swatch with a 1px `--border`, for the white time inside work frames). After "Placed by the solver", while the week has a block you placed by hand: the padlock (see Dragging a block) and "Placed by you".
 
 ## Other pieces
 
@@ -204,7 +204,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
 1. **Title:** the item's title, 15px / 600, `--text`. It wraps instead of being cut off.
 2. **When:** the block's day and time range, 13px, `--text`, for example "Tue, Nov 17, 2:00 to 2:30pm". A block that crosses midnight gives its full range: "Fri, Nov 20, 5:00pm to 2:00am (ends the next day)".
 3. **Kind and sessions:** one line in 12px `--text-muted`.
-   - "Fixed" or "Placed by the solver".
+   - "Fixed", "Placed by the solver", or "Placed by you" for a session you moved (Milestone 9).
    - If the item has more than one session, add where this one fits and how much of the work is placed, for example "Placed by the solver · Session 2 of 4 · 2h in all". When the placed minutes are less than the estimate (work that didn't fit, or not yet within planning range), say so instead: "Session 2 of 2 · 2h of 4h placed". "In all" is only for an item whose work is all placed. Sessions are counted across every week, in time order. The week response carries what this needs for each block: its session number, the item's session count, its placed minutes and its estimate.
    - If the block has already started: "Already started", because the solver no longer moves it.
    - For an Unscheduled row instead of a block: its reason, the same text as the row ("1h won't fit before Fri 5pm"), or "Not scheduled: it has no times to go in yet" if it has none. Then its estimate, for example "· 15m".
@@ -213,6 +213,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
    - "Edit", a secondary button, left of "Delete item", also secondary. The two share the row in equal halves (a two-column grid with the 8px gap), so the row looks the same on every popover. Edit opens the item in the edit dialog (see Editing). While the item loads it reads "Opening..." and both buttons are disabled. If loading fails, a 12px `--attention-strong` line under the actions says "Couldn't open it:" and the server's message.
    - For a Custom item, Edit is disabled, and a 12px `--text-muted` line under the actions says "Change Custom items in their week file."
    - For a checkable block that has started, "Check in" (or "Change answer" once answered) goes above them, full width on its own row, 8px above Edit and Delete item. It closes the popover and opens the check-in dialog (see Check-ins).
+   - For a session you placed by hand that hasn't started, "Unlock" goes above them the same way (Milestone 9). It closes the popover and shows a new plan that hands the session back to the planner.
    - A kept session of a deleted item (see Deleting) shows its lines and "Deleted. This session stays as a record." in hint text, with no buttons. E and Delete do nothing on it.
 5. **Check-in line (Milestone 7):** under the kind line, 13px `--text`, when there is something to say: "Waiting for a check-in", "Done", "Partly done: 30m of 1h · The rest is rescheduled", "Missed · Caught up later", "No answer · Skipped", or "Missed · Waiting for your choice" while an Ask waits.
 
@@ -294,6 +295,15 @@ Laid out after prototype v4 (Week and arrangements, compare toggle), with one pr
 - **While it waits:** New item, a click on an empty slot, E and Delete, the popover's Edit, Delete item and Check in, and the check-ins banner's Check in buttons are disabled. The popover says "Accept or Discard the proposed change first." The server refuses other changes too.
 - **Accept or Discard:** the card and controls go and the grid shows the plan that was kept, saved or not. If nothing waits any more (a check-in saved on its own meanwhile), the week just reloads.
 - **Dropped:** a check-in left unanswered saves on its own, and that drops the waiting proposal. The next week shows a dismissable banner, "Proposed change dropped", with the server's sentence.
+
+## Dragging a block (Milestone 9)
+
+- **What drags:** a work session that hasn't started (not a fixed event, a finished session or a kept record of a deleted item), and not a piece that began the day before. Its cursor is `grab`. Nothing drags while a new plan waits.
+- **Starting:** a mouse or pen press becomes a drag once it moves 4px, so a click still opens the popover. A finger long-presses 400ms first, so a swipe still scrolls; once the drag starts the page stops scrolling under it.
+- **While dragging:** the block stays in its spot at 40% opacity, and a ghost shows where it would land, snapped to the slot grid (nearest slot), in any day of the shown week, keeping its length: `left: 12px; right: 4px`, 2px dashed `--accent`, `--accent-tint` fill, radius `--radius-block`, its time range in 12px / 600 `--text`. Near the top or bottom of the grid, the grid scrolls.
+- **Refused spot:** over the past or over a fixed event, a finished session, a session placed by hand or one that started, the ghost turns `--attention-strong` dashed on `--attention-bg` and says why in `--attention-text`: "Already past", "Linear algebra is there". Dropping there snaps back. Sessions the planner placed don't refuse it; they move in the new plan.
+- **Dropping:** on a free spot it reads "Moving..." until the new plan comes back, then the compare view shows it ("Move Essay"). Dropping where it already is, or pressing Escape, does nothing. A move the server refuses shows its sentence in a page banner, "Couldn't move Essay".
+- **Placed by you:** a moved session is locked. It shows a padlock before its title (10px, stroked in the title's color, 4px gap), its popover says "Placed by you" and offers Unlock (see Item details popover), and the legend adds "Placed by you".
 
 ## Repeat (Milestone 6)
 
