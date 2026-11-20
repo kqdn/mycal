@@ -377,3 +377,37 @@ def test_more_time_moves_a_running_fixed_event_s_end(client: TestClient, monkeyp
     assert response.json()["proposal"] is None  # nothing else moved, so it saved
     same = [b for b in response.json()["blocks"] if b["item_id"] == event["item_id"]]
     assert [(starts(b), ends(b)) for b in same] == [(starts(event), ends(event) + timedelta(minutes=15))]
+
+
+def test_a_series_change_moves_today_s_started_occurrence_when_unanswered(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series = add_office(client)  # Tue and Fri, 8 to 9am
+    monkeypatch.setattr(api, "now", lambda: datetime(2026, 11, 17, 8, 30, tzinfo=LA))  # Tue 8:30: today's is running
+    form = client.get(f"/api/series/{series}").json() | {"week_start": WEEK, "start_time": "15:00", "end_time": "16:00"}
+
+    response = client.put(f"/api/series/{series}", params={"week": WEEK}, json=form | {"propose": True})
+    assert response.status_code == 200, response.text
+    client.post("/api/proposal/accept", params={"week": WEEK})
+
+    assert office_starts(client, WEEK) == ["Tue 17 15:00", "Fri 20 15:00"]  # today's moved too, not only later ones
+
+
+def test_this_and_following_moves_today_s_started_occurrence_too(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    series = add_office(client)
+    monkeypatch.setattr(api, "now", lambda: datetime(2026, 11, 17, 9, 30, tzinfo=LA))  # Tue 9:30: today's is over, unanswered
+
+    split(client, series, "2026-11-17", start_time="15:00", end_time="16:00")
+
+    assert office_starts(client, WEEK) == ["Tue 17 15:00", "Fri 20 15:00"]
+
+
+def test_a_series_change_leaves_a_started_occurrence_whose_new_time_has_passed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    series = add_office(client)
+    monkeypatch.setattr(api, "now", lambda: datetime(2026, 11, 17, 8, 30, tzinfo=LA))
+
+    split(client, series, "2026-11-17", start_time="06:00", end_time="07:00")  # earlier today: nothing to move to
+
+    assert office_starts(client, WEEK) == ["Tue 17 08:00", "Fri 20 06:00"]

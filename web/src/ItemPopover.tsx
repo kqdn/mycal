@@ -192,7 +192,7 @@ export function ItemPopover({
         <div className="popover-confirm">
           <div>
             <p className="confirm-question">Edit which?</p>
-            <p className="confirm-detail">This changes only this date. All changes every date that hasn't started.</p>
+            <p className="confirm-detail">This changes only this date. All changes every date ahead, and today's if it isn't checked in.</p>
           </div>
           <div className="popover-actions">
             <button ref={cancel} type="button" className="secondary-button" disabled={opening} onClick={() => setStep('actions')}>

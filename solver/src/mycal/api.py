@@ -1186,10 +1186,14 @@ def update_series(series_id: UUID, request: SeriesIn, week: date) -> WeekOut:
         new = replace(new, id=old.id, skipped_dates=skipped)
 
         def change(trial: sqlite3.Connection) -> None:
+            started = _started_to_move(trial, settings, series_id, new, moment)
             store.put_series(trial, new)
             for occurrence in _not_started(trial, settings, series_id, moment):
                 if not store.hand_edited(trial, occurrence.id):
                     store.delete_item(trial, occurrence.id)  # the planner creates it again from the new template
+            for moved, sessions in started:  # today's, started but not answered: to its new time
+                store.delete_blocks(trial, sessions)
+                store.put_item(trial, moved)
 
         return _change_everywhere(
             conn, settings, change, week, repr(new.title), propose=f"Change repeating {new.title}" if request.propose else None
@@ -1233,6 +1237,11 @@ def split_series(series_id: UUID, request: SplitIn, week: date) -> WeekOut:
 
         def change(trial: sqlite3.Connection) -> None:
             moving = [o for o in _not_started(trial, settings, series_id, moment) if (o.occurrence_date or split) >= split]
+            started = [
+                (moved, sessions)
+                for moved, sessions in _started_to_move(trial, settings, series_id, later, moment)
+                if moved.occurrence_date is not None and moved.occurrence_date >= split
+            ]
             if earlier is not None:
                 store.put_series(trial, earlier)
             store.put_series(trial, later)
@@ -1241,6 +1250,16 @@ def split_series(series_id: UUID, request: SplitIn, week: date) -> WeekOut:
                     store.put_item(trial, replace(occurrence, series_id=later.id))  # keeps its own time
                 else:
                     store.delete_item(trial, occurrence.id)  # the planner creates it again from the new series
+            for moved, sessions in started:  # started but not answered: to its new time, in the new series
+                store.delete_blocks(trial, sessions)
+                store.put_item(trial, moved)
+            # Dates from the split on that stay as they are (started, answered, or deleted with history)
+            # belong to the new series too, so it doesn't create those dates a second time.
+            handled = {o.id for o in moving} | {moved.id for moved, _ in started}
+            for item in store.list_items(trial, include_archived=True):
+                day = item.occurrence_date
+                if item.series_id == series_id and item.id not in handled and day is not None and day >= split:
+                    store.put_item(trial, replace(item, series_id=later.id))
 
         title = repr(later.title)
         return _change_everywhere(
@@ -1300,6 +1319,36 @@ def delete_series(series_id: UUID, week: date, propose: bool = False) -> WeekOut
             log.warning("re-planning after ending series %s: %s", series_id, error)
         log.info("ended %r", series.title)
         return _view(conn, settings, week, moment)
+
+
+def _started_to_move(
+    conn: sqlite3.Connection, settings: SolverSettings, series_id: UUID, new: Series, moment: datetime
+) -> list[tuple[Item, list[UUID]]]:
+    """Fixed occurrences that started but aren't answered, which a series change moves too.
+
+    Things can change until they're answered (Nov 20), so a series change also
+    moves an occurrence from today on that started with no check-in answer, as
+    long as the new series still falls on its date, its new time ends after
+    now, and it wasn't edited on its own. Each comes back as the item at its
+    new time (same id) with its old sessions to drop. Others stay as they are.
+    """
+    today = moment.astimezone(ZoneInfo(settings.timezone)).date()
+    waiting = {o.id for o in _not_started(conn, settings, series_id, moment)}
+    blocks = store.list_blocks(conn)
+    result: list[tuple[Item, list[UUID]]] = []
+    for item in store.list_items(conn):
+        day = item.occurrence_date
+        if item.series_id != series_id or item.id in waiting or item.flex_preset is not FlexPreset.EXACT:
+            continue
+        if day is None or day < today or store.hand_edited(conn, item.id):
+            continue
+        own = [b for b in blocks if b.item_id == item.id]
+        if any(b.status is not BlockStatus.PLANNED for b in own) or not occurrence_dates(new, day, day):
+            continue
+        moved = replace(occurrence_on(new, day), id=item.id)
+        if moved.preset_params["end"] > moment:
+            result.append((moved, [b.id for b in own]))
+    return result
 
 
 def _not_started(conn: sqlite3.Connection, settings: SolverSettings, series_id: UUID, moment: datetime) -> list[Item]:
