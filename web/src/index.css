@@ -387,6 +387,22 @@ a.tab {
   overflow: hidden;
 }
 
+/* On a fixed event's dark fill, the tag and its arrow use the light orange, so they stay readable. */
+.block.fixed .change-tag {
+  color: var(--attention-ring);
+}
+
+.block.fixed .change-tag svg {
+  stroke: var(--attention-ring);
+}
+
+/* In a narrow lane beside an overlapping block: just the arrow, after the title on a one-line block. */
+.change-tag.arrow-only {
+  display: inline-flex;
+  margin-left: 4px;
+  vertical-align: -1px;
+}
+
 .change-tag svg {
   flex-shrink: 0;
   fill: none;

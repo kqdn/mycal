@@ -429,7 +429,11 @@ function BlockView({ block, piece, lane, timezone, now, onOpen, tag, selected, o
   let label = `${block.title}, ${weekdayShort(start.date)} ${range12(start.minutes, end.minutes)}`
   if (block.locked) label += ', placed by you'
   if (tag) label += `. ${tag.text}. Select to show the other spot.`
-  const second = tag ? <ChangeTag text={tag.text} arrow={tag.arrow} /> : <span className="block-time">{range12(start.minutes, end.minutes)}</span>
+  // Squeezed into a lane beside an overlapping block, a change tag keeps only its arrow (or its word,
+  // like "New", when it has none); the full text shows on hover and stays in the label and the changes card.
+  const narrow = lane.lanes > 1
+  const tagShown = tag && narrow && tag.arrow ? '' : tag?.text
+  const second = tag ? <ChangeTag text={tagShown ?? ''} arrow={tag.arrow} /> : <span className="block-time">{range12(start.minutes, end.minutes)}</span>
   const lock = block.locked ? <LockIcon /> : null
 
   return (
@@ -438,6 +442,7 @@ function BlockView({ block, piece, lane, timezone, now, onOpen, tag, selected, o
       className={classes.join(' ')}
       style={style}
       aria-label={label}
+      title={tag && narrow ? tag.text : undefined}
       aria-haspopup={tag && onSelect ? undefined : 'dialog'}
       aria-pressed={tag && onSelect ? selected : undefined}
       data-block-id={block.id}
@@ -456,7 +461,8 @@ function BlockView({ block, piece, lane, timezone, now, onOpen, tag, selected, o
       {mode === 'one-line' && (
         <span className="block-title">
           {lock}
-          {block.title} · {tag ? tag.text : time12(start.minutes)}
+          {block.title}
+          {tag && narrow ? <ChangeTag text={tagShown ?? ''} arrow={tag.arrow} /> : ` · ${tag ? tag.text : time12(start.minutes)}`}
         </span>
       )}
       {mode === 'title-only' && (
@@ -489,13 +495,13 @@ const ARROW_PATHS: Record<Arrow, string> = {
 /** "From 6:00pm" with an arrow the way the block moved. */
 function ChangeTag({ text, arrow }: { text: string; arrow: Arrow | null }) {
   return (
-    <span className="change-tag">
+    <span className={text ? 'change-tag' : 'change-tag arrow-only'}>
       {arrow && (
         <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
           <path d={ARROW_PATHS[arrow]} />
         </svg>
       )}
-      <span>{text}</span>
+      {text && <span>{text}</span>}
     </span>
   )
 }
