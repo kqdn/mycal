@@ -223,13 +223,18 @@ def test_a_session_without_check_ins_gets_more_time_only_while_it_runs(
     b = next(b for b in get(client)["blocks"] if not b["fixed"] and not b["checkable"])
     monkeypatch.setattr(api, "now", lambda: ends(b) + timedelta(minutes=5))
     response = extend(client, b["id"])
-    assert (response.status_code, response.json()["detail"]) == (422, api.EXTEND_ONLY_STARTED)
+    assert (response.status_code, response.json()["detail"]) == (422, api.EXTEND_NOT_OPEN)
 
 
-def test_only_a_started_session_gets_more_time(client: TestClient) -> None:
-    b = next(b for b in get(client)["blocks"] if not b["fixed"])
-    response = extend(client, b["id"])  # the week hasn't begun
-    assert (response.status_code, response.json()["detail"]) == (422, api.EXTEND_ONLY_STARTED)
+def test_a_session_that_has_not_started_gets_more_time_too(client: TestClient) -> None:
+    week = get(client)
+    b = next(b for b in week["blocks"] if not b["fixed"] and free_after(week, b))  # the week hasn't begun
+
+    response = extend(client, b["id"])
+
+    assert response.status_code == 200, response.text
+    longer = next(o for o in response.json()["blocks"] if o["id"] == b["id"])
+    assert (ends(longer) - ends(b), longer["locked"]) == (timedelta(minutes=15), True)
 
 
 def test_more_time_with_a_bigger_slot_adds_one_slot(client: TestClient, db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -332,3 +337,16 @@ def test_a_hand_edited_date_after_the_split_keeps_its_own_time(client: TestClien
     split(client, series, "2026-11-20", start_time="10:00", end_time="11:00")
 
     assert office_starts(client, "2026-11-23") == ["Tue 24 10:00", "Fri 27 15:00"]
+
+
+def test_more_time_moves_a_running_fixed_event_s_end(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    week = get(client)
+    event = next(b for b in week["blocks"] if b["fixed"] and free_after(week, b))
+    running(monkeypatch, event)
+
+    response = extend(client, event["id"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["proposal"] is None  # nothing else moved, so it saved
+    same = [b for b in response.json()["blocks"] if b["item_id"] == event["item_id"]]
+    assert [(starts(b), ends(b)) for b in same] == [(starts(event), ends(event) + timedelta(minutes=15))]

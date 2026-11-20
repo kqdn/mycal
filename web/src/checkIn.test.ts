@@ -210,10 +210,17 @@ describe('+15 min', () => {
     expect([canExtend(plain, during), canExtend(plain, after)]).toEqual([true, false])
   })
 
-  it('is not offered before it starts, once answered, on fixed events or kept records', () => {
-    expect(canExtend(session, '2026-11-17T21:00:00Z')).toBe(false)
+  it('is offered on a running fixed event too, where it moves the end', () => {
+    const lecture: Block = { ...session, fixed: true }
+    expect(canExtend(lecture, during)).toBe(true)
+  })
+
+  it('is offered before it starts too', () => {
+    expect(canExtend(session, '2026-11-17T21:00:00Z')).toBe(true)
+  })
+
+  it('is not offered once answered, or on kept records', () => {
     expect(canExtend({ ...session, status: 'done' }, after)).toBe(false)
-    expect(canExtend({ ...session, fixed: true }, during)).toBe(false)
     expect(canExtend({ ...session, deleted: true }, during)).toBe(false)
   })
 
