@@ -112,6 +112,22 @@ export function awaitsCheckIn(block: Pick<Block, 'checkable' | 'status' | 'end'>
   return block.checkable && block.status === 'planned' && Date.parse(block.end) <= Date.parse(now)
 }
 
+/**
+ * Whether the popover offers "+15 min" (Milestone 9): a work session that started and has no answer
+ * yet. One without check-ins never gets an answer, so only while it runs; a checkable one also after
+ * it ends, until it's checked in.
+ */
+export function canExtend(block: Pick<Block, 'fixed' | 'deleted' | 'status' | 'start' | 'end' | 'checkable'>, now: string): boolean {
+  const started = Date.parse(block.start) <= Date.parse(now)
+  const open = block.checkable || Date.parse(now) < Date.parse(block.end)
+  return !block.fixed && !block.deleted && block.status === 'planned' && started && open
+}
+
+/** The "+15 min" button's label for the slot setting: "+15 min", "+30 min", "+1h". */
+export function extendLabel(slotMin: number): string {
+  return slotMin < 60 ? `+${slotMin} min` : `+${estimateLabel(slotMin)}`
+}
+
 /** Whether the popover offers a check-in: a checkable block that has started. */
 export function canCheckIn(block: Pick<Block, 'checkable' | 'start'>, now: string): boolean {
   return block.checkable && Date.parse(block.start) <= Date.parse(now)

@@ -134,6 +134,7 @@ export interface Week {
   shortfalls: Shortfall[] // not yet accepted
   proposal?: Proposal | null // set while a proposed change waits for Accept or Discard
   notice?: string | null // said once, like "the proposed change was dropped"
+  overlaps?: [string, string][] // block ids that overlap in the week (Milestone 9); a proposal lists its own
 }
 
 /** GET /api/series/{id}: a stored series in the dialog's terms. Times are "HH:MM:SS". */
@@ -374,6 +375,14 @@ function proposed<T extends object>(request: T): T & { propose: true } {
 /** POST /api/blocks/{id}/move: put a session at `start` (UTC ISO), keeping its length, and lock it there. */
 export async function moveBlock(blockId: string, start: string, week: DateString): Promise<Week> {
   return sendForWeek(`/api/blocks/${blockId}/move?week=${week}`, 'POST', { start, propose: true })
+}
+
+/**
+ * POST /api/blocks/{id}/extend: "+15 min" on a session that started and has no answer yet. It grows by
+ * one slot and locks. Saved right away when nothing else moves, else it comes back as a new plan.
+ */
+export async function extendBlock(blockId: string, week: DateString): Promise<Week> {
+  return sendForWeek(`/api/blocks/${blockId}/extend?week=${week}`, 'POST', { propose: true })
 }
 
 /** POST /api/blocks/{id}/unlock: hand a locked session back to the planner. */

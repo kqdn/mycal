@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Block, RepeatOut } from './api'
-import { canCheckIn, checkInLine } from './checkIn'
+import { canCheckIn, canExtend, checkInLine, extendLabel } from './checkIn'
 import {
   confirmLine,
   dueLine,
@@ -31,6 +31,7 @@ export type Scope = 'one' | 'series'
 interface Props {
   target: PopoverTarget
   timezone: string
+  slotMin: number // for the "+15 min" label
   repeat: RepeatOut | null // set when the item is an occurrence of a stored series
   deleting: boolean
   waiting: boolean // a proposed change waits for Accept or Discard, so nothing else can change
@@ -41,6 +42,7 @@ interface Props {
   onDelete: (scope: Scope) => void
   onCheckIn: (block: Block) => void
   onUnlock: (block: Block) => void
+  onExtend: (block: Block) => void
   onClose: () => void
 }
 
@@ -52,7 +54,8 @@ interface Props {
  * starts fresh.
  */
 export function ItemPopover({
-  target, timezone, repeat, deleting, waiting, error, opening, openError, onEdit, onDelete, onCheckIn, onUnlock, onClose,
+  target, timezone, slotMin, repeat, deleting, waiting, error, opening, openError, onEdit, onDelete, onCheckIn, onUnlock,
+  onExtend, onClose,
 }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
@@ -103,6 +106,8 @@ export function ItemPopover({
   const deleted = target.kind === 'block' && target.block.deleted
   const checkInText = target.kind === 'block' ? checkInLine(target.block, openedAt) : ''
   const checkIn = target.kind === 'block' && !deleted && canCheckIn(target.block, openedAt) ? target.block : null
+  // A session that's running long (started, no answer yet) can get one more slot.
+  const extend = target.kind === 'block' && canExtend(target.block, openedAt) ? target.block : null
   // A session you placed by hand that hasn't started can go back to the planner.
   const unlock =
     target.kind === 'block' && !deleted && target.block.locked && Date.parse(target.block.start) > Date.parse(openedAt)
@@ -151,6 +156,11 @@ export function ItemPopover({
             {checkIn && (
               <button type="button" className="secondary-button popover-wide" disabled={opening || waiting} onClick={() => onCheckIn(checkIn)}>
                 {checkIn.status === 'planned' ? 'Check in' : 'Change answer'}
+              </button>
+            )}
+            {extend && (
+              <button type="button" className="secondary-button popover-wide" disabled={opening || waiting} onClick={() => onExtend(extend)}>
+                {extendLabel(slotMin)}
               </button>
             )}
             {unlock && (

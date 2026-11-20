@@ -134,8 +134,11 @@ export function shownWeek(week: Week, showProposal: boolean): Week {
   return { ...week, blocks: week.proposal.blocks, unscheduled: week.proposal.unscheduled }
 }
 
-/** "Essay and Lecture overlap" for each overlapping pair in the proposal. Titles of blocks it can't find are left out. */
-export function overlapLines(proposal: Proposal): string[] {
+/**
+ * "Essay and Lecture overlap" for each overlapping pair in a proposal or a week (double booking, or a
+ * session given more time that ran into an event). Titles of blocks it can't find are left out.
+ */
+export function overlapLines(proposal: Pick<Proposal, 'blocks' | 'overlaps'>): string[] {
   const byId = new Map(proposal.blocks.map((b) => [b.id, b]))
   return proposal.overlaps.flatMap(([a, b]) => {
     const first = byId.get(a)

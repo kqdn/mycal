@@ -213,6 +213,7 @@ The popover is where an item's details and actions live. Milestone 3 has one act
    - "Edit", a secondary button, left of "Delete item", also secondary. The two share the row in equal halves (a two-column grid with the 8px gap), so the row looks the same on every popover. Edit opens the item in the edit dialog (see Editing). While the item loads it reads "Opening..." and both buttons are disabled. If loading fails, a 12px `--attention-strong` line under the actions says "Couldn't open it:" and the server's message.
    - For a Custom item, Edit is disabled, and a 12px `--text-muted` line under the actions says "Change Custom items in their week file."
    - For a checkable block that has started, "Check in" (or "Change answer" once answered) goes above them, full width on its own row, 8px above Edit and Delete item. It closes the popover and opens the check-in dialog (see Check-ins).
+   - For a work session that is running, or a checkable one that ended and is waiting for its check-in, "+15 min" goes above them the same way, after Check in (Milestone 9). Its label is one slot of the slot setting: "+15 min", "+30 min", "+1h". It closes the popover; the session grows by one slot and locks, and the item's estimate grows with it. When nothing else moves it saves right away, so tapping it again (after reopening the popover) adds another slot; when later sessions have to move, the new plan shows instead.
    - For a session you placed by hand that hasn't started, "Unlock" goes above them the same way (Milestone 9). It closes the popover and shows a new plan that hands the session back to the planner.
    - A kept session of a deleted item (see Deleting) shows its lines and "Deleted. This session stays as a record." in hint text, with no buttons. E and Delete do nothing on it.
 5. **Check-in line (Milestone 7):** under the kind line, 13px `--text`, when there is something to say: "Waiting for a check-in", "Done", "Partly done: 30m of 1h · The rest is rescheduled", "Missed · Caught up later", "No answer · Skipped", or "Missed · Waiting for your choice" while an Ask waits.
@@ -295,6 +296,10 @@ Laid out after prototype v4 (Week and arrangements, compare toggle), with one pr
 - **While it waits:** New item, a click on an empty slot, E and Delete, the popover's Edit, Delete item and Check in, and the check-ins banner's Check in buttons are disabled. The popover says "Accept or Discard the proposed change first." The server refuses other changes too.
 - **Accept or Discard:** the card and controls go and the grid shows the plan that was kept, saved or not. If nothing waits any more (a check-in saved on its own meanwhile), the week just reloads.
 - **Dropped:** a check-in left unanswered saves on its own, and that drops the waiting proposal. The next week shows a dismissable banner, "Proposed change dropped", with the server's sentence.
+
+## Overlaps in the saved plan (Milestone 9)
+
+While no new plan waits and the week has blocks that overlap (double-booked fixed events, or a session given more time that ran into one), a banner above the grid lists each pair as "Essay and Lecture overlap" in 13px / 600 `--attention-text`, like the changes card's overlap lines. A waiting new plan lists its own in the changes card instead.
 
 ## Dragging a block (Milestone 9)
 

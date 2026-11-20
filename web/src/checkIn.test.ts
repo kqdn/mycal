@@ -6,9 +6,11 @@ import {
   bannerTitle,
   blockKind,
   canCheckIn,
+  canExtend,
   checkInLine,
   checkInRequest,
   emptyCheckIn,
+  extendLabel,
   graceLine,
   missTile,
   previewRequest,
@@ -191,5 +193,31 @@ describe('the check-in dialog tile', () => {
       'No answer by 2:00pm counts as missed. You can change it later.',
     )
     expect(graceLine({ ...ESSAY, status: 'done' }, 'America/Los_Angeles', AFTER)).toBeNull()
+  })
+})
+
+describe('+15 min', () => {
+  const session = block({ fixed: false, start: '2026-11-17T22:00:00Z', end: '2026-11-17T23:00:00Z' })
+  const during = '2026-11-17T22:30:00Z'
+  const after = '2026-11-17T23:10:00Z'
+
+  it('is offered on a work session that started and has no answer yet, running or just ended', () => {
+    expect([canExtend(session, during), canExtend(session, after)]).toEqual([true, true])
+  })
+
+  it('is offered on a session without check-ins only while it runs, since it never gets an answer', () => {
+    const plain = { ...session, checkable: false }
+    expect([canExtend(plain, during), canExtend(plain, after)]).toEqual([true, false])
+  })
+
+  it('is not offered before it starts, once answered, on fixed events or kept records', () => {
+    expect(canExtend(session, '2026-11-17T21:00:00Z')).toBe(false)
+    expect(canExtend({ ...session, status: 'done' }, after)).toBe(false)
+    expect(canExtend({ ...session, fixed: true }, during)).toBe(false)
+    expect(canExtend({ ...session, deleted: true }, during)).toBe(false)
+  })
+
+  it('names one slot of the slot setting', () => {
+    expect([extendLabel(15), extendLabel(30), extendLabel(60)]).toEqual(['+15 min', '+30 min', '+1h'])
   })
 })
