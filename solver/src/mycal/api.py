@@ -114,6 +114,8 @@ class Proposal:
     trial: sqlite3.Connection
     summary: str
     left_over: list[tuple[Item, int]]  # items with more work left over than before, and how many minutes
+    weeks: list[date]  # the weeks the change re-planned
+    before: list[Block]  # every block before the change, to tell which re-planned weeks changed
 
 
 # The waiting proposal, if any, and a one-time note for the next week response.
@@ -273,6 +275,13 @@ class LeftOverOut(BaseModel):
     message: str  # "1h won't fit before Fri 5pm"
 
 
+class OtherWeekOut(BaseModel):
+    """Another week the proposal changes, and how many of its blocks are new, move, change length or go."""
+
+    week_start: date
+    changes: int
+
+
 class ProposalOut(BaseModel):
     """The waiting proposal's version of the viewed week (Milestone 8)."""
 
@@ -281,6 +290,7 @@ class ProposalOut(BaseModel):
     unscheduled: list[ItemRef]
     left_over: list[LeftOverOut]  # across every week the change re-planned
     overlaps: list[tuple[UUID, UUID]]  # block pairs in the week that overlap (double booking)
+    other_weeks: list[OtherWeekOut]  # re-planned weeks besides the viewed one with blocks that change
 
 
 class WeekOut(BaseModel):
@@ -1685,6 +1695,7 @@ def _change_and_plan(
     try:
         _plan_baseline(trial, settings, first, last, moment)
         before = left_over_min(trial, settings, first, last, moment)
+        blocks_before = store.list_blocks(trial, include_archived=True)
         change(trial)
         if clear_plans:
             store.clear_plans(trial)
@@ -1702,7 +1713,9 @@ def _change_and_plan(
         if propose is None:
             store.keep_copy(trial, conn)
         else:
-            _proposal = Proposal(trial, propose, sorted(worse, key=lambda pair: pair[0].title))
+            weeks = [first + timedelta(weeks=n) for n in range((last - first).days // 7 + 1)]
+            left = sorted(worse, key=lambda pair: pair[0].title)
+            _proposal = Proposal(trial, propose, left, weeks, blocks_before)
             held = True
             log.info("proposed %s, re-planned %s to %s", propose, first, last)
     except PlannerTimeout as error:
@@ -1993,7 +2006,24 @@ def _proposal_out(settings: SolverSettings, week_start: date, moment: datetime) 
             for item, minutes in _proposal.left_over
         ],
         overlaps=_overlaps(week.blocks),
+        other_weeks=[
+            OtherWeekOut(week_start=other, changes=count)
+            for other in _proposal.weeks
+            if other != week_start and (count := _changed_blocks(_proposal, other, settings.timezone))
+        ],
     )
+
+
+def _changed_blocks(proposal: Proposal, week_start: date, timezone: str) -> int:
+    """How many of the week's blocks the proposal adds, moves, resizes or removes, matched by id like the page does."""
+    week = week_horizon(week_start, timezone)
+
+    def spans(blocks: list[Block]) -> dict[UUID, tuple[datetime, datetime]]:
+        return {b.id: (b.start, b.end) for b in blocks if b.start < week.end and b.end > week.start}
+
+    before = spans(proposal.before)
+    after = spans(store.list_blocks(proposal.trial, include_archived=True))
+    return sum(1 for block_id in before.keys() | after.keys() if before.get(block_id) != after.get(block_id))
 
 
 def _overlaps(blocks: list[BlockOut]) -> list[tuple[UUID, UUID]]:

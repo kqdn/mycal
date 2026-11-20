@@ -121,6 +121,21 @@ def test_other_weeks_show_the_proposal_too(client: TestClient) -> None:
     assert later["proposal"]["summary"] == "Add Essay"
 
 
+def test_a_proposal_names_the_other_weeks_it_changes(client: TestClient) -> None:
+    # Due next week, so the change re-plans both weeks; with room this week, the report lands here.
+    report = {"week_start": WEEK, "title": "Report", "preset": "before_deadline", "deadline_date": "2026-11-25",
+              "deadline_time": "17:00", "estimate_min": 60, "propose": True}
+    response = client.post("/api/items", json=report)
+    assert response.status_code == 201, response.text
+    here = response.json()["proposal"]
+    assert "Report" in titles(here["blocks"])
+    assert here["other_weeks"] == []  # nothing moves next week
+
+    later = get(client, WEEK_2)["proposal"]
+
+    assert later["other_weeks"] == [{"week_start": WEEK, "changes": 1}]
+
+
 def test_a_proposed_delete_keeps_the_item_until_accepted(client: TestClient, db: Path) -> None:
     item = next(b for b in get(client)["blocks"] if not b["fixed"] and b["series_id"] is None)
 
