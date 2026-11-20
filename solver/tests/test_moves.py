@@ -257,3 +257,69 @@ def test_only_a_locked_session_can_be_unlocked(client: TestClient) -> None:
     call = block(get(client), "Call home")
     response = client.post(f"/api/blocks/{call['id']}/unlock", params={"week": WEEK}, json={})
     assert response.status_code == 422
+
+
+# This and following events: splitting a series where a repeating event was dragged
+
+OFFICE = {"title": "Office hours", "preset": "exact", "start_time": "08:00", "end_time": "09:00", "freq": "weekly",
+          "interval": 1, "repeat_weekdays": [1, 4], "start_date": WEEK, "end_date": "2026-12-04"}  # Tue and Fri
+
+
+def office_starts(client: TestClient, week: str) -> list[str]:
+    blocks = client.get(f"/api/weeks/{week}").json()["blocks"]
+    return [starts(b).astimezone(LA).strftime("%a %d %H:%M") for b in blocks if b["title"] == "Office hours"]
+
+
+def split(client: TestClient, series: str, from_date: str, **changes: object):
+    form = client.get(f"/api/series/{series}").json() | {"week_start": WEEK, **changes}
+    body = {**form, "from_date": from_date, "propose": True}
+    response = client.post(f"/api/series/{series}/split", params={"week": WEEK}, json=body)
+    assert response.status_code == 200, response.text
+    assert client.post("/api/proposal/accept", params={"week": WEEK}).status_code == 200
+    return response
+
+
+def add_office(client: TestClient) -> str:
+    response = client.post("/api/series", json={"week_start": WEEK, **OFFICE})
+    assert response.status_code == 201, response.text
+    return next(b["series_id"] for b in response.json()["blocks"] if b["title"] == "Office hours")
+
+
+def test_this_and_following_keeps_the_dates_before_it(client: TestClient) -> None:
+    series = add_office(client)
+
+    response = split(client, series, "2026-11-20", start_time="10:00", end_time="11:00")  # from Fri Nov 20
+
+    assert response.json()["proposal"]["summary"] == "Change Office hours from Fri Nov 20"
+    assert office_starts(client, WEEK) == ["Tue 17 08:00", "Fri 20 10:00"]
+    assert office_starts(client, "2026-11-23") == ["Tue 24 10:00", "Fri 27 10:00"]
+
+
+def test_this_and_following_from_the_first_date_changes_the_whole_series(client: TestClient) -> None:
+    series = add_office(client)
+
+    split(client, series, WEEK, start_time="10:00", end_time="11:00")  # its start date, so nothing comes before
+
+    assert office_starts(client, WEEK) == ["Tue 17 10:00", "Fri 20 10:00"]
+    assert client.get(f"/api/series/{series}").json()["start_time"] == "10:00:00"  # the same series, kept
+
+
+def test_this_and_following_to_another_weekday(client: TestClient) -> None:
+    series = add_office(client)
+
+    split(client, series, "2026-11-17", repeat_weekdays=[2, 4])  # Tue Nov 17 dragged to Wed
+
+    assert office_starts(client, WEEK) == ["Wed 18 08:00", "Fri 20 08:00"]
+
+
+def test_a_hand_edited_date_after_the_split_keeps_its_own_time(client: TestClient, db: Path) -> None:
+    series = add_office(client)
+    client.get("/api/weeks/2026-11-23")  # creates the occurrences of that week
+    items = store.list_items(store.connect(db))
+    item = next(i for i in items if i.title == "Office hours" and i.occurrence_date == date(2026, 11, 27))
+    form = client.get(f"/api/items/{item.id}").json() | {"start_time": "15:00", "end_time": "16:00"}  # Fri Nov 27 only
+    assert client.put(f"/api/items/{item.id}", params={"week": WEEK}, json=form).status_code == 200
+
+    split(client, series, "2026-11-20", start_time="10:00", end_time="11:00")
+
+    assert office_starts(client, "2026-11-23") == ["Tue 24 10:00", "Fri 27 15:00"]

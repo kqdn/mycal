@@ -1172,6 +1172,58 @@ def update_series(series_id: UUID, request: SeriesIn, week: date) -> WeekOut:
         )
 
 
+class SplitIn(SeriesIn):
+    """The series from `from_date` on, as the edit form sends it ("This and following events", Milestone 9)."""
+
+    from_date: date  # the first date that changes: the dragged occurrence's date, or where it was dropped if earlier
+
+
+@app.post("/api/series/{series_id}/split")
+def split_series(series_id: UUID, request: SplitIn, week: date) -> WeekOut:
+    """Change a series from `from_date` on, keeping the dates before it as they are.
+
+    The old series ends the day before, and a new one with the request's fields
+    starts on `from_date`, ending when the old one did. Skipped dates go to the
+    side they fall on. Occurrences from that date on that haven't started are
+    rebuilt from the new series, except ones edited by hand, which move to it
+    with their own times. When nothing comes before `from_date`, it is an
+    ordinary series edit. All or nothing, re-planned like a series edit.
+    """
+    with database() as (conn, settings):
+        old = store.get_series(conn, series_id)
+        if old is None:
+            raise HTTPException(status_code=404, detail=SERIES_GONE)
+        moment = now()
+        split = max(request.from_date, old.start_date)
+        try:
+            later = to_series(request.model_copy(update={"start_date": split}), settings, moment)
+        except Invalid as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        later = replace(later, end_date=old.end_date, skipped_dates=[d for d in old.skipped_dates if d >= split])
+        # Nothing before it (dragging the first date): the whole series changes, keeping its id.
+        earlier = None
+        if split == old.start_date:
+            later = replace(later, id=old.id)
+        else:
+            earlier = replace(old, end_date=split - timedelta(days=1), skipped_dates=[d for d in old.skipped_dates if d < split])
+
+        def change(trial: sqlite3.Connection) -> None:
+            moving = [o for o in _not_started(trial, settings, series_id, moment) if (o.occurrence_date or split) >= split]
+            if earlier is not None:
+                store.put_series(trial, earlier)
+            store.put_series(trial, later)
+            for occurrence in moving:
+                if store.hand_edited(trial, occurrence.id):
+                    store.put_item(trial, replace(occurrence, series_id=later.id))  # keeps its own time
+                else:
+                    store.delete_item(trial, occurrence.id)  # the planner creates it again from the new series
+
+        title = repr(later.title)
+        return _change_everywhere(
+            conn, settings, change, week, title, propose=f"Change {later.title} from {split:%a %b} {split.day}" if request.propose else None
+        )
+
+
 NOT_SKIPPED = "Only a skipped date can be brought back here. To skip a date, delete it from its week."
 
 
