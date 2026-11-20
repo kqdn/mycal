@@ -173,8 +173,8 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
   const ghostTime = dropSpot
     ? range12(toLocal(dropSpot.start, timezone).minutes, toLocal(dropSpot.end, timezone).minutes)
     : ''
-  // A spot after the deadline is allowed, with a warning ("2:00 to 4:00am · After it's due").
-  const ghostLabel = dropSpot?.problem ?? (dropSpot?.late ? `${ghostTime} · After it's due` : ghostTime)
+  // Why it can't go there, or a warning when it would be after the deadline (allowed): its own line under the time.
+  const ghostNote = dropSpot?.problem ?? (dropSpot?.late ? "After it's due" : null)
   const ghostClass = dropSpot?.problem ? 'drag-ghost refused' : dropSpot?.late ? 'drag-ghost late' : 'drag-ghost'
 
   /** The slot under the pointer in a day column, or null over a block or a slot that has begun. */
@@ -310,7 +310,11 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
                       style={place(p)}
                       aria-hidden="true"
                     >
-                      {drag?.saving ? 'Moving...' : ghostLabel}
+                      <span className="drag-ghost-time">{drag?.saving ? 'Moving...' : ghostTime}</span>
+                      {/* On the first piece only; it shows below a ghost too short to hold it. */}
+                      {!drag?.saving && ghostNote && !p.continuesBefore && (
+                        <span className="drag-ghost-note">{ghostNote}</span>
+                      )}
                     </div>
                   ))}
                 {other

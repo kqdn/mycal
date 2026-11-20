@@ -653,22 +653,38 @@ button.miss-tile:hover {
   right: 4px;
   box-sizing: border-box;
   padding: 2px 8px;
-  overflow: hidden;
   border: 2px dashed var(--accent);
   border-radius: var(--radius-block);
   background: var(--accent-tint);
   color: var(--text);
   font-size: 12px;
   font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  line-height: 16px;
   pointer-events: none;
   z-index: 3;
 }
 
-/* After the item is due: still allowed, so the accent outline stays and only the text warns. */
-.day-column .drag-ghost.late {
+.drag-ghost-time {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Why it can't go there, or "After it's due": a label hanging just under the outline, exactly as
+   wide as it (border included), wrapping instead of being cut off, so it reads the same on any length. */
+.drag-ghost-note {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: -2px;
+  right: -2px;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  border: 1px solid var(--attention-strong);
+  border-radius: var(--radius-block);
+  background: var(--attention-bg);
   color: var(--attention-text);
+  overflow-wrap: anywhere;
 }
 
 .day-column .drag-ghost.refused {
