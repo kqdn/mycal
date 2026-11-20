@@ -134,7 +134,6 @@ export interface Week {
   shortfalls: Shortfall[] // not yet accepted
   proposal?: Proposal | null // set while a proposed change waits for Accept or Discard
   notice?: string | null // said once, like "the proposed change was dropped"
-  overlaps?: [string, string][] // block ids that overlap in the week (Milestone 9); a proposal lists its own
 }
 
 /** GET /api/series/{id}: a stored series in the dialog's terms. Times are "HH:MM:SS". */

@@ -4,7 +4,7 @@ import { awaitsCheckIn, blockKind } from './checkIn'
 import { canDrag, dropAt } from './drag'
 import { clickedLength } from './itemForm'
 import type { Arrow } from './proposal'
-import { initialScrollMinute, minutesToPx, pieces, slotAt, slotHasBegun, textMode, weekDates, type Piece } from './layout'
+import { initialScrollMinute, lanes, minutesToPx, pieces, slotAt, slotHasBegun, textMode, weekDates, type Lane, type Piece } from './layout'
 import { hourLabel, range12, time12, toLocal, weekdayShort, type DateString } from './time'
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
@@ -209,6 +209,9 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
     pieces(block, weekStart, timezone).map((piece) => ({ block, piece })),
   )
   const other = compare?.other ? pieces(compare.other.span, weekStart, timezone) : []
+  // Overlapping blocks share their day's width, side by side, so both stay readable.
+  const dayBlocks = dates.map((_, day) => blocks.filter(({ piece }) => piece.day === day))
+  const dayLanes = dayBlocks.map((list) => lanes(list.map(({ piece }) => piece)))
 
   // A change tile was clicked: bring its block into view, or its other spot when the shown plan has no
   // block for it (a block leaving the week, seen on the proposal). Up and down, and sideways on a narrow screen.
@@ -282,13 +285,12 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
                 {HOURS.slice(1).map((h) => (
                   <div key={h} className="hour-line" style={{ top: minutesToPx(h * 60) }} />
                 ))}
-                {blocks
-                  .filter(({ piece }) => piece.day === day)
-                  .map(({ block, piece }) => (
+                {dayBlocks[day].map(({ block, piece }, i) => (
                     <BlockView
                       key={`${block.id}-${piece.day}`}
                       block={block}
                       piece={piece}
+                      lane={dayLanes[day][i]}
                       timezone={timezone}
                       now={now.iso}
                       onOpen={(b, opener) => !clickIgnored() && onOpen(b, opener)}
@@ -395,6 +397,7 @@ function AddGhost({ minutes, lengthMin }: { minutes: number; lengthMin: number }
 interface BlockViewProps {
   block: Block
   piece: Piece
+  lane: Lane // its place across the column when it overlaps others
   timezone: string
   now: string // UTC ISO, for whether the block is waiting for its check-in
   onOpen: (block: Block, opener: HTMLElement) => void
@@ -410,10 +413,10 @@ interface BlockViewProps {
  * A block is a button: clicking it, or Enter or Space, opens its details popover. A changed block
  * in the compare view selects its change instead, to show its other spot.
  */
-function BlockView({ block, piece, timezone, now, onOpen, tag, selected, onSelect, draggable, dragged, onPress }: BlockViewProps) {
+function BlockView({ block, piece, lane, timezone, now, onOpen, tag, selected, onSelect, draggable, dragged, onPress }: BlockViewProps) {
   const start = toLocal(block.start, timezone)
   const end = toLocal(block.end, timezone)
-  const style = place(piece)
+  const style = { ...place(piece), ...across(lane) }
   const mode = textMode(style.height)
   const classes = ['block', blockKind(block), mode]
   if (awaitsCheckIn(block, now)) classes.push('needs-check-in')
@@ -495,6 +498,16 @@ function ChangeTag({ text, arrow }: { text: string; arrow: Arrow | null }) {
       <span>{text}</span>
     </span>
   )
+}
+
+/**
+ * Left and width for a block in lane `lane` of `lanes`: the column's block area (12px in from the left,
+ * 4px from the right, as for a lone block) split evenly, with 2px between lanes. A lone block keeps the CSS.
+ */
+function across({ lane, lanes }: Lane): { left?: string; width?: string; right?: string } {
+  if (lanes === 1) return {}
+  const share = `(100% - 16px) / ${lanes}`
+  return { left: `calc(12px + ${share} * ${lane})`, width: `calc(${share} - 2px)`, right: 'auto' }
 }
 
 function place(piece: Piece): { top: number; height: number } {

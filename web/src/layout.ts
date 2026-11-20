@@ -104,3 +104,42 @@ export function textMode(heightPx: number): TextMode {
   if (heightPx >= 20) return 'one-line'
   return 'title-only'
 }
+
+/** Where a block sits across its day column when it overlaps others: lane `lane` of `lanes`, left to right. */
+export interface Lane {
+  lane: number
+  lanes: number
+}
+
+/**
+ * Side-by-side lanes for one day's pieces (web/DESIGN.md, "Overlapping blocks"), in the order given.
+ * Pieces that overlap, directly or through a chain, form a group that splits the column's width; each
+ * takes the leftmost lane free at its start. A piece that overlaps nothing gets the whole width (1 lane).
+ * Touching end to start is not an overlap.
+ */
+export function lanes(day: Pick<Piece, 'startMin' | 'endMin'>[]): Lane[] {
+  const order = day.map((_, i) => i).sort((a, b) => day[a].startMin - day[b].startMin || day[b].endMin - day[a].endMin)
+  const result: Lane[] = day.map(() => ({ lane: 0, lanes: 1 }))
+  let group: number[] = [] // indexes in the current overlapping group
+  let groupEnd = -1
+  let laneEnds: number[] = [] // where each lane of the group is busy until
+  const close = () => {
+    for (const i of group) result[i].lanes = laneEnds.length
+  }
+  for (const i of order) {
+    const { startMin, endMin } = day[i]
+    if (startMin >= groupEnd) {
+      close()
+      group = []
+      laneEnds = []
+    }
+    const free = laneEnds.findIndex((end) => end <= startMin)
+    const lane = free === -1 ? laneEnds.length : free
+    laneEnds[lane] = endMin
+    result[i].lane = lane
+    group.push(i)
+    groupEnd = Math.max(groupEnd, endMin)
+  }
+  close()
+  return result
+}

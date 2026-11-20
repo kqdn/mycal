@@ -27,7 +27,7 @@ import { weekAfterDelete, whenLine } from './itemDetails'
 import { formAt, formFrom, toRequest, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
-import { changedBlocks, otherSpot, overlapLines, proposalChanges, shownWeek } from './proposal'
+import { changedBlocks, otherSpot, proposalChanges, shownWeek } from './proposal'
 import { ChangesCard, CompareControls } from './ProposalBanner'
 import { MoveChoice } from './MoveChoice'
 import { formFromSeries, toSeriesRequest } from './repeatForm'
@@ -142,10 +142,6 @@ export default function App() {
       : { status: 'loading' }
   const proposal = state.status === 'ready' ? (state.week.proposal ?? null) : null
   const waiting = proposal !== null
-  // Overlaps in the saved plan: double-booked events, or a session given more time that ran into one.
-  // A waiting proposal lists its own in the changes card.
-  const savedOverlaps =
-    state.status === 'ready' && !proposal ? overlapLines({ blocks: state.week.blocks, overlaps: state.week.overlaps ?? [] }) : []
   const showCurrent = proposal !== null && currentFor === proposal.summary
   // What the grid and Unscheduled show: the proposal's version of the week unless Current plan is picked.
   const shown = state.status === 'ready' ? shownWeek(state.week, !showCurrent) : null
@@ -611,17 +607,6 @@ export default function App() {
                   </li>
                 ))}
               </ul>
-            </section>
-          )}
-          {savedOverlaps.length > 0 && (
-            <section className="banner" aria-label="Overlaps">
-              <div>
-                {savedOverlaps.map((line) => (
-                  <p key={line} className="changes-overlap">
-                    {line}
-                  </p>
-                ))}
-              </div>
             </section>
           )}
           {state.status === 'loading' && <p className="loading">Loading...</p>}

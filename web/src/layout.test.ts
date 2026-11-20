@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Week } from './api'
-import { initialScrollMinute, minutesToPx, pieces, scrollMinuteFor, slotAt, slotHasBegun, textMode } from './layout'
+import { initialScrollMinute, lanes, minutesToPx, pieces, scrollMinuteFor, slotAt, slotHasBegun, textMode } from './layout'
 
 const LA = 'America/Los_Angeles'
 const WEEK = '2026-11-16' // Mon; PST is UTC-8 all week
@@ -143,5 +143,30 @@ describe('slotAt and slotHasBegun', () => {
     expect(slotHasBegun('2026-11-18', 18 * 60 + 45, now)).toBe(false)
     expect(slotHasBegun('2026-11-17', 23 * 60, now)).toBe(true)
     expect(slotHasBegun('2026-11-19', 0, now)).toBe(false)
+  })
+})
+
+describe('lanes', () => {
+  const at = (startMin: number, endMin: number) => ({ startMin, endMin })
+
+  it('gives blocks that overlap nothing the whole width', () => {
+    expect(lanes([at(540, 600), at(600, 660)])).toEqual([{ lane: 0, lanes: 1 }, { lane: 0, lanes: 1 }]) // touching
+  })
+
+  it('puts two overlapping blocks side by side, earlier on the left', () => {
+    expect(lanes([at(870, 930), at(840, 900)])).toEqual([{ lane: 1, lanes: 2 }, { lane: 0, lanes: 2 }])
+  })
+
+  it('reuses a lane that frees up, and splits a whole chain the same way', () => {
+    // 9 to 10, 9:30 to 11, 10 to 10:30: three in a chain, but only two at once
+    expect(lanes([at(540, 600), at(570, 660), at(600, 630)])).toEqual([
+      { lane: 0, lanes: 2 }, { lane: 1, lanes: 2 }, { lane: 0, lanes: 2 },
+    ])
+  })
+
+  it('keeps separate groups separate', () => {
+    expect(lanes([at(540, 600), at(560, 620), at(700, 760)])).toEqual([
+      { lane: 0, lanes: 2 }, { lane: 1, lanes: 2 }, { lane: 0, lanes: 1 },
+    ])
   })
 })

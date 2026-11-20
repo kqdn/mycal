@@ -297,9 +297,9 @@ Laid out after prototype v4 (Week and arrangements, compare toggle), with one pr
 - **Accept or Discard:** the card and controls go and the grid shows the plan that was kept, saved or not. If nothing waits any more (a check-in saved on its own meanwhile), the week just reloads.
 - **Dropped:** a check-in left unanswered saves on its own, and that drops the waiting proposal. The next week shows a dismissable banner, "Proposed change dropped", with the server's sentence.
 
-## Overlaps in the saved plan (Milestone 9)
+## Overlapping blocks (Milestone 9)
 
-While no new plan waits and the week has blocks that overlap (double-booked fixed events, or a session given more time that ran into one), a banner above the grid lists each pair as "Essay and Lecture overlap" in 13px / 600 `--attention-text`, like the changes card's overlap lines. A waiting new plan lists its own in the changes card instead.
+Blocks that overlap in a day (double-booked fixed events, or a session given more time that ran into one) sit side by side instead of on top of each other, as in most calendars. Blocks that overlap directly or through a chain form a group that splits the column's block area (12px in from the left, 4px from the right) into equal lanes with 2px between them; each takes the leftmost lane free at its start, so the earlier one is on the left. A block that overlaps nothing keeps the full width, and blocks that only touch end to start don't count. There is no banner for overlaps in the saved plan: seeing them side by side is enough. A waiting new plan still names its overlaps in the changes card ("Lecture and Dentist overlap"), since that's when you decide.
 
 ## Dragging a block (Milestone 9)
 
