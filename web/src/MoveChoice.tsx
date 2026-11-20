@@ -73,15 +73,16 @@ export function MoveChoice({ title, anchor, onPick, onCancel }: Props) {
           <p className="confirm-question">Move which?</p>
           <p className="confirm-detail">This event only moves this date. This and following moves this date and every later one.</p>
         </div>
-        <div className="popover-actions">
-          <button ref={cancel} type="button" className="secondary-button" onClick={() => box.current?.hidePopover()}>
-            Cancel
-          </button>
-          <button type="button" className="secondary-button" onClick={() => pick('one')}>
+        {/* One full-width button per row, the choices first; focus starts on Cancel, so Enter moves nothing. */}
+        <div className="popover-buttons">
+          <button type="button" className="secondary-button popover-wide" onClick={() => pick('one')}>
             This event only
           </button>
-          <button type="button" className="secondary-button" onClick={() => pick('following')}>
+          <button type="button" className="secondary-button popover-wide" onClick={() => pick('following')}>
             This and following
+          </button>
+          <button ref={cancel} type="button" className="secondary-button popover-wide" onClick={() => box.current?.hidePopover()}>
+            Cancel
           </button>
         </div>
       </div>
