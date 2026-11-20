@@ -7,7 +7,7 @@ solve() and saves what comes back. solve() itself is unchanged.
 Spans. Weeks are planned together in spans of at most MAX_SPAN_WEEKS, in one
 solve, so work due in a later week can start in an earlier one; the earlier
 week score tier puts it in the earliest week with room. Only the first week
-of a span that fits is marked planned. The span's other weeks keep their new
+of a span is marked planned. The span's other weeks keep their new
 blocks as their current plan and re-plan (stably) when viewed, so they can
 take work due in the week after them.
 
@@ -16,13 +16,11 @@ deferred: it gets no windows, and its blocks stay put. It is placed by a span
 that reaches its deadline week, so it only goes in the MAX_SPAN_WEEKS weeks up
 to its deadline (a known limit).
 
-Broken weeks. A joint solve is all or nothing, so a week that can't be planned
-would sink every span holding it. A span that doesn't fit is shortened from
-the end, first with every item it reaches required, then with the items due
-after the shorter span deferred. The longest span that fits is saved; the
-week right after it is the broken one and is marked infeasible on its own,
-keeping its old blocks; planning then continues after it as a joint span
-again. Items left waiting on a broken week are listed with a reason.
+Work that doesn't fit (Milestone 8). A span is solved with partial placement,
+so it always gets a plan: when not all work fits, solve() places as much as
+it can and the rest has no blocks. A week is never "can't be planned". Items
+with work left over are listed in their due week with a reason, like "1h
+won't fit before Fri 5pm" (left_over).
 
 Series (Milestone 6). Before planning, the missing occurrences of every stored
 series are created for the weeks being planned (create_occurrences), so a
@@ -92,22 +90,17 @@ def span_horizon(first: date, last: date, timezone: str) -> Horizon:
     return Horizon(start, end)
 
 
-def plan_weeks(
-    conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime
-) -> dict[date, bool]:
+def plan_weeks(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime) -> None:
     """Plan every week in [first..last] in spans of at most MAX_SPAN_WEEKS, and store the plans.
 
-    After a week that can't be planned, a fresh span starts at the next week, so
-    planning resumes jointly rather than one week at a time. Returns each week's
-    outcome: True if it fit (as part of a span), False if it can't be planned.
+    Work that doesn't fit is left without blocks (see left_over).
     """
     create_occurrences(conn, settings, first, last, now)
-    outcome: dict[date, bool] = {}
     week = first
     while week <= last:
-        span_outcome, week = _plan_span(conn, settings, week, min(last, week + (MAX_SPAN_WEEKS - 1) * WEEK), now)
-        outcome |= span_outcome
-    return outcome
+        span_last = min(last, week + (MAX_SPAN_WEEKS - 1) * WEEK)
+        _plan_span(conn, settings, week, span_last, now)
+        week = span_last + WEEK
 
 
 def create_occurrences(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime) -> None:
@@ -152,44 +145,21 @@ class _Attempt:
     kept: list[Block]
 
 
-def _plan_span(
-    conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime
-) -> tuple[dict[date, bool], date]:
-    """Plan one span, shortening it around a broken week. Returns the outcome and the week to continue from."""
-    outer_end = span_horizon(first, last, settings.timezone).end  # items due later are always deferred
-    k = last
-    while k >= first:
-        span_end = span_horizon(first, k, settings.timezone).end
-        for defer_after in dict.fromkeys([outer_end, span_end]):  # required first, then deferred
-            attempt = _solve_span(conn, settings, first, k, now, defer_after)
-            if attempt.result.feasible:
-                kept_ids = {b.id for b in attempt.kept}
-                placed = [b for b in attempt.result.blocks if b.id not in kept_ids]
-                store.save_plan(conn, [b.id for b in attempt.current], placed, {first: True}, now)
-                outcome = {first + n * WEEK: True for n in range((k - first).days // 7 + 1)}
-                if k == last:
-                    return outcome, last + WEEK
-                broken = k + WEEK  # the week right after the span that fits can't be planned
-                _mark(conn, {broken: False}, now)
-                return outcome | {broken: False}, broken + WEEK
-        k -= WEEK
-    _mark(conn, {first: False}, now)  # not even the first week alone fits
-    return {first: False}, first + WEEK
+def _plan_span(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime) -> None:
+    """Plan one span with partial placement, store its blocks and mark its first week planned."""
+    attempt = _solve_span(conn, settings, first, last, now)
+    kept_ids = {b.id for b in attempt.kept}
+    placed = [b for b in attempt.result.blocks if b.id not in kept_ids]
+    store.save_plan(conn, [b.id for b in attempt.current], placed, {first: True}, now)
 
 
-def _mark(conn: sqlite3.Connection, marks: dict[date, bool], now: datetime) -> None:
-    store.save_plan(conn, [], [], marks, now)
-
-
-def _solve_span(
-    conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime, defer_after: datetime
-) -> _Attempt:
-    """One solve of the span [first..last], deferring deadline items due after `defer_after`. Saves nothing."""
+def _solve_span(conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime) -> _Attempt:
+    """One solve of the span [first..last], deferring deadline items due after it. Saves nothing."""
     span = span_horizon(first, last, settings.timezone)
     # New blocks only go after now, rounded up to the slot grid.
     open_from = max(span.start, open_from_moment(now, settings.slot_min))
     items = store.list_items(conn)
-    deferred = {i.id for i in items if _due_after(i, defer_after)}
+    deferred = {i.id for i in items if _due_after(i, span.end)}
 
     blocks = store.list_blocks(conn)
     frames = store.list_work_frames(conn)
@@ -210,7 +180,7 @@ def _solve_span(
     ]
     constraints = [compile_constraint(c, settings.timezone, span.start, span.end) for c in store.list_constraints(conn)]
     try:
-        result = solve(planned, kept + current, frames, constraints, settings)
+        result = solve(planned, kept + current, frames, constraints, settings)  # partial when not all fits
     except RuntimeError as error:  # the engine's "no arrangement within the work limit"
         raise PlannerTimeout(str(error)) from error
     return _Attempt(result, current, kept)
@@ -444,24 +414,77 @@ def due_week(item: Item, timezone: str) -> date | None:
     return None
 
 
-def waiting_on_broken_weeks(
-    conn: sqlite3.Connection, settings: SolverSettings, week_start: date, now: datetime
-) -> dict[UUID, str]:
-    """Items shown in this week's Unscheduled list because their work waits on a week that can't be planned.
+def left_over_min(
+    conn: sqlite3.Connection, settings: SolverSettings, first: date, last: date, now: datetime
+) -> dict[UUID, tuple[Item, int]]:
+    """Items due in the weeks [first..last] with work that has no blocks, and how many minutes.
 
-    Only broken weeks count: items deferred by the span cap are normal and not listed.
-    An item is listed in its broken week and the MAX_SPAN_WEEKS - 1 weeks before it.
+    Only accurate once those weeks are planned: an item due in a week that was
+    never planned has no blocks yet. Items due later are left out, since a
+    later span places them. Fixed events (no estimate) always get their block.
     """
     blocks = store.list_blocks(conn)
     frames = store.list_work_frames(conn)
-    reasons: dict[UUID, str] = {}
+    found: dict[UUID, tuple[Item, int]] = {}
     for item in effective_items(store.list_items(conn), blocks, frames, settings, now):
-        due = due_week(item, settings.timezone)
-        if due is None or not (due - (MAX_SPAN_WEEKS - 1) * WEEK <= week_start <= due):
+        due = _last_week(item, settings.timezone, now)
+        if item.estimate_min is None or due is None or not first <= due <= last:
             continue
-        if store.plan_status(conn, due) is False and remaining_min(item, blocks) > 0:
-            reasons[item.id] = f"Waiting on {week_title(due)}, which can't be planned."
-    return reasons
+        if (minutes := remaining_min(item, blocks)) > 0:
+            found[item.id] = (item, minutes)
+    return found
+
+
+def left_over(conn: sqlite3.Connection, settings: SolverSettings, week_start: date, now: datetime) -> dict[UUID, str]:
+    """Items shown in this week's Unscheduled list because some of their work didn't fit, with the reason."""
+    return {
+        item_id: left_over_message(item, minutes, settings.timezone)
+        for item_id, (item, minutes) in left_over_min(conn, settings, week_start, week_start, now).items()
+    }
+
+
+def left_over_message(item: Item, minutes: int, timezone: str) -> str:
+    """"1h 30m won't fit before Fri 5pm", "45m won't fit on Wed" or "2h won't fit on its days".
+
+    An item with one session per day gets "(one session per day)" after it, since
+    that switch is often why free time on a day it already has a session can't be used.
+    """
+    message = f"{duration_text(minutes)} won't fit {_where_text(item, timezone)}"
+    return f"{message} (one session per day)" if item.one_block_per_day else message
+
+
+def _where_text(item: Item, timezone: str) -> str:
+    """"before Fri 5pm", "on Wed", "on its days" or "in its time"."""
+    if item.flex_preset is FlexPreset.BEFORE_DEADLINE and item.deadline is not None:
+        due = item.deadline.astimezone(ZoneInfo(timezone))
+        return f"before {due:%a} {clock_text(due.time())}"
+    if item.flex_preset in (FlexPreset.DAY, FlexPreset.DAY_RANGE):
+        return f"on {item.preset_params['day']:%a}"
+    if item.flex_preset is FlexPreset.DAYS:
+        return "on its days"
+    return "in its time"
+
+
+def duration_text(minutes: int) -> str:
+    """90 is "1h 30m", 60 is "1h", 45 is "45m"."""
+    hours, rest = divmod(minutes, 60)
+    return " ".join(part for part in (f"{hours}h" if hours else "", f"{rest}m" if rest else "") if part) or "0m"
+
+
+def clock_text(moment: time) -> str:
+    """17:00 is "5pm", 9:30 is "9:30am", 0:00 is "12am"."""
+    hour = moment.hour % 12 or 12
+    suffix = "am" if moment.hour < 12 else "pm"
+    return f"{hour}{suffix}" if moment.minute == 0 else f"{hour}:{moment.minute:02d}{suffix}"
+
+
+def _last_week(item: Item, timezone: str, now: datetime) -> date | None:
+    """The week an item's work belongs to at the latest (due_week), or for a Custom item, its last painted week."""
+    due = due_week(item, timezone)
+    if due is None and item.flex_preset is FlexPreset.CUSTOM:
+        touched = weeks_touched(item, timezone, now)
+        due = touched[-1] if touched else None
+    return due
 
 
 def week_title(week_start: date) -> str:

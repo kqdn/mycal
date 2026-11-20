@@ -161,12 +161,14 @@ def test_constraint_with_unknown_item_rejected() -> None:
         week_from(TINY + PREFER.replace('"Seminar"', '"Nope"'))
 
 
-def test_infeasible_week_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_week_that_does_not_fit_shows_what_was_left_out(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     text = TINY.replace("estimate_min = 60", "estimate_min = 120")
     path = tmp_path / "week.toml"
     path.write_text(text, encoding="utf-8")
     assert main([str(path)]) == 1
-    assert "No arrangement fits" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "09:00-10:00  Gym" in out  # the hour that fits is still planned
+    assert out.endswith("Didn't fit (a deadline, window, limit or dependency can't be met)\n  Gym: 60 min\n")
 
 
 def test_time_preference_ranges_from_toml() -> None:

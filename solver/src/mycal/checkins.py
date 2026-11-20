@@ -222,6 +222,7 @@ def catch_up_item(
         estimate_min=estimate,
         deadline=catch_up_deadline(conn, settings, block, item, moment),
         max_chunk_min=item.max_chunk_min,
+        keep_length=item.keep_length,
         checkable=True,
         on_miss=OnMiss.RESCHEDULE,
         catch_up_of=block.id,
@@ -237,11 +238,15 @@ def catch_up_deadline(
 def catch_up_due(
     conn: sqlite3.Connection, settings: SolverSettings, block: Block, item: Item, moment: datetime
 ) -> tuple[datetime, str]:
-    """A catch-up's deadline and why, for the page: "next session", "<item> is due" or "a week from now".
+    """A catch-up's deadline and why, for the page: "<item> is due", "next session" or "a week from now".
 
-    Before the series' next occurrence, else before the earliest item that depends on it, else a week on.
-    A choice less than MIN_CATCH_UP_LEAD away leaves too little room, so the next one is used.
+    By the missed item's own deadline while it is still ahead (homework is caught up before it is
+    due, however close that is). Else before the series' next occurrence, else before the earliest
+    item that depends on it, else a week on. Of those, a choice less than MIN_CATCH_UP_LEAD away
+    leaves too little room, so the next one is used.
     """
+    if item.deadline is not None and item.deadline > moment:
+        return item.deadline, f"{item.title} is due"
     choices: list[tuple[datetime | None, str]] = [(_next_occurrence_start(conn, settings, item), "next session")]
     dependents = [i for i in store.list_items(conn) if item.id in i.depends_on and i.deadline is not None]
     if dependents:

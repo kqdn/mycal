@@ -226,6 +226,19 @@ def test_a_catch_up_is_due_before_the_series_next_occurrence(client: TestClient,
     assert catch_up.deadline == local(18, 10)  # Wednesday's lecture
 
 
+def test_a_catch_up_for_work_with_a_deadline_is_due_by_that_deadline(client: TestClient, clock: Clock) -> None:
+    work = essay(OnMiss.CATCH_UP)  # due Fri 5pm
+    first = blocks_of(client, work)[0]
+    clock.moment = datetime.fromisoformat(first["end"])
+
+    shown = preview(client, first["id"], "no")
+    answered(client, first["id"], "no")
+
+    [catch_up] = [i for i in store.list_items(store.connect(store.db_path())) if i.catch_up_of is not None]
+    assert catch_up.deadline == local(20, 17)  # Friday, not a week from now
+    assert shown["due_reason"] == "Essay is due"
+
+
 def test_no_with_skip_drops_the_work(client: TestClient, clock: Clock) -> None:
     work = essay(OnMiss.SKIP)
     first = blocks_of(client, work)[0]

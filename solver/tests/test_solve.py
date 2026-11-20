@@ -49,9 +49,14 @@ def task(title: str, minutes: int | None, windows: list[Window], **fields: Any) 
 def run(items: list[Item], blocks: list[Block] = [], settings: SolverSettings = SETTINGS, **kw: Any) -> SolveResult:
     settings = replace(settings, engine=_engine)
     result = solve(items, blocks, [], kw.get("constraints", []), settings)
-    if result.feasible:
-        assert_valid(result, items, blocks, settings)
+    assert_valid(result, items, blocks, settings)
     return result
+
+
+def unplaced_of(result: SolveResult, items: list[Item]) -> dict[str, int]:
+    """Minutes that didn't fit, by item title."""
+    titles = {item.id: item.title for item in items}
+    return {titles[u.item_id]: u.minutes for u in result.unplaced}
 
 
 def placed_for(result: SolveResult, item: Item, blocks: list[Block] = []) -> list[Block]:
@@ -95,7 +100,12 @@ def assert_valid(result: SolveResult, items: list[Item], blocks: list[Block], se
             remaining = max(0, item.estimate_min - done)
             expected = -(-remaining // settings.slot_min) * settings.slot_min
             placed = sum((b.end - b.start) // timedelta(minutes=1) for b in mine if b.id not in kept_ids)
-            assert placed == expected, "placed time does not match remaining work"
+            missing = sum(u.minutes for u in result.unplaced if u.item_id == item.id)
+            # Unplaced minutes are capped at the real remaining work, so 50 left on a
+            # 15-minute grid is 60 placed or 50 unplaced.
+            assert remaining <= placed + missing <= expected, "placed and unplaced time don't add up"
+            assert placed == expected or missing > 0, "work left out but not reported"
+    assert result.feasible == (not result.unplaced)
 
 
 def test_single_item_takes_its_only_spot() -> None:
@@ -128,11 +138,12 @@ def test_dependency_places_later_item_after() -> None:
     assert run([second, first]).feasible
 
 
-def test_unmeetable_dependency_is_infeasible() -> None:
+def test_unmeetable_dependency_leaves_one_item_out() -> None:
     first = task("Outline", 60, [window(16, 9, 11)])
     second = task("Draft", 60, [window(16, 9, 10)], depends_on=[first.id])
     result = run([first, second])
-    assert (result.feasible, result.blocks, result.status) == (False, [], "INFEASIBLE")
+    # Both can't fit in order: an hour of the two is left out, either one or split between them.
+    assert (result.feasible, sum(unplaced_of(result, [first, second]).values())) == (False, 60)
 
 
 def test_deadline_cuts_a_window_short() -> None:
@@ -159,9 +170,10 @@ def test_one_block_per_day_spreads_sessions() -> None:
     assert (blocks[1].start, blocks[1].end) == (at(17, 9), at(17, 10))
 
 
-def test_one_block_per_day_can_make_a_week_infeasible() -> None:
+def test_one_block_per_day_can_leave_a_session_out() -> None:
     gym = task("Gym", 120, [window(16, 9, 12)], max_chunk_min=60, one_block_per_day=True)
-    assert not run([gym]).feasible
+    result = run([gym])
+    assert (len(placed_for(result, gym)), unplaced_of(result, [gym])) == (1, {"Gym": 60})
 
 
 def test_without_the_flag_blocks_may_share_a_day() -> None:
@@ -172,13 +184,97 @@ def test_without_the_flag_blocks_may_share_a_day() -> None:
 def test_same_local_day_even_when_utc_dates_differ() -> None:
     # 3pm PST is 23:00 UTC Monday; 6pm PST is 02:00 UTC Tuesday. Both are Monday locally.
     gym = task("Gym", 120, [window(16, 15, 16), window(16, 18, 19)], max_chunk_min=60, one_block_per_day=True)
-    assert not run([gym]).feasible
+    assert unplaced_of(run([gym]), [gym]) == {"Gym": 60}
 
 
-def test_not_enough_time_is_infeasible() -> None:
+def test_not_enough_time_places_what_fits() -> None:
     item = task("Essay", 180, [window(16, 9, 11)])
     result = run([item])
+    [block] = result.blocks  # shortened from the end
+    assert (block.start, block.end) == (at(16, 9), at(16, 11))
+    assert (result.feasible, unplaced_of(result, [item])) == (False, {"Essay": 60})
+
+
+def test_without_partial_nothing_is_placed() -> None:
+    item = task("Essay", 180, [window(16, 9, 11)])
+    result = solve([item], [], [], [], replace(SETTINGS, engine=_engine), partial=False)
     assert (result.feasible, result.blocks, result.status) == (False, [], "INFEASIBLE")
+    assert unplaced_of(result, [item]) == {"Essay": 180}
+
+
+def test_a_full_day_leaves_out_the_least_work() -> None:
+    # 4h of work in a 3h morning: 1h is left out, wherever it comes from.
+    a = task("Read", 120, [window(16, 9, 12)], max_chunk_min=60)
+    b = task("Write", 120, [window(16, 9, 12)])
+    result = run([a, b])
+    assert sum(unplaced_of(result, [a, b]).values()) == 60
+
+
+def test_partial_plan_keeps_out_of_kept_blocks_and_deadlines() -> None:
+    lecture = task("Lecture", 60, [window(16, 9.5, 10.5)])
+    locked = Block(lecture.id, at(16, 9, 30), at(16, 10, 30), locked=True)
+    pset = task("Problem set", 180, [window(16, 9, 13)], deadline=at(16, 12))
+    result = run([lecture, pset], [locked])
+    [block] = placed_for(result, pset)
+    assert (block.start, block.end) == (at(16, 10, 30), at(16, 12))  # the longer gap, before the deadline
+    assert unplaced_of(result, [lecture, pset]) == {"Problem set": 90}
+
+
+def test_new_work_does_not_push_out_a_current_block() -> None:
+    # Read already sits at 9 to 10. Essay needs the whole morning, so 1h is left out
+    # either way; it comes out of Essay, not Read.
+    read = task("Read", 60, [window(16, 9, 11)])
+    essay = task("Essay", 120, [window(16, 9, 11)])
+    current = Block(read.id, at(16, 9), at(16, 10))
+    result = run([read, essay], [current])
+    [block] = placed_for(result, read)
+    assert (block.id, block.start, block.end) == (current.id, at(16, 9), at(16, 10))
+    assert unplaced_of(result, [read, essay]) == {"Essay": 60}
+
+
+def test_partial_plan_respects_a_daily_limit() -> None:
+    essay = task("Essay", 120, [window(16, 9, 12)])
+    result = run([essay], constraints=[daily_limit(60)])
+    assert (minutes_on(result, 16), unplaced_of(result, [essay])) == (60, {"Essay": 60})
+
+
+def test_a_session_that_must_keep_its_length_is_left_out_whole() -> None:
+    # 1h 30m of room: the 2h session is left out, not cut to 1h 30m.
+    gym = task("Gym", 120, [window(16, 9, 10.5)], keep_length=True)
+    result = run([gym])
+    assert (placed_for(result, gym), unplaced_of(result, [gym])) == ([], {"Gym": 120})
+
+
+def test_only_the_sessions_that_fit_whole_are_placed() -> None:
+    # Two 1h sessions in 1h 30m: one fits whole, the other is left out instead of shrinking to 30m.
+    gym = task("Gym", 120, [window(16, 9, 10.5)], max_chunk_min=60, keep_length=True)
+    result = run([gym])
+    [block] = placed_for(result, gym)
+    assert block.end - block.start == timedelta(hours=1)
+    assert unplaced_of(result, [gym]) == {"Gym": 60}
+
+
+def test_other_work_is_shortened_instead_of_a_keep_length_session() -> None:
+    # 3h of work in 2h 30m: Read gives up its half hour, Gym stays whole.
+    gym = task("Gym", 60, [window(16, 9, 11.5)], keep_length=True)
+    read = task("Read", 120, [window(16, 9, 11.5)])
+    result = run([gym, read])
+    [block] = placed_for(result, gym)
+    assert block.end - block.start == timedelta(hours=1)
+    assert unplaced_of(result, [gym, read]) == {"Read": 30}
+
+
+def test_unplaced_minutes_are_capped_at_the_real_work_left() -> None:
+    # 50 minutes is 4 slots, but nothing fits, so 50 minutes (not 60) didn't fit.
+    item = task("Call", 50, [window(16, 9, 9.25)], deadline=at(16, 9))
+    assert unplaced_of(run([item]), [item]) == {"Call": 50}
+
+
+def test_a_week_that_fits_is_not_partial() -> None:
+    item = task("Essay", 120, [window(16, 9, 11)])
+    result = run([item])
+    assert (result.feasible, result.unplaced) == (True, [])
+    assert result.status in ("FOUND", "OPTIMAL")
 
 
 def test_done_work_is_kept_and_reduces_what_is_placed() -> None:
@@ -319,7 +415,7 @@ def test_daily_limit_only_applies_on_its_weekdays() -> None:
     assert run([pset], constraints=[daily_limit(60, [SAT])]).feasible
 
 
-def test_daily_limit_too_tight_is_infeasible() -> None:
+def test_daily_limit_too_tight_is_not_feasible() -> None:
     essay = task("Essay", 120, [window(16, 9, 12)])
     assert not run([essay], constraints=[daily_limit(60)]).feasible
 

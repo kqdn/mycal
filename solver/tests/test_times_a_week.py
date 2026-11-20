@@ -57,7 +57,7 @@ def test_the_week_is_planned_instead_of_failing() -> None:
     store.put_work_frame(conn, DAYTIME)
     store.put_item(conn, item)
 
-    assert plan_weeks(conn, store.load_settings(conn), W1, W1, local(17, 12)) == {W1: True}
+    plan_weeks(conn, store.load_settings(conn), W1, W1, local(17, 12))
 
     days = sorted(b.start.astimezone(ZONE).date() for b in store.list_blocks(conn))
     assert days == [date(2026, 11, 18), date(2026, 11, 20)]

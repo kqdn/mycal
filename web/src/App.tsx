@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  acceptProposal,
   clearWeekCache,
   deleteItem,
   deleteSeries,
+  discardProposal,
   getItem,
   getSeries,
   listCheckIns,
@@ -18,12 +20,15 @@ import { weekAfterDelete, whenLine } from './itemDetails'
 import { formAt, formFrom, type ItemForm } from './itemForm'
 import { ItemPopover, type PopoverTarget, type Scope } from './ItemPopover'
 import { NewItemDialog } from './NewItemDialog'
+import { changedBlocks, otherSpot, proposalChanges, shownWeek } from './proposal'
+import { ChangesCard, CompareControls } from './ProposalBanner'
 import { formFromSeries } from './repeatForm'
 import { RulesPage } from './RulesPage'
 import { ShortcutsHelp } from './ShortcutsHelp'
+import { scrollMinuteFor } from './layout'
 import { addDays, estimateLabel, mondayOf, today, weekTitle, type DateString } from './time'
 import { HELP_ID, pointedBlock, toggleHelp, useShortcuts } from './useShortcuts'
-import { WeekGrid } from './WeekGrid'
+import { WeekGrid, type Compare } from './WeekGrid'
 
 type Problem = { title: string; body: string }
 type Result = { status: 'error'; problem: Problem } | { status: 'ready'; week: Week }
@@ -74,6 +79,15 @@ export default function App() {
   // Check-ins (Milestone 7): the pending list, refreshed every minute, and the one being answered.
   const [checkIns, setCheckIns] = useState<CheckIn[]>([])
   const [checkingIn, setCheckingIn] = useState<CheckInTarget | null>(null)
+  // The compare view (Milestone 8). Each is kept with the proposal (by its summary) it was for, so a new
+  // proposal starts on its own version of the week with no old error: Current plan picked, Accept or
+  // Discard failing, and a notice dismissed (by the week response that carried it).
+  const [currentFor, setCurrentFor] = useState<string | null>(null)
+  const [answering, setAnswering] = useState<'accept' | 'discard' | null>(null)
+  const [proposalError, setProposalError] = useState<{ for: string; message: string } | null>(null)
+  const [dismissedNotice, setDismissedNotice] = useState<Week | null>(null)
+  const [selectedChange, setSelectedChange] = useState<{ for: string; blockId: string } | null>(null)
+  const [reveal, setReveal] = useState(0) // bumped by a change tile, so the grid scrolls to it
   const lastPending = useRef<string | null>(null)
   const refreshCheckIns = useCallback(() => {
     listCheckIns()
@@ -111,6 +125,39 @@ export default function App() {
     : result && result.for === weekStart
       ? result
       : { status: 'loading' }
+  const proposal = state.status === 'ready' ? (state.week.proposal ?? null) : null
+  const waiting = proposal !== null
+  const showCurrent = proposal !== null && currentFor === proposal.summary
+  // What the grid and Unscheduled show: the proposal's version of the week unless Current plan is picked.
+  const shown = state.status === 'ready' ? shownWeek(state.week, !showCurrent) : null
+  // The grid scrolls to what the proposal changes, the same spot in both plans.
+  const focusMinute =
+    state.status === 'ready' && proposal
+      ? scrollMinuteFor(changedBlocks(state.week), state.week.week_start, state.week.timezone)
+      : null
+  const focus = proposal && focusMinute !== null ? { key: proposal.summary, minute: focusMinute } : null
+  // What the proposal changes in this week, the selected change (a tile or a changed block), and what the grid draws for them.
+  const changes = state.status === 'ready' && proposal ? proposalChanges(state.week.blocks, proposal.blocks, state.week.timezone) : []
+  const selected = proposal && selectedChange?.for === proposal.summary ? selectedChange.blockId : null
+  const selectChange = (blockId: string) =>
+    proposal && setSelectedChange(selected === blockId ? null : { for: proposal.summary, blockId })
+  const selectedRow = changes.find((c) => c.blockId === selected) ?? null
+  const compare: Compare | null = proposal
+    ? {
+        tags: new Map(
+          changes.flatMap((c) => {
+            const text = showCurrent ? c.tagCurrent : c.tagProposal
+            return text === null ? [] : [[c.blockId, { text, arrow: c.arrow }] as const]
+          }),
+        ),
+        selected,
+        other: selectedRow ? otherSpot(selectedRow, !showCurrent) : null,
+        onSelect: selectChange,
+        reveal,
+      }
+    : null
+  // Something the server says once, like "the proposed change was dropped", until dismissed.
+  const notice = state.status === 'ready' && state.week !== dismissedNotice ? (state.week.notice ?? null) : null
 
   useEffect(() => {
     const onPop = () => {
@@ -238,6 +285,26 @@ export default function App() {
     refreshCheckIns()
   }
 
+  async function answerProposal(accept: boolean) {
+    const summary = proposal?.summary ?? ''
+    setAnswering(accept ? 'accept' : 'discard')
+    setProposalError(null)
+    try {
+      showSaved(accept ? await acceptProposal(weekStart) : await discardProposal(weekStart))
+    } catch (error) {
+      if (error instanceof WeekError && error.kind === 'missing') {
+        // Nothing waits any more (say, a check-in saved on its own): show the week as it is.
+        clearWeekCache()
+        setResult(undefined)
+        setReload((n) => n + 1)
+        return
+      }
+      setProposalError({ for: summary, message: error instanceof WeekError ? error.message : "Can't reach the planner." })
+    } finally {
+      setAnswering(null)
+    }
+  }
+
   function go(days: number) {
     goTo(addDays(weekStart, days))
   }
@@ -259,7 +326,7 @@ export default function App() {
         toggleHelp()
         return true
       case 'newItem':
-        if (state.status !== 'ready') return false
+        if (state.status !== 'ready' || waiting) return false
         setAdding(true)
         return true
       case 'moveWeek':
@@ -268,9 +335,14 @@ export default function App() {
       case 'thisWeek':
         goTo(mondayOf(today()))
         return true
+      case 'switchPlan':
+        // Same as clicking the plan toggle; nothing to switch without a proposal.
+        if (!proposal) return false
+        setCurrentFor(showCurrent ? null : proposal.summary)
+        return true
       case 'edit':
       case 'delete':
-        return actOnPointedBlock(action.type)
+        return !waiting && actOnPointedBlock(action.type)
       default:
         return false
     }
@@ -343,7 +415,8 @@ export default function App() {
               type="button"
               className="primary-button"
               onClick={() => setAdding(true)}
-              disabled={state.status !== 'ready'}
+              disabled={state.status !== 'ready' || waiting}
+              title={waiting ? 'Accept or Discard the proposed change first' : undefined}
             >
               New item
             </button>
@@ -352,7 +425,7 @@ export default function App() {
       </nav>
       <ShortcutsHelp />
 
-      {view === 'rules' && <RulesPage week={weekStart} />}
+      {view === 'rules' && <RulesPage week={weekStart} onChanged={() => show('week')} />}
 
       {view === 'week' && adding && state.status === 'ready' && (
         <NewItemDialog
@@ -403,9 +476,20 @@ export default function App() {
         <main className="content">
           <div className="title-row">
             <div className="title-block">
-              <span className="eyebrow">Your week</span>
+              <span className="eyebrow">
+                {proposal ? (showCurrent ? 'Your current plan' : `Previewing: ${proposal.summary}`) : 'Your week'}
+              </span>
               <h1 className="page-title">{weekTitle(weekStart)}</h1>
             </div>
+            {proposal && (
+              <CompareControls
+                showProposal={!showCurrent}
+                answering={answering}
+                onShow={(showProposal) => setCurrentFor(showProposal ? null : proposal.summary)}
+                onAccept={() => answerProposal(true)}
+                onDiscard={() => answerProposal(false)}
+              />
+            )}
             <div className="week-nav">
               <button type="button" className="icon-button" onClick={() => go(-7)} aria-label="Previous week">
                 <Chevron direction="left" />
@@ -417,6 +501,9 @@ export default function App() {
           </div>
 
           {pageProblem && <Banner {...pageProblem} onDismiss={() => setPageProblem(null)} />}
+          {notice && state.status === 'ready' && (
+            <Banner title="Proposed change dropped" body={notice} onDismiss={() => setDismissedNotice(state.week)} />
+          )}
           {state.status === 'ready' && checkIns.length > 0 && (
             <section className="banner check-in-banner" aria-labelledby="check-in-banner-title">
               <p className="banner-title" id="check-in-banner-title">
@@ -432,7 +519,13 @@ export default function App() {
                         {checkIn.status !== 'planned' && ' · Waiting for your choice'}
                       </span>
                     </div>
-                    <button type="button" className="secondary-button" onClick={() => setCheckingIn(checkIn)}>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={waiting}
+                      title={waiting ? 'Accept or Discard the proposed change first' : undefined}
+                      onClick={() => setCheckingIn(checkIn)}
+                    >
                       Check in
                     </button>
                   </li>
@@ -442,30 +535,44 @@ export default function App() {
           )}
           {state.status === 'loading' && <p className="loading">Loading...</p>}
           {state.status === 'error' && <Banner {...state.problem} />}
-          {state.status === 'ready' && !state.week.feasible && (
-            <Banner
-              title="This week can't be planned"
-              body="Some item's sessions don't fit its days, times, deadline or rules. Open it and give it more room or a smaller estimate."
+          {state.status === 'ready' && proposal && (
+            <ChangesCard
+              proposal={proposal}
+              changes={changes}
+              showProposal={!showCurrent}
+              selected={selected}
+              error={proposalError?.for === proposal.summary ? proposalError.message : null}
+              onSelect={(blockId) => {
+                selectChange(blockId)
+                setReveal((n) => n + 1)
+              }}
+              onShowWeek={goTo}
             />
           )}
-          {state.status === 'ready' && state.week.feasible && (
+          {state.status === 'ready' && (
             <>
               <WeekGrid
-                week={state.week}
+                week={shown ?? state.week}
+                focus={focus}
+                compare={compare}
                 onOpen={(block, opener) => setOpen({ kind: 'block', itemId: block.item_id, title: block.title, block, opener })}
-                onAdd={(date, minutes, lengthMin) => {
-                  setOpen(null)
-                  setAddStart(formAt(date, minutes, lengthMin, weekStart, today()))
-                  setAdding(true)
-                }}
+                onAdd={
+                  waiting
+                    ? undefined
+                    : (date, minutes, lengthMin) => {
+                        setOpen(null)
+                        setAddStart(formAt(date, minutes, lengthMin, weekStart, today()))
+                        setAdding(true)
+                      }
+                }
               />
-              {state.week.unscheduled.length > 0 && (
+              {(shown ?? state.week).unscheduled.length > 0 && (
                 <section aria-labelledby="unscheduled-label">
                   <h2 id="unscheduled-label" className="section-label">
                     Unscheduled
                   </h2>
                   <ul className="list-card">
-                    {state.week.unscheduled.map((item) => (
+                    {(shown ?? state.week).unscheduled.map((item) => (
                       <li key={item.id} className="list-row">
                         <div className="row-text">
                           <span className="row-title">{item.title}</span>
@@ -505,6 +612,7 @@ export default function App() {
           timezone={state.week.timezone}
           repeat={state.week.series.find((r) => r.id === seriesOf(open)) ?? null}
           deleting={pending.has(open.itemId)}
+          waiting={waiting}
           error={deleteErrors[open.itemId] ?? null}
           opening={opening === open.itemId}
           openError={openError?.itemId === open.itemId ? openError.message : null}

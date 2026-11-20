@@ -25,6 +25,7 @@ export interface SeriesRequest extends ItemRequest {
   repeat_weekdays: number[]
   start_date: DateString
   end_date?: DateString
+  skipped_dates?: DateString[] // editing: the skipped dates to keep; one left out comes back
 }
 
 /** A days item ("any of these days", "every one of these days") repeats as a whole week. */
@@ -118,7 +119,13 @@ export function toSeriesRequest(form: ItemForm, weekStart: DateString): SeriesRe
     start_date: form.startDate,
   }
   if (form.endDate) request.end_date = form.endDate
+  if (form.skippedDates !== null) request.skipped_dates = form.skippedDates
   return request
+}
+
+/** Changes for "Bring back" on a skipped date: it leaves the list, and saving creates that date again. */
+export function bringBack(form: ItemForm, date: DateString): Partial<ItemForm> {
+  return { skippedDates: (form.skippedDates ?? []).filter((d) => d !== date) }
 }
 
 /** "Tue", "Tue and Fri", "Mon, Wed and Fri". */
@@ -204,6 +211,7 @@ export function formFromSeries(series: SeriesFormOut, today: DateString): ItemFo
     estimate: length(series.estimate_min),
     longestSession: length(series.max_chunk_min),
     oneSessionPerDay: series.one_block_per_day,
+    keepLength: series.keep_length,
     eachDay: length(series.session_min),
     checkIn: series.checkable,
     onMiss: series.on_miss,
@@ -212,5 +220,6 @@ export function formFromSeries(series: SeriesFormOut, today: DateString): ItemFo
     repeatDays: series.repeat_weekdays,
     startDate: series.start_date,
     endDate: series.end_date ?? '',
+    skippedDates: series.skipped_dates ?? [],
   }
 }

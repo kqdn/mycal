@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { Block, Week } from './api'
-import { confirmLine, keepLine, kindLine, popoverPosition, unscheduledLine, weekAfterDelete, whenLine } from './itemDetails'
+import {
+  confirmLine,
+  dueLine,
+  keepLine,
+  kindLine,
+  popoverPosition,
+  skipLine,
+  unscheduledLine,
+  weekAfterDelete,
+  whenLine,
+} from './itemDetails'
 
 const LA = 'America/Los_Angeles'
 
@@ -72,6 +82,22 @@ describe('kindLine', () => {
 
   it('marks a block that already started', () => {
     expect(kindLine(block({}), '2026-11-17T22:10:00Z')).toBe('Placed by the solver · Already started')
+  })
+})
+
+describe('dueLine and skipLine', () => {
+  it('gives a deadline item its local due time', () => {
+    expect(dueLine(block({ due: '2026-11-28T01:59:00Z' }), LA)).toBe('Due Fri, Nov 27, 5:59pm')
+  })
+
+  it('says nothing for an item without a deadline', () => {
+    expect(dueLine(block({}), LA)).toBe('')
+    expect(dueLine(block({ due: null }), LA)).toBe('')
+  })
+
+  it('names the date an occurrence skips', () => {
+    expect(skipLine('2026-11-27')).toBe('This skips only Fri, Nov 27')
+    expect(skipLine(null)).toBe('This skips only this date')
   })
 })
 

@@ -3,7 +3,7 @@
 // this. See web/DESIGN.md, "Item details popover".
 
 import type { Block, Week } from './api'
-import { dayName, estimateLabel, range12, toLocal, type DateString } from './time'
+import { dayName, estimateLabel, range12, time12, toLocal, type DateString } from './time'
 
 export interface UnscheduledItem {
   title: string
@@ -39,6 +39,18 @@ export function kindLine(block: Block, now: string): string {
   else if (block.sessions > 1) parts.push(`${estimateLabel(block.placed_min)} in all`)
   if (Date.parse(block.start) <= Date.parse(now)) parts.push('Already started')
   return parts.join(' · ')
+}
+
+/** "Due Fri, Nov 27, 5:59pm" for a "before a deadline" item, or '' for any other block. */
+export function dueLine(block: Pick<Block, 'due'>, timezone: string): string {
+  if (!block.due) return ''
+  const due = toLocal(block.due, timezone)
+  return `Due ${dayName(due.date)}, ${time12(due.minutes)}`
+}
+
+/** What "This" deletes for an occurrence: "This skips only Fri, Nov 27", or "this date" when its date is unknown. */
+export function skipLine(occurrenceDate: DateString | null | undefined): string {
+  return `This skips only ${occurrenceDate ? dayName(occurrenceDate) : 'this date'}`
 }
 
 /** The kind line for an Unscheduled row: its reason, or why it has no times, then its estimate. */

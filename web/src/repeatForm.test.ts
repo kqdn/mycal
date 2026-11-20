@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RepeatOut, SeriesFormOut } from './api'
 import { emptyForm, type ItemForm } from './itemForm'
 import {
+  bringBack,
   chooseRepeat,
   fitRepeat,
   formFromSeries,
@@ -101,6 +102,7 @@ describe('toSeriesRequest', () => {
       start_time: '08:00',
       end_time: '09:00',
       one_block_per_day: false,
+      keep_length: false,
       checkable: false,
       on_miss: 'skip',
       freq: 'weekly',
@@ -171,6 +173,7 @@ describe('formFromSeries', () => {
       estimate_min: null,
       max_chunk_min: null,
       one_block_per_day: false,
+      keep_length: false,
       session_min: null,
       checkable: false, // the defaults for an exact-time item, so it round-trips
       on_miss: 'skip',
@@ -192,6 +195,15 @@ describe('formFromSeries', () => {
       startDate: TODAY,
       endDate: '',
     })
-    expect(toSeriesRequest(filled, WEEK)).toEqual(toSeriesRequest(OFFICE_HOURS, WEEK))
+    // Editing sends the skipped dates to keep (none here); adding sends none at all.
+    expect(toSeriesRequest(filled, WEEK)).toEqual({ ...toSeriesRequest(OFFICE_HOURS, WEEK), skipped_dates: [] })
+    expect(toSeriesRequest(OFFICE_HOURS, WEEK)).not.toHaveProperty('skipped_dates')
+  })
+
+  it('brings a skipped date back by leaving it out of the request', () => {
+    const form = { ...OFFICE_HOURS, skippedDates: ['2026-11-27', '2026-12-04'] }
+    const changed = { ...form, ...bringBack(form, '2026-11-27') }
+    expect(changed.skippedDates).toEqual(['2026-12-04'])
+    expect(toSeriesRequest(changed, WEEK).skipped_dates).toEqual(['2026-12-04'])
   })
 })

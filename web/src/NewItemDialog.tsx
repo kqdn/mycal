@@ -12,6 +12,7 @@ import {
   PRESETS,
   showsEachDay,
   showsEstimate,
+  showsKeepLength,
   showsOneSessionPerDay,
   summary,
   toRequest,
@@ -26,6 +27,7 @@ import {
 } from './itemForm'
 import { fieldProps } from './fieldProps'
 import {
+  bringBack,
   chooseRepeat,
   fitRepeat,
   perWeek,
@@ -36,7 +38,7 @@ import {
   validateWithRepeat,
 } from './repeatForm'
 import { Check, FieldError } from './fields'
-import { today, type DateString } from './time'
+import { dayName, today, type DateString } from './time'
 
 interface Props {
   weekStart: DateString
@@ -325,6 +327,29 @@ export function NewItemDialog({ weekStart, timezone, frames, slotMin, editing, s
                   aria-labelledby="one-per-day-label"
                   className="switch"
                   onClick={() => update({ oneSessionPerDay: !form.oneSessionPerDay })}
+                >
+                  <span className="switch-track">
+                    <span className="switch-knob" />
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {showsKeepLength(form) && (
+              <div className="switch-card">
+                <div className="switch-text">
+                  <span className="row-title" id="keep-length-label">
+                    Don't shorten sessions
+                  </span>
+                  <span className="row-sub">If a session doesn't fit, it's left out whole instead of cut short.</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.keepLength}
+                  aria-labelledby="keep-length-label"
+                  className="switch"
+                  onClick={() => update({ keepLength: !form.keepLength })}
                 >
                   <span className="switch-track">
                     <span className="switch-knob" />
@@ -649,6 +674,22 @@ function RepeatField({ form, editingSeries, update, touch, shown }: RepeatProps)
             </div>
           </div>
           {perWeek(form.preset) && <p className="hint">Repeats as a whole week, starting on the Monday of its start date.</p>}
+          {form.skippedDates !== null && form.skippedDates.length > 0 && (
+            <div className="field">
+              <p className="field-label">Skipped</p>
+              <ul className="skipped-list">
+                {form.skippedDates.map((date) => (
+                  <li key={date} className="skipped-row">
+                    <span>{dayName(date)}</span>
+                    <button type="button" className="secondary-button" onClick={() => update(bringBack(form, date))}>
+                      Bring back
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="hint">Deleting one date skips it. A date you bring back comes back when you save.</p>
+            </div>
+          )}
         </div>
       )}
     </div>

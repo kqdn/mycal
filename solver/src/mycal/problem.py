@@ -42,6 +42,10 @@ class SearchResult:
 
     `status` is CP-SAT's status name (OPTIMAL, FEASIBLE when stopped at the time
     limit, INFEASIBLE), or FOUND / INFEASIBLE for backtracking.
+
+    A partial search always returns blocks, but only for the chunks it could
+    place, some of them shorter than their chunk. Backtracking's status for
+    it is PARTIAL.
     """
 
     blocks: list[Block] | None
@@ -122,15 +126,23 @@ class Problem:
         return self.kept + self.fixed
 
 
-def fixed_clash(problem: Problem) -> bool:
-    """True if a fixed event's real times overlap another fixed event or a kept block.
+def pinned_overlaps(problem: Problem) -> list[tuple[UUID, UUID]]:
+    """Block id pairs where a fixed event's real times overlap another fixed event or a kept block.
 
-    Real times, not slots: 9:00 to 9:10 and 9:10 to 10:00 share a slot but don't clash.
+    These are allowed (double booking, like two classes at the same hour) and
+    only reported. Real times, not slots: 9:00 to 9:10 and 9:10 to 10:00 share
+    a slot but don't overlap. Pairs come in start order, earlier block first.
     """
-    fixed = sorted(problem.fixed, key=lambda b: b.start)
-    if any(a.end > b.start for a, b in zip(fixed, fixed[1:])):
-        return True
-    return any(f.start < k.end and k.start < f.end for f in fixed for k in problem.kept)
+    fixed_ids = {b.id for b in problem.fixed}
+    pinned = sorted(problem.pinned, key=lambda b: (b.start, b.end, str(b.id)))
+    pairs: list[tuple[UUID, UUID]] = []
+    for i, a in enumerate(pinned):
+        for b in pinned[i + 1 :]:
+            if b.start >= a.end:
+                break
+            if a.id in fixed_ids or b.id in fixed_ids:
+                pairs.append((a.id, b.id))
+    return pairs
 
 
 def day_limit_min(limits: list[DailyLimit], day: date) -> int | None:
@@ -318,13 +330,18 @@ def _parse_daily_limit(params: dict[str, Any]) -> DailyLimit:
     return DailyLimit(max_min, tuple(sorted(set(weekdays))))
 
 
+def work_left_min(item: Item, kept: list[Block]) -> int:
+    """Minutes of an item's estimate that its kept blocks don't already cover (may be zero or less)."""
+    assert item.estimate_min is not None  # items with no estimate are fixed events
+    return item.estimate_min - sum(covered_min(b) for b in kept if b.item_id == item.id)
+
+
 def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int) -> list[Chunk]:
     """Chunks for one item. Old unlocked blocks pass their id and start on to a chunk (see _match_old_blocks)."""
     if not item.windows:
         return []  # not scheduled yet; stays in the task list
 
-    assert item.estimate_min is not None  # items with no estimate are fixed events
-    remaining = item.estimate_min - sum(covered_min(b) for b in kept)
+    remaining = work_left_min(item, kept)
     if remaining <= 0:
         return []
     total_slots = -(-remaining // slot_min)
@@ -337,7 +354,7 @@ def _item_chunks(item: Item, kept: list[Block], old: list[Block], slot_min: int)
                 item_id=item.id,
                 block_id=previous.id if previous else uuid4(),
                 size=size,
-                candidates=_candidates(item, size, slot_min),
+                candidates=start_candidates(item, size, slot_min),
                 previous_start=ceil_slot(previous.start, slot_min) if previous else None,
             )
         )
@@ -392,7 +409,29 @@ def split_slots(total: int, max_chunk_min: int | None, slot_min: int) -> list[in
     return [base + 1] * extra + [base] * (count - extra)
 
 
-def _candidates(item: Item, size: int, slot_min: int) -> tuple[int, ...]:
+def shrink_caps(item: Item, size: int, slot_min: int) -> dict[int, int]:
+    """For partial placement: each start slot inside a window, with the most slots (up to `size`) that fit from there.
+
+    A block keeps its start and shrinks from the end, so it may hold fewer
+    slots than its chunk when its window closes or the deadline comes first.
+    Kept blocks are not taken into account here; engines trim for them.
+    An item with `keep_length` only gets starts where the whole chunk fits.
+    """
+    latest_end = floor_slot(item.deadline, slot_min) if item.deadline else None
+    caps: dict[int, int] = {}
+    for window in item.windows:
+        first = ceil_slot(window.start, slot_min)
+        end = floor_slot(window.end, slot_min)
+        if latest_end is not None:
+            end = min(end, latest_end)
+        for start in range(first, end):
+            caps[start] = max(caps.get(start, 0), min(size, end - start))
+    if item.keep_length:
+        caps = {start: cap for start, cap in caps.items() if cap == size}
+    return dict(sorted(caps.items()))
+
+
+def start_candidates(item: Item, size: int, slot_min: int) -> tuple[int, ...]:
     """Start slots where a block of `size` slots fits in a window and ends by the deadline.
 
     Window edges that are not on the slot grid are rounded inward.

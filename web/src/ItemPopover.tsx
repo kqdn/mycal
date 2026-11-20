@@ -1,7 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Block, RepeatOut } from './api'
 import { canCheckIn, checkInLine } from './checkIn'
-import { confirmLine, keepLine, kindLine, popoverPosition, unscheduledLine, whenLine, type UnscheduledItem } from './itemDetails'
+import {
+  confirmLine,
+  dueLine,
+  keepLine,
+  kindLine,
+  popoverPosition,
+  skipLine,
+  unscheduledLine,
+  whenLine,
+  type UnscheduledItem,
+} from './itemDetails'
 import { repeatLine } from './repeatForm'
 import { pointedBlock, useShortcuts } from './useShortcuts'
 
@@ -23,6 +33,7 @@ interface Props {
   timezone: string
   repeat: RepeatOut | null // set when the item is an occurrence of a stored series
   deleting: boolean
+  waiting: boolean // a proposed change waits for Accept or Discard, so nothing else can change
   error: string | null
   opening: boolean // Edit is loading the item
   openError: string | null
@@ -39,7 +50,7 @@ interface Props {
  * after the popover closes. Mount it with a key per target so the confirm step
  * starts fresh.
  */
-export function ItemPopover({ target, timezone, repeat, deleting, error, opening, openError, onEdit, onDelete, onCheckIn, onClose }: Props) {
+export function ItemPopover({ target, timezone, repeat, deleting, waiting, error, opening, openError, onEdit, onDelete, onCheckIn, onClose }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const cancel = useRef<HTMLButtonElement>(null)
   // The actions row, or in its place: confirming a delete, or (for a series) picking what Edit changes.
@@ -96,7 +107,7 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
   useShortcuts('week', (action) => {
     const pointed = pointedBlock()?.dataset.blockId
     if (pointed !== undefined && pointed !== (target.kind === 'block' ? target.block.id : undefined)) return false
-    if (opening || deleting || deleted) return false
+    if (opening || deleting || deleted || waiting) return false
     if (action.type === 'edit' && editable) {
       if (repeat) setStep('pickEdit')
       else onEdit('one')
@@ -116,6 +127,9 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
       <p className="popover-kind">
         {target.kind === 'block' ? kindLine(target.block, openedAt) : unscheduledLine(target.item)}
       </p>
+      {target.kind === 'block' && dueLine(target.block, timezone) && (
+        <p className="popover-kind">{dueLine(target.block, timezone)}</p>
+      )}
 
       {repeat && <p className="popover-kind">{repeatLine(repeat)}</p>}
       {checkInText && <p className="popover-check-in">{checkInText}</p>}
@@ -127,7 +141,7 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
           {/* Check in gets its own full-width row; Edit and Delete share the row under it, half each. */}
           <div className="popover-buttons">
             {checkIn && (
-              <button type="button" className="secondary-button popover-wide" disabled={opening} onClick={() => onCheckIn(checkIn)}>
+              <button type="button" className="secondary-button popover-wide" disabled={opening || waiting} onClick={() => onCheckIn(checkIn)}>
                 {checkIn.status === 'planned' ? 'Check in' : 'Change answer'}
               </button>
             )}
@@ -135,17 +149,18 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
               <button
                 type="button"
                 className="secondary-button"
-                disabled={!editable || opening}
+                disabled={!editable || opening || waiting}
                 onClick={() => (repeat ? setStep('pickEdit') : onEdit('one'))}
               >
                 {opening ? 'Opening...' : 'Edit'}
               </button>
-              <button type="button" className="secondary-button" disabled={opening} onClick={() => setStep('confirm')}>
+              <button type="button" className="secondary-button" disabled={opening || waiting} onClick={() => setStep('confirm')}>
                 Delete item
               </button>
             </div>
           </div>
-          {!editable && <p className="hint">Change Custom items in their week file.</p>}
+          {waiting && <p className="hint">Accept or Discard the proposed change first.</p>}
+          {!editable && !waiting && <p className="hint">Change Custom items in their week file.</p>}
           {openError && <p className="field-error">Couldn't open it: {openError}</p>}
         </>
       )}
@@ -194,7 +209,8 @@ export function ItemPopover({ target, timezone, repeat, deleting, error, opening
           <div>
             <p className="confirm-question">Delete which?</p>
             <p className="confirm-detail">
-              This skips only this date{history ? ', keeping its sessions that started on your calendar' : ''}. All stops it repeating:
+              {skipLine(target.kind === 'block' ? target.block.occurrence_date : null)}
+              {history ? ', keeping its sessions that started on your calendar' : ''}. All stops it repeating:
               dates that haven't started go, and past ones stay.
             </p>
           </div>

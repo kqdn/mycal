@@ -180,12 +180,15 @@ def test_work_planned_in_another_week_counts(db: Path, client: TestClient) -> No
     assert next_week == []
 
 
-def test_a_week_that_cannot_fit_is_stored_as_infeasible(db: Path, client: TestClient, solves: list[int]) -> None:
+def test_a_week_that_cannot_hold_everything_stores_a_partial_plan(db: Path, client: TestClient, solves: list[int]) -> None:
     conn = store.connect(db)
     store.put_item(conn, Item("Too much", FlexPreset.DAY, preset_params={"day": date(2026, 11, 18)}, estimate_min=20 * 60))
     store.clear_plans(conn)
     first = get(client)
-    assert (first["feasible"], first["blocks"]) == (False, [])
+    [block] = blocks_titled(first, "Too much")
+    assert first["feasible"] is True and 0 < block["placed_min"] < 20 * 60
+    [left] = [u for u in first["unscheduled"] if u["title"] == "Too much"]
+    assert left["reason"].endswith("won't fit on Wed")
     assert get(client) == first  # stored, not solved again
     assert len(solves) == 1
 
@@ -388,10 +391,10 @@ def pacific(day: int, hour: int, month: int = 12) -> datetime:
 
 
 def break_week_3(db: Path) -> None:
-    """Two fixed events in the same hour on Tue Dec 1: week 3 can't be planned."""
+    """Two hours of work in one hour on Tue Dec 1: week 3 can't be planned."""
     conn = store.connect(db)
-    for title in ("Dentist", "Exam"):
-        store.put_item(conn, Item(title, FlexPreset.EXACT, preset_params={"start": pacific(1, 13), "end": pacific(1, 14)}))
+    params = {"day": date(2026, 12, 1), "start_time": time(13), "end_time": time(14)}
+    store.put_item(conn, Item("Exam prep", FlexPreset.DAY_RANGE, estimate_min=120, preset_params=params))
     store.clear_plans(conn)
 
 
@@ -417,22 +420,23 @@ def test_an_item_due_far_ahead_is_only_planned_in_the_weeks_up_to_its_deadline(
     assert sum(minutes(b) for b in blocks_titled(get(client, "2027-01-04"), "Thesis")) == 120
 
 
-def test_a_broken_week_is_blamed_alone_and_its_waiting_item_is_listed(db: Path, client: TestClient) -> None:
-    # Report is due Wed of the broken week, with more work than week 2 can hold.
+def test_work_that_does_not_fit_is_listed_in_its_due_week(db: Path, client: TestClient) -> None:
+    # Report is due Wed of week 3, with more work than weeks 2 and 3 can hold.
     break_week_3(db)
     conn = store.connect(db)
     store.put_item(
-        conn, Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=55 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
+        conn, Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=80 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
     )
     store.clear_plans(conn)
 
     week_2 = get(client, WEEK_2)
 
-    assert (week_2["feasible"], status(db, WEEK_2), status(db, WEEK_3)) == (True, True, False)
-    assert blocks_titled(week_2, "Report") == []
-    [waiting] = [u for u in week_2["unscheduled"] if u["title"] == "Report"]
-    assert waiting["reason"] == "Waiting on Nov 30 to Dec 6, which can't be planned."
-    assert get(client, WEEK_3)["feasible"] is False
+    assert (week_2["feasible"], status(db, WEEK_2)) == (True, True)
+    assert blocks_titled(week_2, "Report") != []  # as much as fits
+    assert all(u["title"] != "Report" for u in week_2["unscheduled"])  # listed in its due week only
+    reasons = {u["title"]: u["reason"] for u in get(client, WEEK_3)["unscheduled"]}
+    assert reasons["Report"].endswith("won't fit before Wed 5pm")
+    assert reasons["Exam prep"].endswith("won't fit on Tue")  # Report may take its hour: the same total is left out
 
 
 def test_an_item_due_before_the_broken_week_is_added(db: Path, client: TestClient) -> None:
@@ -450,11 +454,13 @@ def test_an_item_due_in_the_broken_week_goes_before_it(db: Path, client: TestCli
     assert datetime.fromisoformat(memo["end"]) <= pacific(30, 0, month=11)  # in week 2
 
 
-def test_an_item_that_can_only_go_in_the_broken_week_is_refused(db: Path, client: TestClient) -> None:
+def test_an_item_still_fits_in_a_week_where_other_work_does_not(db: Path, client: TestClient) -> None:
     break_week_3(db)
-    detail = refused(client, week_start=WEEK_3, title="Errand", preset="day", day="2026-12-01", estimate_min=30)
-    assert detail.startswith("Nothing was added: the week of Nov 30 to Dec 6 already can't be planned.")
-    assert all(i.title != "Errand" for i in store.list_items(store.connect(db)))
+    response = client.post(
+        "/api/items", json={"week_start": WEEK_3, "title": "Errand", "preset": "day", "day": "2026-12-01", "estimate_min": 30}
+    )
+    assert response.status_code == 201, response.text
+    assert len(blocks_titled(response.json(), "Errand")) == 1
 
 
 def test_work_deferred_by_the_span_cap_is_not_listed_as_waiting(db: Path, client: TestClient) -> None:
@@ -523,17 +529,16 @@ def test_sessions_are_counted_across_weeks(db: Path, client: TestClient) -> None
     assert (second["placed_min"], second["estimate_min"]) == (120, 120)
 
 
-def test_waiting_work_shows_less_placed_than_estimated(db: Path, client: TestClient) -> None:
-    # Work due in a broken week, after an hour of it was placed by hand in week 2.
-    break_week_3(db)
+def test_work_that_does_not_fit_shows_less_placed_than_estimated(db: Path, client: TestClient) -> None:
+    # More work than fits before the deadline, with an hour of it placed by hand in week 2.
     conn = store.connect(db)
-    report = Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=55 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
+    report = Item("Report", FlexPreset.BEFORE_DEADLINE, estimate_min=80 * 60, max_chunk_min=9 * 60, deadline=pacific(2, 17))
     store.put_item(conn, report)
     store.put_blocks(conn, [Block(report.id, pacific(24, 9, month=11), pacific(24, 10, month=11), locked=True)])
     store.clear_plans(conn)
 
-    [block] = blocks_titled(get(client, WEEK_2), "Report")
-    assert (block["sessions"], block["placed_min"], block["estimate_min"]) == (1, 60, 55 * 60)
+    block = blocks_titled(get(client, WEEK_2), "Report")[0]
+    assert 60 <= block["placed_min"] < block["estimate_min"] == 80 * 60
 
 
 def test_an_exact_item_has_no_estimate_and_one_session(client: TestClient) -> None:
@@ -713,7 +718,7 @@ def item_blocks(db: Path, id_: UUID) -> list[tuple[UUID, datetime, datetime]]:
         {"title": "Dentist", "preset": "exact", "day": "2026-11-19", "start_time": "23:00", "end_time": "01:00"},
         {"title": "Errand", "preset": "day", "day": "2026-11-18", "estimate_min": 20},
         {"title": "Call", "preset": "day_range", "day": "2026-11-17", "start_time": "17:00", "end_time": "19:00", "estimate_min": 30},
-        {"title": "Read", "preset": "days", "weekdays": [1, 3], "estimate_min": 90, "max_chunk_min": 45, "one_block_per_day": True},
+        {"title": "Read", "preset": "days", "weekdays": [1, 3], "estimate_min": 90, "max_chunk_min": 45, "one_block_per_day": True, "keep_length": True},
         {"title": "Piano", "preset": "every_day", "weekdays": [0, 2], "start_time": "18:00", "end_time": "20:00", "session_min": 20},
         {"title": "Essay", "preset": "before_deadline", "deadline_date": "2026-11-20", "deadline_time": "17:00", "estimate_min": 60},
     ],
@@ -900,7 +905,8 @@ def test_a_frame_change_that_breaks_the_week_changes_nothing(db: Path, client: T
     id_ = frame_id(client, "Weekdays")
     response = client.put(f"/api/frames/{id_}?week={WEEK}", json=WEEKDAYS_FRAME | {"end_time": "09:30"})
     assert response.status_code == 422, response.text
-    assert response.json()["detail"].startswith("Nothing changed: the week of Nov 16 to 22 wouldn't fit.")
+    assert response.json()["detail"].startswith("Nothing changed: ")
+    assert response.json()["detail"].endswith(" wouldn't fit any more. Loosen the change, or make room first.")
     assert frames(client)[0]["end_time"] == "18:00:00"
     assert get(client)["blocks"] == before
     assert status(db, WEEK) is True
@@ -1016,7 +1022,7 @@ def test_an_avoid_rule_moves_work_out_of_its_times(client: TestClient) -> None:
 def test_a_daily_limit_that_breaks_the_week_changes_nothing(client: TestClient) -> None:
     before = get(client)["blocks"]
     detail = add_rule(client, 422, kind="daily_limit", max_min=60, weekdays=[0, 1, 2, 3, 4, 5, 6])["detail"]
-    assert detail.startswith("Nothing changed: the week of Nov 16 to 22 wouldn't fit.")
+    assert detail.startswith("Nothing changed: ") and " wouldn't fit any more." in detail
     assert len(rules(client)) == 4
     assert get(client)["blocks"] == before
 
@@ -1123,10 +1129,18 @@ def test_a_series_round_trips_through_the_edit_form(client: TestClient) -> None:
     assert form | {"id": None} == {
         "id": None, "source": None, "title": "Office hours", "preset": "exact", "start_time": "08:00:00",
         "end_time": "09:00:00", "weekdays": None, "deadline_time": None, "estimate_min": None,
-        "max_chunk_min": None, "one_block_per_day": False, "session_min": None, "freq": "weekly",
+        "max_chunk_min": None, "one_block_per_day": False, "keep_length": False, "session_min": None, "freq": "weekly",
         "interval": 1, "repeat_weekdays": [1, 4], "start_date": "2026-11-16", "end_date": "2026-12-18",
-        "checkable": False, "on_miss": "skip",  # the defaults for an exact-time item
+        "checkable": False, "on_miss": "skip", "skipped_dates": [],  # the defaults for an exact-time item
     }
+
+
+def test_a_series_keeps_its_sessions_whole_in_every_week(client: TestClient, db: Path) -> None:
+    week = add_series(client, **LAB_WEEKLY | {"title": "Swim"}, keep_length=True)
+    assert client.get(f"/api/series/{series_id(week, 'Swim')}").json()["keep_length"] is True
+    get(client, "2026-11-23")
+    labs = [i for i in store.list_items(store.connect(db)) if i.title == "Swim"]
+    assert len(labs) >= 2 and all(i.keep_length for i in labs)
 
 
 def test_an_every_day_series_repeats_by_the_week_from_its_monday(client: TestClient) -> None:
@@ -1153,6 +1167,20 @@ def test_a_weekly_deadline_series_is_due_on_each_date(client: TestClient) -> Non
     due = {"2026-11-18": "2026-11-19T01:00:00Z", "2026-11-25": "2026-11-26T01:00:00Z"}  # Wed 5pm PST
     assert "2026-11-18" in items.values()
     assert all(end <= due[items[i]] for i, end in ends.items())
+
+
+def test_blocks_say_which_date_and_deadline_they_belong_to(client: TestClient) -> None:
+    # Two weeks' Reading responses can share a week, so each block names its own date and deadline.
+    week = add_series(
+        client, title="Reading response", preset="before_deadline", estimate_min=60, deadline_time="17:00",
+        repeat_weekdays=[2], start_date="2026-11-16",
+    )
+    blocks = blocks_titled(week, "Reading response") + blocks_titled(get(client, "2026-11-23"), "Reading response")
+    by_date = {b["occurrence_date"]: b["due"] for b in blocks}
+    assert by_date["2026-11-18"] == "2026-11-19T01:00:00Z"  # Wed 5pm PST
+    assert by_date["2026-11-25"] == "2026-11-26T01:00:00Z"
+    errand = add(client, title="Errand", preset="day", day="2026-11-19", estimate_min=60)
+    assert {(b["occurrence_date"], b["due"]) for b in blocks_titled(errand, "Errand")} == {(None, None)}
 
 
 @pytest.mark.parametrize(
@@ -1208,6 +1236,26 @@ def test_deleting_one_occurrence_skips_its_date(client: TestClient, db: Path) ->
     store.clear_plans(store.connect(db))  # plan again from scratch: it must not come back
     assert local_starts(get(client), "Office hours") == ["Fri 08:00"]
     assert local_starts(get(client, "2026-11-23"), "Office hours") == ["Tue 08:00", "Fri 08:00"]
+
+
+def test_a_skipped_date_shows_in_the_series_and_can_be_brought_back(client: TestClient) -> None:
+    week = add_series(client, **OFFICE_HOURS)
+    sid = series_id(week, "Office hours")
+    tuesday = sorted(blocks_titled(week, "Office hours"), key=lambda b: b["start"])[0]
+    client.delete(f"/api/items/{tuesday['item_id']}", params={"week": WEEK})
+    assert client.get(f"/api/series/{sid}").json()["skipped_dates"] == ["2026-11-17"]
+
+    edit = {"week_start": WEEK, **OFFICE_HOURS}
+    refused = client.put(f"/api/series/{sid}", params={"week": WEEK}, json=edit | {"skipped_dates": ["2026-11-17", "2026-11-24"]})
+    assert refused.status_code == 422 and refused.json()["detail"].startswith("Only a skipped date can be brought back")
+    kept = client.put(f"/api/series/{sid}", params={"week": WEEK}, json=edit)  # left out: skips stay as they are
+    assert local_starts(kept.json(), "Office hours") == ["Fri 08:00"]
+
+    back = client.put(f"/api/series/{sid}", params={"week": WEEK}, json=edit | {"skipped_dates": []})
+
+    assert back.status_code == 200, back.text
+    assert local_starts(back.json(), "Office hours") == ["Tue 08:00", "Fri 08:00"]
+    assert client.get(f"/api/series/{sid}").json()["skipped_dates"] == []
 
 
 def test_deleting_the_series_keeps_what_already_happened(client: TestClient, db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1269,6 +1317,13 @@ def test_an_item_made_to_repeat_becomes_the_first_occurrence(client: TestClient,
     conn = store.connect(db)
     assert not store.hand_edited(conn, UUID(lab))  # rebuilt from the template, so series edits reach it
     assert client.get(f"/api/items/{lab}").json()["series_id"] == block["series_id"]
+
+
+def test_an_item_made_to_repeat_keeps_its_sessions_whole(client: TestClient, db: Path) -> None:
+    lab = item_titled(client, "Chemistry lab")
+    week = repeat(client, lab, **LAB_WEEKLY, keep_length=True)
+    assert client.get(f"/api/series/{series_id(week, 'Chemistry lab')}").json()["keep_length"] is True
+    assert client.get(f"/api/items/{lab}").json()["keep_length"] is True
 
 
 def test_an_item_off_the_repeat_days_is_kept_as_it_is(client: TestClient, db: Path) -> None:

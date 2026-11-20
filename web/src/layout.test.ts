@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Week } from './api'
-import { initialScrollMinute, minutesToPx, pieces, slotAt, slotHasBegun, textMode } from './layout'
+import { initialScrollMinute, minutesToPx, pieces, scrollMinuteFor, slotAt, slotHasBegun, textMode } from './layout'
 
 const LA = 'America/Los_Angeles'
 const WEEK = '2026-11-16' // Mon; PST is UTC-8 all week
@@ -42,7 +42,6 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
     week_start: WEEK,
     timezone: LA,
     slot_min: 15,
-    feasible: true,
     blocks: blocks.map(([start, end], i) => ({
       id: `b${i}`,
       item_id: `i${i}`,
@@ -70,6 +69,17 @@ function week(blocks: [string, string][], frames: [string, string][] = []): Week
     shortfalls: [],
   }
 }
+
+describe('scrollMinuteFor', () => {
+  it('scrolls to the earliest of the given blocks, not the whole week', () => {
+    const spans = [
+      { start: '2026-11-19T05:00:00Z', end: '2026-11-19T07:00:00Z' }, // Wed 9pm
+      { start: '2026-11-21T05:00:00Z', end: '2026-11-21T07:00:00Z' }, // Fri 9pm
+    ]
+    expect(scrollMinuteFor(spans, WEEK, LA)).toBe(20 * 60 + 30)
+    expect(scrollMinuteFor([], WEEK, LA)).toBeNull()
+  })
+})
 
 describe('initialScrollMinute', () => {
   it('counts weekend mornings the same as weekdays', () => {

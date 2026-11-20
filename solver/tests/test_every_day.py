@@ -8,7 +8,7 @@ import pytest
 
 from mycal import Block, Constraint, FlexPreset, Item, SolverSettings, WorkFrame, store
 from mycal.demo import parse_week
-from mycal.planner import effective_item, plan_weeks, remaining_min, waiting_on_broken_weeks, week_horizon
+from mycal.planner import effective_item, left_over, plan_weeks, remaining_min, week_horizon
 from mycal.presets import compile_windows
 
 LA = "America/Los_Angeles"
@@ -64,7 +64,7 @@ def test_one_session_on_each_chosen_day(engine: str) -> None:
     item = piano()
     conn, settings = database(DAYTIME, item, engine)
 
-    assert plan_weeks(conn, settings, W1, W1, BEFORE_THE_WEEK) == {W1: True}  # type: ignore[arg-type]
+    plan_weeks(conn, settings, W1, W1, BEFORE_THE_WEEK)  # type: ignore[arg-type]
 
     placed = sessions(conn, item)
     assert days_of(placed) == Counter({W1 + timedelta(days=d): 1 for d in WEEKDAYS})
@@ -146,8 +146,7 @@ def test_a_missed_day_never_carries_into_another_day_or_week() -> None:
     assert remaining_min(item, blocks) == 30  # the stored estimate is out of date
     assert remaining_min(effective_item(item, blocks, [DAYTIME], settings, saturday), blocks) == 0
 
-    store.save_plan(conn, [], [], {W1: False}, saturday)  # type: ignore[arg-type]
-    assert item.id not in waiting_on_broken_weeks(conn, settings, W1, saturday)  # type: ignore[arg-type]
+    assert item.id not in left_over(conn, settings, W1, saturday)  # type: ignore[arg-type]
 
     plan_weeks(conn, settings, W1, W2, saturday)  # type: ignore[arg-type]
     after = sessions(conn, item)
@@ -175,7 +174,7 @@ def test_a_session_off_the_slot_grid_is_planned_rounded_up(engine: str) -> None:
     item = piano(session=20)
     conn, settings = database(DAYTIME, item, engine)
 
-    assert plan_weeks(conn, settings, W1, W1, BEFORE_THE_WEEK) == {W1: True}  # type: ignore[arg-type]
+    plan_weeks(conn, settings, W1, W1, BEFORE_THE_WEEK)  # type: ignore[arg-type]
 
     placed = sessions(conn, item)
     assert days_of(placed) == Counter({W1 + timedelta(days=d): 1 for d in WEEKDAYS})

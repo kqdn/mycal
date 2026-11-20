@@ -24,11 +24,12 @@ from mycal.solve import SolveResult, solve
 
 ITEM_FIELDS = {
     "title", "preset", "estimate_min", "max_chunk_min", "deadline", "checkable",
-    "on_miss", "one_block_per_day", "depends_on",
+    "on_miss", "one_block_per_day", "keep_length", "depends_on",
 }
 SERIES_FIELDS = {
     "title", "rrule", "start_date", "end_date", "skipped_dates", "preset", "estimate_min",
     "deadline_time", "checkable", "on_miss", "max_chunk_min", "one_block_per_day",
+    "keep_length",
 }
 PARAM_KEYS = {
     FlexPreset.EXACT: {"start", "end"},
@@ -138,6 +139,7 @@ def _parse_series(raw: dict[str, Any], timezone: str) -> Series:
         on_miss=OnMiss(raw.get("on_miss", "reschedule")),
         max_chunk_min=max_chunk,
         one_block_per_day=one_per_day,
+        keep_length=raw.get("keep_length", False),
     )
     return Series(
         title=raw["title"],
@@ -199,6 +201,7 @@ def _parse_item(
         depends_on=[ids[title] for title in raw.get("depends_on", [])],
         max_chunk_min=max_chunk,
         one_block_per_day=one_per_day,
+        keep_length=raw.get("keep_length", False),
         on_miss=OnMiss(raw.get("on_miss", "reschedule")),
         id=ids[raw["title"]],
     )
@@ -230,10 +233,7 @@ def plan_week(week: Week) -> tuple[list[Item], SolveResult]:
 
 
 def format_schedule(items: list[Item], result: SolveResult, timezone: str) -> str:
-    """The schedule as text: one heading per local day, then unscheduled items."""
-    if not result.feasible:
-        return "No arrangement fits this week: some deadline, window or dependency can't be met."
-
+    """The schedule as text: one heading per local day, then unscheduled items and work that didn't fit."""
     zone = ZoneInfo(timezone)
     titles = {item.id: item.title for item in items}
     lines: list[str] = []
@@ -250,7 +250,10 @@ def format_schedule(items: list[Item], result: SolveResult, timezone: str) -> st
     unscheduled = [item.title for item in items if not item.windows]
     if unscheduled:
         lines += ["", "Unscheduled"] + [f"  {title}" for title in unscheduled]
-    return "\n".join(lines)
+    if result.unplaced:
+        lines += ["", "Didn't fit (a deadline, window, limit or dependency can't be met)"]
+        lines += [f"  {titles[u.item_id]}: {u.minutes} min" for u in result.unplaced]
+    return "\n".join(lines).lstrip("\n")
 
 
 def main(argv: list[str] | None = None) -> int:

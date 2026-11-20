@@ -7,7 +7,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from mycal import FlexPreset, Item, ItemTemplate, Rule, Series, SolverSettings, WorkFrame, store
-from mycal.planner import MAX_SPAN_WEEKS, create_occurrences, effective_item, plan_weeks
+from mycal.planner import (
+    MAX_SPAN_WEEKS,
+    create_occurrences,
+    effective_item,
+    left_over,
+    left_over_message,
+    left_over_min,
+    plan_weeks,
+)
 
 LA = "America/Los_Angeles"
 W1, W2, W3, W4 = date(2026, 11, 16), date(2026, 11, 23), date(2026, 11, 30), date(2026, 12, 7)
@@ -18,22 +26,38 @@ def pacific(month: int, day: int, hour: int) -> datetime:
     return datetime(2026, month, day, hour, tzinfo=ZoneInfo(LA)).astimezone(UTC)
 
 
-def test_planning_resumes_as_a_joint_span_after_a_broken_week() -> None:
+def test_an_overfull_week_gets_a_partial_plan_and_lists_what_is_left_over() -> None:
     assert MAX_SPAN_WEEKS == 2
     conn = store.connect(":memory:")
     store.save_settings(conn, SolverSettings(LA))
     store.put_work_frame(conn, WorkFrame("Mornings", [0, 1, 2, 3, 4], time(9), time(10), LA))  # 5h a week
-    for title in ("Dentist", "Exam"):  # the same hour on Tue Nov 24: week 2 can't be planned
-        store.put_item(conn, Item(title, FlexPreset.EXACT, preset_params={"start": pacific(11, 24, 9), "end": pacific(11, 24, 10)}))
-    # 8h due Fri Dec 11: only weeks 3 and 4 together hold it.
-    task = Item("Course", FlexPreset.BEFORE_DEADLINE, estimate_min=8 * 60, max_chunk_min=60, deadline=pacific(12, 11, 17))
+    # Two hours of work in one hour on Tue Nov 24: an hour is left over.
+    params = {"day": date(2026, 11, 24), "start_time": time(9), "end_time": time(10)}
+    prep = Item("Exam prep", FlexPreset.DAY_RANGE, estimate_min=120, preset_params=params)
+    store.put_item(conn, prep)
+    # 4h due Fri Dec 4, which weeks 2 and 3 hold together.
+    task = Item("Course", FlexPreset.BEFORE_DEADLINE, estimate_min=4 * 60, max_chunk_min=60, deadline=pacific(12, 4, 17))
     store.put_item(conn, task)
+    settings = store.load_settings(conn)
+    assert settings is not None
 
-    outcome = plan_weeks(conn, store.load_settings(conn), W2, W4, NOW)
+    plan_weeks(conn, settings, W2, W3, NOW)
 
-    assert outcome == {W2: False, W3: True, W4: True}
-    course = [b for b in store.list_blocks(conn) if b.item_id == task.id]
-    assert sum((b.end - b.start).seconds // 60 for b in course) == 8 * 60
+    assert (store.plan_status(conn, W2), store.plan_status(conn, W3)) == (True, None)  # one span, first week marked
+    blocks = store.list_blocks(conn)
+    minutes = {i.title: sum((b.end - b.start).seconds // 60 for b in blocks if b.item_id == i.id) for i in (prep, task)}
+    assert minutes == {"Exam prep": 60, "Course": 4 * 60}
+    assert {i: m for i, (_, m) in left_over_min(conn, settings, W2, W3, NOW).items()} == {prep.id: 60}
+    assert left_over(conn, settings, W2, NOW) == {prep.id: "1h won't fit on Tue"}
+    assert left_over(conn, settings, W3, NOW) == {}
+
+
+def test_a_left_over_message_names_one_session_per_day() -> None:
+    due = pacific(11, 20, 17)
+    homework = Item("Homework", FlexPreset.BEFORE_DEADLINE, estimate_min=360, max_chunk_min=120, deadline=due)
+    assert left_over_message(homework, 120, LA) == "2h won't fit before Fri 5pm"
+    homework.one_block_per_day = True
+    assert left_over_message(homework, 120, LA) == "2h won't fit before Fri 5pm (one session per day)"
 
 
 @pytest.mark.parametrize(
@@ -61,7 +85,7 @@ def test_a_time_range_overrides_the_work_frames(item: Item, start: time, end: ti
     store.put_work_frame(conn, WorkFrame("Weekdays", [0, 1, 2, 3, 4], time(9), time(18), LA))
     store.put_item(conn, item)
 
-    assert plan_weeks(conn, store.load_settings(conn), W1, W1, NOW) == {W1: True}
+    plan_weeks(conn, store.load_settings(conn), W1, W1, NOW)
 
     zone = ZoneInfo(LA)
     blocks = [b for b in store.list_blocks(conn) if b.item_id == item.id]
@@ -157,7 +181,7 @@ def occurrences(conn: sqlite3.Connection) -> list[tuple[str, date]]:
 def test_planning_creates_each_weeks_occurrences_and_places_them() -> None:
     conn, lecture, _ = series_db()
 
-    assert plan_weeks(conn, store.load_settings(conn), W1, W2, NOW) == {W1: True, W2: True}
+    plan_weeks(conn, store.load_settings(conn), W1, W2, NOW)
 
     assert occurrences(conn) == [
         ("Gym", W1), ("Gym", W2),

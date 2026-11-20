@@ -15,7 +15,7 @@ from mycal.model import (
 )
 from mycal.presets import compile_constraint, compile_windows
 from mycal.settings import SolverSettings
-from mycal.solve import SolveResult, solve
+from mycal.solve import SolveResult, Unplaced, solve
 from mycal.windows import work_frame_windows
 
 __all__ = [
@@ -30,6 +30,7 @@ __all__ = [
     "Series",
     "SolveResult",
     "SolverSettings",
+    "Unplaced",
     "Window",
     "WorkFrame",
     "compile_constraint",
