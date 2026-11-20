@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Block, Proposal, Week } from './api'
-import { changeCount, changedBlocks, checkInProposes, otherSpot, overlapLines, proposalChanges, shownWeek } from './proposal'
+import {
+  changeCount, changedBlocks, changesTitle, checkInProposes, otherSpot, otherWeekLine, overlapLines, proposalChanges, shownWeek,
+} from './proposal'
 
 const LA = 'America/Los_Angeles'
 
@@ -120,7 +122,25 @@ function prototypeWeek(): { current: Block[]; preview: Block[] } {
   return { current, preview }
 }
 
-const PROPOSAL: Proposal = { summary: 'Add Essay', blocks: [READ], unscheduled: [], left_over: [], overlaps: [] }
+const PROPOSAL: Proposal = {
+  summary: 'Add Essay', blocks: [READ], unscheduled: [], left_over: [], overlaps: [], other_weeks: [],
+}
+
+describe('changesTitle', () => {
+  it('counts changes in the week, or says where nothing moves', () => {
+    expect(changesTitle(2, PROPOSAL)).toBe('2 changes from your current plan')
+    expect(changesTitle(0, PROPOSAL)).toBe('No blocks move')
+    const elsewhere = { ...PROPOSAL, other_weeks: [{ week_start: '2026-11-23', changes: 1 }] }
+    expect(changesTitle(0, elsewhere)).toBe('No blocks move in this week')
+  })
+})
+
+describe('otherWeekLine', () => {
+  it('names the week and counts its changes', () => {
+    expect(otherWeekLine(1, '2026-11-23')).toBe('Also 1 change in Nov 23 to 29')
+    expect(otherWeekLine(3, '2026-11-30')).toBe('Also 3 changes in Nov 30 to Dec 6')
+  })
+})
 
 describe('shownWeek', () => {
   const week = { blocks: [GYM], unscheduled: [], proposal: PROPOSAL } as unknown as Week

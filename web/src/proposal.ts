@@ -3,7 +3,7 @@
 import type { Block, CheckInRequest, Proposal, Week } from './api'
 import { whenLine } from './itemDetails'
 import type { OnMiss } from './itemForm'
-import { estimateLabel, time12, toLocal, weekdayShort } from './time'
+import { estimateLabel, time12, toLocal, weekdayShort, weekTitle, type DateString } from './time'
 
 export type ChangeKind = 'new' | 'moved' | 'resized' | 'removed'
 export type Arrow = 'up' | 'down' | 'left' | 'right'
@@ -101,6 +101,17 @@ export function otherSpot(change: Change, showProposal: boolean): { span: Span; 
 /** "3 changes from your current plan" */
 export function changeCount(count: number): string {
   return `${count} ${count === 1 ? 'change' : 'changes'} from your current plan`
+}
+
+/** The changes card's title: the count, or which weeks nothing moves in. */
+export function changesTitle(count: number, proposal: Proposal): string {
+  if (count > 0) return changeCount(count)
+  return proposal.other_weeks.length > 0 ? 'No blocks move in this week' : 'No blocks move'
+}
+
+/** "Also 2 changes in Nov 23 to 29" */
+export function otherWeekLine(changes: number, weekStart: DateString): string {
+  return `Also ${changes} ${changes === 1 ? 'change' : 'changes'} in ${weekTitle(weekStart)}`
 }
 
 function length(block: Pick<Block, 'start' | 'end'>): number {

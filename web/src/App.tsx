@@ -546,6 +546,7 @@ export default function App() {
                 selectChange(blockId)
                 setReveal((n) => n + 1)
               }}
+              onShowWeek={goTo}
             />
           )}
           {state.status === 'ready' && (

@@ -1,5 +1,6 @@
 import type { Proposal } from './api'
-import { changeCount, overlapLines, type Change } from './proposal'
+import { changesTitle, otherWeekLine, overlapLines, type Change } from './proposal'
+import type { DateString } from './time'
 
 // The compare view (web/DESIGN.md, "Compare view"): the controls in the title row, and the changes card above the grid.
 
@@ -59,21 +60,26 @@ interface CardProps {
   selected: string | null // the block id of the selected change
   error: string | null
   onSelect: (blockId: string) => void // a tile was clicked: show that change in the grid, or let go of it
+  onShowWeek: (weekStart: DateString) => void // go to another week the proposal changes
 }
 
-/** What the proposal changes in this week, one tile per change, then what didn't fit. */
-export function ChangesCard({ proposal, changes, showProposal, selected, error, onSelect }: CardProps) {
+/** What the proposal changes in this week, one tile per change, the other weeks it changes, then what didn't fit. */
+export function ChangesCard({ proposal, changes, showProposal, selected, error, onSelect, onShowWeek }: CardProps) {
   const overlaps = overlapLines(proposal)
-  const hint = showProposal
-    ? 'Orange outlines are the new spots in the new plan. Click a change to jump to it and see where it was.'
-    : 'Orange outlines are blocks the new plan changes. Click a change to jump to it and see where it goes.'
+  // With no block moving here, the change itself (a switch, a title) still waits for Accept, so say so.
+  const hint =
+    changes.length === 0
+      ? `Accept still saves the change itself (${proposal.summary}).`
+      : showProposal
+        ? 'Orange outlines are the new spots in the new plan. Click a change to jump to it and see where it was.'
+        : 'Orange outlines are blocks the new plan changes. Click a change to jump to it and see where it goes.'
   return (
     <section className="changes-card" aria-labelledby="changes-title">
       <div className="changes-head">
         <p className="changes-title" id="changes-title">
-          {changes.length === 0 ? 'Nothing changes in this week' : changeCount(changes.length)}
+          {changesTitle(changes.length, proposal)}
         </p>
-        {changes.length > 0 && <p className="changes-hint">{hint}</p>}
+        <p className="changes-hint">{hint}</p>
       </div>
 
       {changes.length > 0 && (
@@ -95,6 +101,15 @@ export function ChangesCard({ proposal, changes, showProposal, selected, error, 
           ))}
         </div>
       )}
+
+      {proposal.other_weeks.map((other) => (
+        <p key={other.week_start} className="changes-other-week">
+          {otherWeekLine(other.changes, other.week_start)}
+          <button type="button" className="changes-show-week" onClick={() => onShowWeek(other.week_start)}>
+            Show
+          </button>
+        </p>
+      ))}
 
       {proposal.left_over.length > 0 && (
         <div>

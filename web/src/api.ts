@@ -108,6 +108,7 @@ export interface Proposal {
   unscheduled: Week['unscheduled']
   left_over: LeftOver[]
   overlaps: [string, string][] // block ids of fixed events that overlap (double booking)
+  other_weeks: { week_start: DateString; changes: number }[] // other re-planned weeks whose blocks change
 }
 
 export interface Week {

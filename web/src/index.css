@@ -292,6 +292,27 @@ a.tab {
   color: var(--accent);
 }
 
+/* "Also 2 changes in Nov 23 to 29  Show": another week the new plan changes */
+.changes-other-week {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--attention-text);
+}
+
+.changes-show-week {
+  min-height: var(--tap);
+  padding: 0 4px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .change-tile[aria-pressed='true'] {
   border: 2px solid var(--attention-strong);
   padding: 5px 11px; /* the thicker border takes the same room */
