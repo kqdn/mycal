@@ -335,6 +335,11 @@ export default function App() {
       case 'thisWeek':
         goTo(mondayOf(today()))
         return true
+      case 'switchPlan':
+        // Same as clicking the plan toggle; nothing to switch without a proposal.
+        if (!proposal) return false
+        setCurrentFor(showCurrent ? null : proposal.summary)
+        return true
       case 'edit':
       case 'delete':
         return !waiting && actOnPointedBlock(action.type)

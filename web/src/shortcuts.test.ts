@@ -29,6 +29,13 @@ describe('shortcutFor', () => {
     expect(on('t')).toEqual({ type: 'thisWeek' })
   })
 
+  it('switches between the current and new plan with S, on the week page only', () => {
+    expect([on('s'), on('S')]).toEqual(Array(2).fill({ type: 'switchPlan' }))
+    expect(on('s', RULES)).toBeNull()
+    expect(on('s', POPOVER)).toBeNull()
+    expect(on('s', WEEK, { target: element('INPUT', { type: 'text' }) })).toBeNull() // just text in a field
+  })
+
   it('adds an item on the week page, and a frame or a rule on the Frames and rules page', () => {
     expect(on('n')).toEqual({ type: 'newItem' })
     expect(on('n', RULES)).toBeNull()

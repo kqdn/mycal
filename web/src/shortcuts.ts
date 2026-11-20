@@ -7,6 +7,7 @@ export type Action =
   | { type: 'newItem' }
   | { type: 'moveWeek'; days: -7 | 7 }
   | { type: 'thisWeek' }
+  | { type: 'switchPlan' }
   | { type: 'newFrame' }
   | { type: 'newRule' }
   | { type: 'help' }
@@ -36,6 +37,7 @@ export const SHORTCUTS: { keys: string[]; label: string; where: string }[] = [
   { keys: ['←', 'K'], label: 'Previous week', where: 'Week' },
   { keys: ['→', 'J'], label: 'Next week', where: 'Week' },
   { keys: ['T'], label: 'This week', where: 'Week' },
+  { keys: ['S'], label: 'Switch between the current and new plan', where: 'Week, while a change waits' },
   { keys: ['E'], label: 'Edit the item', where: 'Pointing at a block, or its details' },
   { keys: ['Delete', 'D'], label: 'Delete the item (asks first)', where: 'Pointing at a block, or its details' },
   { keys: ['F'], label: 'New frame', where: 'Frames and rules' },
@@ -84,6 +86,7 @@ export function shortcutFor(press: KeyPress, where: Where): Action | null {
     if (key === 'ArrowLeft' || key === 'k') return { type: 'moveWeek', days: -7 }
     if (key === 'ArrowRight' || key === 'j') return { type: 'moveWeek', days: 7 }
     if (key === 't') return { type: 'thisWeek' }
+    if (key === 's') return { type: 'switchPlan' } // the page acts only while a proposal waits
   } else {
     if (key === 'f') return { type: 'newFrame' }
     if (key === 'r') return { type: 'newRule' }

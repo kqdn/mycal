@@ -24,7 +24,7 @@ export function CompareControls({ showProposal, answering, onShow, onAccept, onD
         type="button"
         className={showProposal ? 'compare-toggle showing-new' : 'compare-toggle'}
         aria-label={showProposal ? 'Switch to current plan' : 'Switch to new plan'}
-        title={showProposal ? 'Switch to current plan' : 'Switch to new plan'}
+        title={showProposal ? 'Switch to current plan (S)' : 'Switch to new plan (S)'}
         onClick={() => onShow(!showProposal)}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
