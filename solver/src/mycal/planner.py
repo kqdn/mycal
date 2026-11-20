@@ -444,17 +444,25 @@ def left_over(conn: sqlite3.Connection, settings: SolverSettings, week_start: da
 
 
 def left_over_message(item: Item, minutes: int, timezone: str) -> str:
-    """"1h 30m won't fit before Fri 5pm", "45m won't fit on Wed" or "2h won't fit on its days"."""
-    amount = duration_text(minutes)
-    params = item.preset_params
+    """"1h 30m won't fit before Fri 5pm", "45m won't fit on Wed" or "2h won't fit on its days".
+
+    An item with one session per day gets "(one session per day)" after it, since
+    that switch is often why free time on a day it already has a session can't be used.
+    """
+    message = f"{duration_text(minutes)} won't fit {_where_text(item, timezone)}"
+    return f"{message} (one session per day)" if item.one_block_per_day else message
+
+
+def _where_text(item: Item, timezone: str) -> str:
+    """"before Fri 5pm", "on Wed", "on its days" or "in its time"."""
     if item.flex_preset is FlexPreset.BEFORE_DEADLINE and item.deadline is not None:
         due = item.deadline.astimezone(ZoneInfo(timezone))
-        return f"{amount} won't fit before {due:%a} {clock_text(due.time())}"
+        return f"before {due:%a} {clock_text(due.time())}"
     if item.flex_preset in (FlexPreset.DAY, FlexPreset.DAY_RANGE):
-        return f"{amount} won't fit on {params['day']:%a}"
+        return f"on {item.preset_params['day']:%a}"
     if item.flex_preset is FlexPreset.DAYS:
-        return f"{amount} won't fit on its days"
-    return f"{amount} won't fit in its time"
+        return "on its days"
+    return "in its time"
 
 
 def duration_text(minutes: int) -> str:

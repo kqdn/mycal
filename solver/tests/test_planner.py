@@ -7,7 +7,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from mycal import FlexPreset, Item, ItemTemplate, Rule, Series, SolverSettings, WorkFrame, store
-from mycal.planner import MAX_SPAN_WEEKS, create_occurrences, effective_item, left_over, left_over_min, plan_weeks
+from mycal.planner import (
+    MAX_SPAN_WEEKS,
+    create_occurrences,
+    effective_item,
+    left_over,
+    left_over_message,
+    left_over_min,
+    plan_weeks,
+)
 
 LA = "America/Los_Angeles"
 W1, W2, W3, W4 = date(2026, 11, 16), date(2026, 11, 23), date(2026, 11, 30), date(2026, 12, 7)
@@ -42,6 +50,14 @@ def test_an_overfull_week_gets_a_partial_plan_and_lists_what_is_left_over() -> N
     assert {i: m for i, (_, m) in left_over_min(conn, settings, W2, W3, NOW).items()} == {prep.id: 60}
     assert left_over(conn, settings, W2, NOW) == {prep.id: "1h won't fit on Tue"}
     assert left_over(conn, settings, W3, NOW) == {}
+
+
+def test_a_left_over_message_names_one_session_per_day() -> None:
+    due = pacific(11, 20, 17)
+    homework = Item("Homework", FlexPreset.BEFORE_DEADLINE, estimate_min=360, max_chunk_min=120, deadline=due)
+    assert left_over_message(homework, 120, LA) == "2h won't fit before Fri 5pm"
+    homework.one_block_per_day = True
+    assert left_over_message(homework, 120, LA) == "2h won't fit before Fri 5pm (one session per day)"
 
 
 @pytest.mark.parametrize(
