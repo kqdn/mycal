@@ -740,7 +740,7 @@ class ExtendIn(BaseModel):
     propose: bool = False  # show a new plan when other sessions move; saved right away when none do
 
 
-EXTEND_ONLY_STARTED = "Only a work session that started and isn't checked in yet can get more time."
+EXTEND_ONLY_STARTED = "Only a work session that is running, or ended and isn't checked in yet, can get more time."
 
 
 @app.post("/api/blocks/{block_id}/extend")
@@ -755,7 +755,9 @@ def extend_block(block_id: UUID, request: ExtendIn, week: date) -> WeekOut:
     with database() as (conn, settings):
         moment = now()
         block, item = _block_and_item(conn, block_id)
-        if item.flex_preset is FlexPreset.EXACT or block.status is not BlockStatus.PLANNED or block.start > moment:
+        # A session without check-ins never gets an answer, so it can only grow while it runs.
+        over = block.end <= moment and not item.checkable
+        if item.flex_preset is FlexPreset.EXACT or block.status is not BlockStatus.PLANNED or block.start > moment or over:
             raise HTTPException(status_code=422, detail=EXTEND_ONLY_STARTED)
         slot = timedelta(minutes=settings.slot_min)
         longer = replace(block, end=block.end + slot, locked=True)

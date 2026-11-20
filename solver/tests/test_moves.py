@@ -217,6 +217,15 @@ def test_more_time_may_run_into_a_fixed_event(client: TestClient, monkeypatch: p
     assert [b["id"], dentist["id"]] in response.json()["overlaps"]
 
 
+def test_a_session_without_check_ins_gets_more_time_only_while_it_runs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    b = next(b for b in get(client)["blocks"] if not b["fixed"] and not b["checkable"])
+    monkeypatch.setattr(api, "now", lambda: ends(b) + timedelta(minutes=5))
+    response = extend(client, b["id"])
+    assert (response.status_code, response.json()["detail"]) == (422, api.EXTEND_ONLY_STARTED)
+
+
 def test_only_a_started_session_gets_more_time(client: TestClient) -> None:
     b = next(b for b in get(client)["blocks"] if not b["fixed"])
     response = extend(client, b["id"])  # the week hasn't begun
