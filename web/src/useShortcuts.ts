@@ -21,6 +21,7 @@ export function useShortcuts(view: 'week' | 'rules', handle: (action: Action) =>
         view,
         dialogOpen: document.querySelector('dialog[open]') !== null,
         popoverOpen: document.querySelector('.item-popover:popover-open') !== null,
+        anyPopoverOpen: document.querySelector(':popover-open') !== null,
         onBlock: pointedBlock() !== null,
       })
       if (action && latest.current(action)) event.preventDefault()

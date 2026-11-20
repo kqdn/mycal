@@ -11,9 +11,9 @@ function press(key: string, changes: Partial<KeyPress> = {}): KeyPress {
   return { key, metaKey: false, ctrlKey: false, altKey: false, target: BODY, ...changes }
 }
 
-const WEEK: Where = { view: 'week', dialogOpen: false, popoverOpen: false, onBlock: false }
-const RULES: Where = { view: 'rules', dialogOpen: false, popoverOpen: false, onBlock: false }
-const POPOVER: Where = { ...WEEK, popoverOpen: true }
+const WEEK: Where = { view: 'week', dialogOpen: false, popoverOpen: false, anyPopoverOpen: false, onBlock: false }
+const RULES: Where = { view: 'rules', dialogOpen: false, popoverOpen: false, anyPopoverOpen: false, onBlock: false }
+const POPOVER: Where = { ...WEEK, popoverOpen: true, anyPopoverOpen: true }
 
 const on = (key: string, where: Where = WEEK, changes: Partial<KeyPress> = {}) => shortcutFor(press(key, changes), where)
 
@@ -27,6 +27,21 @@ describe('shortcutFor', () => {
     expect([on('ArrowLeft'), on('k'), on('K')]).toEqual(Array(3).fill({ type: 'moveWeek', days: -7 }))
     expect([on('ArrowRight'), on('j')]).toEqual(Array(2).fill({ type: 'moveWeek', days: 7 }))
     expect(on('t')).toEqual({ type: 'thisWeek' })
+  })
+
+  it('accepts the new plan with A, on the week page only', () => {
+    expect([on('a'), on('A')]).toEqual(Array(2).fill({ type: 'acceptPlan' }))
+    expect(on('a', RULES)).toBeNull()
+    expect(on('a', POPOVER)).toBeNull()
+    expect(on('a', WEEK, { target: element('INPUT', { type: 'text' }) })).toBeNull()
+  })
+
+  it('discards the new plan with Escape, unless a popover or dialog is open for it to close', () => {
+    expect(on('Escape')).toEqual({ type: 'discardPlan' })
+    expect(on('Escape', RULES)).toBeNull()
+    expect(on('Escape', POPOVER)).toBeNull()
+    expect(on('Escape', { ...WEEK, anyPopoverOpen: true })).toBeNull() // the shortcuts list, or Move which?
+    expect(on('Escape', { ...WEEK, dialogOpen: true })).toBeNull()
   })
 
   it('switches between the current and new plan with S, on the week page only', () => {
@@ -79,7 +94,7 @@ describe('shortcutFor', () => {
   })
 
   it('ignores other keys', () => {
-    expect([on('x'), on('Enter'), on(' '), on('Escape')]).toEqual([null, null, null, null])
+    expect([on('x'), on('Enter'), on(' ')]).toEqual([null, null, null])
   })
 })
 

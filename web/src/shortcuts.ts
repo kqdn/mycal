@@ -8,6 +8,8 @@ export type Action =
   | { type: 'moveWeek'; days: -7 | 7 }
   | { type: 'thisWeek' }
   | { type: 'switchPlan' }
+  | { type: 'discardPlan' }
+  | { type: 'acceptPlan' }
   | { type: 'newFrame' }
   | { type: 'newRule' }
   | { type: 'help' }
@@ -26,6 +28,7 @@ export interface Where {
   view: 'week' | 'rules'
   dialogOpen: boolean // a modal dialog (adding or editing) is open
   popoverOpen: boolean // the item details popover is open
+  anyPopoverOpen: boolean // any popover is open (item details, Move which?, the shortcuts list): Escape closes it
   onBlock: boolean // a block is under the mouse or has keyboard focus
 }
 
@@ -38,6 +41,8 @@ export const SHORTCUTS: { keys: string[]; label: string; where: string }[] = [
   { keys: ['→', 'J'], label: 'Next week', where: 'Week' },
   { keys: ['T'], label: 'This week', where: 'Week' },
   { keys: ['S'], label: 'Switch between the current and new plan', where: 'Week, while a change waits' },
+  { keys: ['A'], label: 'Accept the new plan', where: 'Week, while the new plan shows' },
+  { keys: ['Esc'], label: 'Discard the new plan', where: 'Week, while a change waits' },
   { keys: ['E'], label: 'Edit the item', where: 'Pointing at a block, or its details' },
   { keys: ['Delete', 'D'], label: 'Delete the item (asks first)', where: 'Pointing at a block, or its details' },
   { keys: ['F'], label: 'New frame', where: 'Frames and rules' },
@@ -69,6 +74,8 @@ export function shortcutFor(press: KeyPress, where: Where): Action | null {
   const key = press.key.length === 1 ? press.key.toLowerCase() : press.key
 
   if (key === '?') return { type: 'help' }
+  // Escape closes an open popover first; only with none open does it discard a waiting new plan.
+  if (key === 'Escape') return where.view === 'week' && !where.anyPopoverOpen ? { type: 'discardPlan' } : null
   if (where.popoverOpen) {
     if (key === 'e') return { type: 'edit' }
     if (key === 'Delete' || key === 'Backspace' || key === 'd') return { type: 'delete' }
@@ -87,6 +94,7 @@ export function shortcutFor(press: KeyPress, where: Where): Action | null {
     if (key === 'ArrowRight' || key === 'j') return { type: 'moveWeek', days: 7 }
     if (key === 't') return { type: 'thisWeek' }
     if (key === 's') return { type: 'switchPlan' } // the page acts only while a proposal waits
+    if (key === 'a') return { type: 'acceptPlan' } // and only while the new plan shows, like the Accept button
   } else {
     if (key === 'f') return { type: 'newFrame' }
     if (key === 'r') return { type: 'newRule' }

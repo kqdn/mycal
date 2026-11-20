@@ -405,6 +405,16 @@ export default function App() {
         if (!proposal) return false
         setCurrentFor(showCurrent ? null : proposal.summary)
         return true
+      case 'acceptPlan':
+        // Same as clicking Accept, which only works while the new plan is on screen, so A saves what you see.
+        if (!proposal || answering || showCurrent) return false
+        answerProposal(true)
+        return true
+      case 'discardPlan':
+        // Same as clicking Discard; nothing to discard without a proposal, or while one is being answered.
+        if (!proposal || answering) return false
+        answerProposal(false)
+        return true
       case 'edit':
       case 'delete':
         return !waiting && actOnPointedBlock(action.type)

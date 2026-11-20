@@ -519,6 +519,8 @@ Draft by Claude, for Kaden to review. Single keys, no combinations to learn.
 | ← or K / → or J | Previous / next week | Week page |
 | T | This week | Week page |
 | S | Switch between the current plan and the new plan, like the plan toggle | Week page, while a proposal waits |
+| A | Accept the new plan, like Accept | Week page, while the new plan is on screen (not the current plan, where Accept is disabled too) |
+| Esc | Discard the new plan, like Discard | Week page, while a proposal waits, with no popover or dialog open (Esc closes those first) |
 | E | Edit; for an occurrence, opens the This / All choice | A block under the mouse or with focus, or the item details popover |
 | Delete, Backspace or D | Delete; opens the confirm step, never deletes outright | A block under the mouse or with focus, or the item details popover |
 | F / R | New frame / New rule | Frames and rules page |
