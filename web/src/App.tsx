@@ -649,6 +649,7 @@ export default function App() {
                         return moveTo(block, start, state.week.timezone)
                       }
                 }
+                moveBlocked={waiting ? 'Answer the new plan first (A or Esc)' : undefined}
               />
               {(shown ?? state.week).unscheduled.length > 0 && (
                 <section aria-labelledby="unscheduled-label">

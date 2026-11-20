@@ -22,6 +22,9 @@ interface WeekGridProps {
   // A block was dragged to a free spot (UTC ISO start). Left out while a proposal waits, so nothing drags.
   // The grid keeps the dragged outline until the promise settles.
   onMove?: (block: Block, start: string) => Promise<void>
+  // Why nothing can move right now (a new plan waits). Dragging still follows the pointer, in orange with
+  // this note, and snaps back, so it doesn't look broken.
+  moveBlocked?: string
 }
 
 /** A block being dragged: where its top is (local date and minute) and how far down it was grabbed. */
@@ -46,7 +49,7 @@ export interface Compare {
   reveal: number // bumped when a change tile is clicked: the grid scrolls to the selected change
 }
 
-export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGridProps) {
+export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove, moveBlocked }: WeekGridProps) {
   const { week_start: weekStart, timezone, slot_min: slotMin } = week
   const scroller = useRef<HTMLDivElement>(null)
   const dates = weekDates(weekStart)
@@ -96,7 +99,7 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
    * after a long press. Dropping on a free spot calls onMove; Escape or a refused spot snaps back.
    */
   function press(block: Block, event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!onMove || event.button !== 0 || drag?.saving || !canDrag(block, now.iso)) return
+    if ((!onMove && !moveBlocked) || event.button !== 0 || drag?.saving || !canDrag(block, now.iso)) return
     const move = onMove
     const pointer = event.pointerId
     const origin = { x: event.clientX, y: event.clientY }
@@ -123,7 +126,7 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
       window.removeEventListener('pointercancel', onCancel)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
       dragging.current = false
     }
     const onPointerMove = (e: PointerEvent) => {
@@ -138,7 +141,7 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
       end()
       if (!active) return
       ignoreClicksUntil.current = performance.now() + 400
-      if (last) drop(last, move)
+      if (last && move) drop(last, move)
       else setDrag(null)
     }
     const onCancel = () => {
@@ -154,7 +157,8 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     window.addEventListener('pointercancel', onCancel)
-    window.addEventListener('keydown', onKey)
+    // Capture, so Escape cancels the drag before the page's shortcuts see it (Esc there discards a new plan).
+    window.addEventListener('keydown', onKey, true)
   }
 
   /** Move to the dropped spot, or snap back when it is refused or where the block already is. */
@@ -174,8 +178,10 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
     ? range12(toLocal(dropSpot.start, timezone).minutes, toLocal(dropSpot.end, timezone).minutes)
     : ''
   // Why it can't go there, or a warning when it would be after the deadline (allowed): its own line under the time.
-  const ghostNote = dropSpot?.problem ?? (dropSpot?.late ? "After it's due" : null)
-  const ghostClass = dropSpot?.problem ? 'drag-ghost refused' : dropSpot?.late ? 'drag-ghost late' : 'drag-ghost'
+  // While moving is blocked, every spot is refused with the reason.
+  const refused = !onMove ? (moveBlocked ?? null) : (dropSpot?.problem ?? null)
+  const ghostNote = refused ?? (dropSpot?.late ? "After it's due" : null)
+  const ghostClass = refused ? 'drag-ghost refused' : dropSpot?.late ? 'drag-ghost late' : 'drag-ghost'
 
   /** The slot under the pointer in a day column, or null over a block or a slot that has begun. */
   function slotUnder(event: MouseEvent<HTMLDivElement>, date: DateString): number | null {
@@ -298,7 +304,7 @@ export function WeekGrid({ week, onOpen, onAdd, focus, compare, onMove }: WeekGr
                       selected={compare?.selected === block.id}
                       onSelect={compare?.onSelect}
                       // A piece that began the day before has its top elsewhere, so it isn't grabbed.
-                      draggable={!!onMove && !piece.continuesBefore && canDrag(block, now.iso)}
+                      draggable={(!!onMove || !!moveBlocked) && !piece.continuesBefore && canDrag(block, now.iso)}
                       dragged={drag?.block.id === block.id}
                       onPress={press}
                     />
