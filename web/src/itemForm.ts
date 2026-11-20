@@ -279,7 +279,7 @@ export function missHint(policy: OnMiss): string {
     case 'reschedule':
       return 'The missed time goes back into the plan.'
     case 'catch_up':
-      return 'Adds a catch-up item, due before the next one.'
+      return 'Adds a catch-up item, due by its deadline or before the next one.'
     case 'skip':
       return "Nothing moves. It's only logged."
     case 'ask':

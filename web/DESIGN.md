@@ -168,7 +168,7 @@ Flexibility comes before Estimate, unlike the prototype. Choosing "Exact time" h
    - **Default:** on, except for Exact time, where it starts off (meetings and appointments). A lecture can be switched on. Once switched by hand, changing the preset doesn't change it.
    - **If missed:** shown under the switch while it is on, 8px below it. A label "If missed", then a segmented choice like Repeats: "Reschedule", "Catch up", "Skip", "Ask me". Default: Reschedule. Exact time has no Reschedule, since it can't move, and Skip is selected in its place. A 12px `--text-muted` line under the choice says what it does:
      - Reschedule: "The missed time goes back into the plan."
-     - Catch up: "Adds a catch-up item, due before the next one."
+     - Catch up: "Adds a catch-up item, due by its deadline or before the next one."
      - Skip: "Nothing moves. It's only logged."
      - Ask me: "You choose each time."
 

@@ -449,7 +449,7 @@ describe('check-in fields', () => {
   })
 
   it('says what each choice does', () => {
-    expect(missHint('catch_up')).toBe('Adds a catch-up item, due before the next one.')
+    expect(missHint('catch_up')).toBe('Adds a catch-up item, due by its deadline or before the next one.')
   })
 })
 
